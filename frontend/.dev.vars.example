@@ -1,0 +1,11 @@
+GOOGLE_CLIENT_ID=_redacted_.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-redacted_
+
+
+VITE_WORKER_ORIGIN=http://localhost:8787
+VITE_GOOGLE_CLIENT_ID=redacted_.apps.googleusercontent.com
+
+VITE_DISABLE_CF_PLUGIN=1
+
+
+USE_MOCK_AUTH=false
