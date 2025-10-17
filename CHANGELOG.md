@@ -9,6 +9,11 @@
 - `frontend/worker/index.ts`
   - Build `redirect_uri` dynamically from the incoming request origin in `handleOAuthCallback()`.
   - Use computed `redirect_uri` during token exchange.
+  - Integrated Xata persistence using REST (no generated types).
+  - Upsert `public.Users` with `id`, `email`, `name`, and `imageUrl`.
+  - Upsert `public.SocialConnections` with deterministic `id = "${provider}:${providerId}"`, plus `userId`, `provider`, `providerId`, `email`, `name`.
+  - Normalized avatar field to `imageUrl` in OAuth return payload.
+  - Added `USE_MOCK_AUTH` env flag to disable localhost mock by default.
 - `frontend/src/components/GoogleLoginButton.tsx`
   - Build `redirect_uri` using `VITE_WORKER_ORIGIN` with fallback to `window.location.origin`.
   - Switch Google authorize endpoint to `https://accounts.google.com/o/oauth2/v2/auth`.
@@ -22,6 +27,12 @@
   - Documented recommended entries: `VITE_WORKER_ORIGIN=http://localhost:8787`, `VITE_DISABLE_CF_PLUGIN=1`, and `VITE_GOOGLE_CLIENT_ID`.
 - `.windsurf_plan.md`
   - Added project plan with dev/prod OAuth guidance and deployment notes.
+- `frontend/wrangler.jsonc`
+  - Fixed Wrangler error by adding `assets.directory: ./public/` and SPA not_found handling.
+- `frontend/src/App.tsx`
+  - Display user avatar when authenticated using `user.imageUrl` with placeholder fallback.
+- Database
+  - Added column `imageUrl text` to `public.Users`.
 
 ### Notes
 - Ensure Google OAuth client has Authorized redirect URI:

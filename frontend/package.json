@@ -6,12 +6,12 @@
 	"scripts": {
 		"dev": "concurrently -n client,worker -c green,cyan \"npm:dev:client\" \"npm:dev:worker\"",
 		"dev:client": "VITE_DISABLE_CF_PLUGIN=1 vite",
-		"dev:worker": "wrangler dev --port 8787",
+		"dev:worker": "wrangler dev --port 8787 --config wrangler.jsonc",
 		"build": "tsc -b && vite build",
 		"lint": "eslint .",
 		"preview": "npm run build && vite preview",
-		"deploy": "npm run build && wrangler deploy",
-		"cf-typegen": "wrangler types"
+		"deploy": "npm run build && wrangler deploy --config wrangler.jsonc",
+		"cf-typegen": "wrangler types --config wrangler.jsonc"
 	},
 	"dependencies": {
 		"@google-cloud/local-auth": "^3.0.1",
