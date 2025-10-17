@@ -28,7 +28,8 @@
 - `.windsurf_plan.md`
   - Added project plan with dev/prod OAuth guidance and deployment notes.
 - `frontend/wrangler.jsonc`
-  - Fixed Wrangler error by adding `assets.directory: ./public/` and SPA not_found handling.
+  - Fixed Wrangler error by adding SPA not_found handling.
+  - Updated production assets to serve from `./dist/` to avoid 404 at root after deploy.
 - `frontend/src/App.tsx`
   - Display user avatar when authenticated using `user.imageUrl` with placeholder fallback.
 - Database
