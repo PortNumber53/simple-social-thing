@@ -36,9 +36,16 @@ function App() {
 
         {isAuthenticated && user && (
           <div className="mt-4 p-4 bg-green-50 rounded-lg">
-            <p className="text-green-800">
-              Welcome back, <strong>{user.name}</strong>! ({user.email})
-            </p>
+            <div className="flex items-center gap-3">
+              <img
+                src={user.imageUrl || 'https://via.placeholder.com/150'}
+                alt={user.name}
+                className="w-8 h-8 rounded-full"
+              />
+              <p className="text-green-800">
+                Welcome back, <strong>{user.name}</strong>! ({user.email})
+              </p>
+            </div>
           </div>
         )}
       </div>
