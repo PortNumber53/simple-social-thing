@@ -1,0 +1,39 @@
+{
+	"name": "frontend",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "concurrently -n client,worker -c green,cyan \"npm:dev:client\" \"npm:dev:worker\"",
+		"dev:client": "VITE_DISABLE_CF_PLUGIN=1 vite",
+		"dev:worker": "wrangler dev --port 8787",
+		"build": "tsc -b && vite build",
+		"lint": "eslint .",
+		"preview": "npm run build && vite preview",
+		"deploy": "npm run build && wrangler deploy",
+		"cf-typegen": "wrangler types"
+	},
+	"dependencies": {
+		"@google-cloud/local-auth": "^3.0.1",
+		"@xata.io/client": "^0.30.1",
+		"react": "^19.1.1",
+		"react-dom": "^19.1.1"
+	},
+	"devDependencies": {
+		"@cloudflare/vite-plugin": "^1.13.13",
+		"@eslint/js": "^9.33.0",
+		"@types/node": "^24.8.1",
+		"@types/react": "^19.1.10",
+		"@types/react-dom": "^19.1.7",
+		"@vitejs/plugin-react-swc": "^4.0.0",
+		"concurrently": "^9.2.1",
+		"eslint": "^9.33.0",
+		"eslint-plugin-react-hooks": "^5.2.0",
+		"eslint-plugin-react-refresh": "^0.4.20",
+		"globals": "^16.3.0",
+		"typescript": "~5.8.3",
+		"typescript-eslint": "^8.39.1",
+		"vite": "^7.1.2",
+		"wrangler": "^4.43.0"
+	}
+}
