@@ -119,6 +119,14 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
   const error = url.searchParams.get('error');
   const redirectUri = new URL('/api/auth/google/callback', url.origin).toString();
 
+  // Determine client URL dynamically
+  // For local dev: worker is on :8787, frontend is on :5173
+  // For production: both are on the same domain
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost
+    ? `http://localhost:5173`
+    : url.origin.replace(/\/api.*$/, '');
+
   // Handle OAuth errors
   if (error) {
     return Response.json({
@@ -148,8 +156,6 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
         name: 'Test User',
         picture: 'https://via.placeholder.com/150',
       };
-
-      const clientUrl = 'http://localhost:5173';
       await persistUser(env, {
         id: mockUserData.id,
         email: mockUserData.email,
@@ -246,7 +252,6 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
     });
 
     // Redirect back to frontend with user data in URL parameter
-    const clientUrl = 'http://localhost:5173';
     const userDataParam = encodeURIComponent(JSON.stringify({
       success: true,
       user: frontendUserData,
