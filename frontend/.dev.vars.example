@@ -1,11 +1,18 @@
-GOOGLE_CLIENT_ID=_redacted_.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-redacted_
+# Worker Environment Variables (for Cloudflare Worker)
+# These are used by wrangler dev and should be kept secret
 
+# Google OAuth (Worker-side)
+GOOGLE_CLIENT_ID=your_google_client_id_here
+GOOGLE_CLIENT_SECRET=your_google_client_secret_here
 
+# Xata Database (Worker-side - optional, for persisting users)
+XATA_API_KEY=your_xata_api_key_here
+XATA_DATABASE_URL=your_xata_database_url_here
+
+# Frontend Build Variables (VITE_* prefix)
 VITE_WORKER_ORIGIN=http://localhost:8787
-VITE_GOOGLE_CLIENT_ID=redacted_.apps.googleusercontent.com
-
+VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
 VITE_DISABLE_CF_PLUGIN=1
 
-
+# Mock Auth (for local dev without real OAuth)
 USE_MOCK_AUTH=false
