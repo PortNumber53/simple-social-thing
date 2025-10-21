@@ -60,21 +60,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     if (oauthData) {
       try {
-        // Clean up URL
-        window.history.replaceState({}, document.title, window.location.pathname);
-
         const userData = JSON.parse(decodeURIComponent(oauthData));
 
         if (userData.success && userData.user) {
           setUser(userData.user);
           localStorage.setItem('user', JSON.stringify(userData.user));
           setError(null);
+          
+          // Redirect to dashboard after successful authentication
+          window.history.replaceState({}, document.title, '/dashboard');
+          window.location.href = '/dashboard';
         } else if (userData.error) {
           setError(userData.error_description || userData.error);
+          // Clean up URL on error
+          window.history.replaceState({}, document.title, '/');
         }
       } catch (error) {
         console.error('Error processing OAuth callback:', error);
         setError('Authentication failed');
+        // Clean up URL on error
+        window.history.replaceState({}, document.title, '/');
       }
     }
   };
