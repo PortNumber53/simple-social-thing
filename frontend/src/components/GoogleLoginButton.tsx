@@ -46,16 +46,24 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
 
   if (isAuthenticated && user) {
     return (
-      <div className={`flex items-center gap-3 ${className}`}>
-        <img
-          src={user.imageUrl}
-          alt={user.name}
-          className="w-8 h-8 rounded-full"
-        />
-        <span className="text-sm font-medium">{user.name}</span>
+      <div className={`flex items-center gap-4 ${className}`}>
+        <div className="flex items-center gap-3 px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-lg">
+          <img
+            src={user.imageUrl}
+            alt={user.name}
+            className="w-8 h-8 rounded-full ring-2 ring-primary-400"
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              const target = e.target as HTMLImageElement;
+              console.error('Failed to load avatar image in button:', user.imageUrl);
+              target.src = 'https://via.placeholder.com/150';
+            }}
+          />
+          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{user.name}</span>
+        </div>
         <button
           onClick={logout}
-          className="text-sm text-red-600 hover:text-red-800"
+          className="btn btn-ghost text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
         >
           Sign out
         </button>
@@ -67,12 +75,12 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
     <button
       onClick={handleGoogleLogin}
       disabled={isLoading}
-      className={`flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 ${className}`}
+      className={`btn btn-secondary gap-3 px-6 py-3 shadow-md hover:shadow-lg ${className}`}
     >
       {isLoading ? (
-        <div className="w-4 h-4 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+        <div className="w-5 h-5 border-2 border-slate-300 dark:border-slate-600 border-t-primary-600 rounded-full animate-spin" />
       ) : (
-        <svg className="w-4 h-4" viewBox="0 0 24 24">
+        <svg className="w-5 h-5" viewBox="0 0 24 24">
           <path
             fill="#4285F4"
             d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -91,7 +99,7 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
           />
         </svg>
       )}
-      <span>{isLoading ? 'Signing in...' : buttonText}</span>
+      <span className="font-semibold">{isLoading ? 'Signing in...' : buttonText}</span>
     </button>
   );
 };
