@@ -23,7 +23,7 @@ export const Contact: React.FC = () => {
         <header className="text-center space-y-3">
           <h1 className="text-4xl md:text-5xl font-extrabold gradient-text">Contact</h1>
           <p className="text-slate-600 dark:text-slate-400 text-lg">
-            Tell us about your social presence goals. Well reach out shortly.
+            Tell us about your social presence goals. We'll reach out shortly.
           </p>
         </header>
 

@@ -33,25 +33,23 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // Hydrate synchronously to avoid header flash
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const stored = localStorage.getItem('user');
+      return stored ? (JSON.parse(stored) as User) : null;
+    } catch (e) {
+      localStorage.removeItem('user');
+      return null;
+    }
+  });
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check if user is stored in localStorage on app start
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      try {
-        setUser(JSON.parse(storedUser));
-      } catch (error) {
-        console.error('Error parsing stored user:', error);
-        localStorage.removeItem('user');
-      }
-    }
-    setIsLoading(false);
-
     // Check for OAuth callback data in URL (for redirect flow)
     checkForOAuthCallback();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const checkForOAuthCallback = async () => {
@@ -59,6 +57,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const oauthData = urlParams.get('oauth');
 
     if (oauthData) {
+      setIsLoading(true);
       try {
         const userData = JSON.parse(decodeURIComponent(oauthData));
 
@@ -74,12 +73,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           setError(userData.error_description || userData.error);
           // Clean up URL on error
           window.history.replaceState({}, document.title, '/');
+          setIsLoading(false);
         }
       } catch (error) {
         console.error('Error processing OAuth callback:', error);
         setError('Authentication failed');
         // Clean up URL on error
         window.history.replaceState({}, document.title, '/');
+        setIsLoading(false);
       }
     }
   };
