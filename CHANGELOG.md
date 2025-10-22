@@ -32,6 +32,9 @@
   - Updated production assets to serve from `./dist/` to avoid 404 at root after deploy.
 - `frontend/src/App.tsx`
   - Display user avatar when authenticated using `user.imageUrl` with placeholder fallback.
+- `frontend/src/pages/Home.tsx`
+  - Remove auto-redirect for authenticated users from `/` to `/dashboard`; Home is now accessible when logged in.
+  - Render `TopNavigation` so the top-right account menu is visible on the homepage when logged in.
 - Database
   - Added column `imageUrl text` to `public.Users`.
 

@@ -1,24 +1,15 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import reactLogo from '../assets/react.svg';
 import viteLogo from '/vite.svg';
 import cloudflareLogo from '../assets/Cloudflare_Logo.svg';
 import { GoogleLoginButton } from '../components/GoogleLoginButton';
-import { useAuth } from '../contexts/AuthContext';
+import { TopNavigation } from '../components/TopNavigation';
 
 export const Home: React.FC = () => {
-  const { isAuthenticated } = useAuth();
-  const navigate = useNavigate();
-
-  // Redirect to dashboard if already authenticated
-  React.useEffect(() => {
-    if (isAuthenticated) {
-      navigate('/dashboard');
-    }
-  }, [isAuthenticated, navigate]);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-950 dark:via-blue-950 dark:to-indigo-950">
+      <TopNavigation />
       <div className="w-full max-w-5xl mx-auto space-y-8 animate-fade-in">
         
         {/* Hero Section */}
