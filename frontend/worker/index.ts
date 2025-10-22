@@ -4,6 +4,7 @@ interface Env {
   XATA_API_KEY?: string;
   XATA_DATABASE_URL?: string;
   USE_MOCK_AUTH?: string;
+  ASSETS?: Fetcher;
 }
 
 async function persistSocialConnection(
@@ -107,6 +108,12 @@ export default {
       return Response.json({
         name: "Cloudflare",
       });
+    }
+
+    // For all non-API requests, delegate to the static assets handler
+    // This enables SPA routing (e.g., /dashboard, /features, /contact)
+    if (env.ASSETS) {
+      return env.ASSETS.fetch(request);
     }
 
     return new Response(null, { status: 404 });

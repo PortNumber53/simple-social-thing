@@ -35,6 +35,26 @@
 - `frontend/src/pages/Home.tsx`
   - Remove auto-redirect for authenticated users from `/` to `/dashboard`; Home is now accessible when logged in.
   - Render `TopNavigation` so the top-right account menu is visible on the homepage when logged in.
+- Branding & Copy updates
+  - Home hero title changed to "Simple Social Thing" and subheading reframed to value-driven copy.
+  - Removed technology logos from Home; footer copy now highlights product benefits.
+  - Browser title and meta description updated in `frontend/index.html`.
+- UI/Navigation
+  - Top brand changed to link to `/` and read "Simple Social Thing".
+  - Center nav now shows `Home / Features / Contact`; added pages and routes.
+  - Account menu moved actions into dropdown; avatar/name links to `/dashboard`.
+  - Improved dropdown UX: hover to open, stronger hover/focus states, removed hover gap.
+  - Always-visible vertical scrollbar to prevent layout shift.
+- Pages
+  - Added `frontend/src/pages/Features.tsx` and `frontend/src/pages/Contact.tsx` (with form).
+- SPA Routing (Cloudflare Workers)
+  - Bound static assets with `binding: ASSETS` in `wrangler.jsonc` and delegated non-API requests in `worker/index.ts` to enable client-side routes (e.g., `/dashboard`).
+- Auth UX
+  - Synchronous auth hydration from `localStorage` in `AuthContext` to eliminate header flash. Only show loading during OAuth callback processing.
+- Fonts
+  - Preconnected and loaded Inter via `<link>` in `index.html`; removed CSS `@import` to reduce flash.
+- Visual polish
+  - Prevented H1 descender clipping on Home by adjusting line-height/padding.
 - Database
   - Added column `imageUrl text` to `public.Users`.
 
