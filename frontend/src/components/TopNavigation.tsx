@@ -49,6 +49,9 @@ export const TopNavigation: React.FC = () => {
             <a href="/contact" className="text-slate-700 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
               Contact
             </a>
+            <a href="/pricing" className="text-slate-700 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+              Pricing
+            </a>
           </div>
 
           {/* User Menu */}
