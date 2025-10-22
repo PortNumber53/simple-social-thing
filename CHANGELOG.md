@@ -47,6 +47,7 @@
   - Always-visible vertical scrollbar to prevent layout shift.
 - Pages
   - Added `frontend/src/pages/Features.tsx` and `frontend/src/pages/Contact.tsx` (with form).
+  - Added `frontend/src/pages/Pricing.tsx` with three tiers (Free, Pro $100/mo, Team $100/seat/mo); wired route `/pricing` and nav link.
 - SPA Routing (Cloudflare Workers)
   - Bound static assets with `binding: ASSETS` in `wrangler.jsonc` and delegated non-API requests in `worker/index.ts` to enable client-side routes (e.g., `/dashboard`).
 - Auth UX
