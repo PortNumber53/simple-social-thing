@@ -98,6 +98,9 @@ export const TopNavigation: React.FC = () => {
                     <a href="/account/settings" className="block px-4 py-2 text-sm rounded-md text-slate-700 dark:text-slate-200 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-700 dark:hover:text-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
                       Settings
                     </a>
+                    <a href="/integrations" className="block px-4 py-2 text-sm rounded-md text-slate-700 dark:text-slate-200 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-700 dark:hover:text-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+                      Integrations
+                    </a>
                     <button
                       onClick={handleLogout}
                       className="w-full text-left block px-4 py-2 text-sm rounded-md text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"

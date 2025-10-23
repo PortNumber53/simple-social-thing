@@ -3,6 +3,11 @@ import { Home } from './pages/Home';
 import { Features } from './pages/Features';
 import { Contact } from './pages/Contact';
 import { Pricing } from './pages/Pricing';
+import { Integrations } from './pages/Integrations';
+import { PrivacyPolicy } from './pages/PrivacyPolicy';
+import { TermsOfService } from './pages/TermsOfService';
+import { UserDataDeletion } from './pages/UserDataDeletion';
+import { InstagramHelp } from './pages/InstagramHelp';
 import { Dashboard } from './pages/Dashboard';
 import { Profile } from './pages/Profile';
 import { Settings } from './pages/Settings';
@@ -16,6 +21,11 @@ function App() {
         <Route path="/features" element={<Features />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/pricing" element={<Pricing />} />
+        <Route path="/integrations" element={<Integrations />} />
+        <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+        <Route path="/terms-of-service" element={<TermsOfService />} />
+        <Route path="/user-data-deletion" element={<UserDataDeletion />} />
+        <Route path="/help/instagram" element={<InstagramHelp />} />
         <Route 
           path="/dashboard" 
           element={

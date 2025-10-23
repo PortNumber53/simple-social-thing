@@ -1,12 +1,12 @@
 import React from 'react';
-import { TopNavigation } from '../components/TopNavigation';
+import { Layout } from '../components/Layout';
 
 export const Pricing: React.FC = () => {
   const tiers = [
     {
       name: 'Free',
-      price: '$0',
-      cadence: 'forever',
+      price: '$10',
+      cadence: 'per month',
       description: 'Try the product and explore core features.',
       features: [
         'Connect 1 social account',
@@ -33,7 +33,7 @@ export const Pricing: React.FC = () => {
     },
     {
       name: 'Team',
-      price: '$100',
+      price: '$150',
       cadence: 'per seat / month',
       description: 'All features plus collaboration tools for teams.',
       features: [
@@ -48,11 +48,10 @@ export const Pricing: React.FC = () => {
   ];
 
   return (
-    <main className="min-h-screen px-4 md:px-8 pt-24 pb-16 bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-950 dark:via-blue-950 dark:to-indigo-950">
-      <TopNavigation />
-      <div className="max-w-6xl mx-auto space-y-10">
+    <Layout>
+        <div className="max-w-6xl mx-auto space-y-10">
         <header className="text-center space-y-3">
-          <h1 className="gradient-text text-4xl md:text-5xl font-extrabold">Pricing</h1>
+          <h1 className="gradient-text text-4xl md:text-5xl font-extrabold leading-[1.15] inline-block pb-2">Pricing</h1>
           <p className="text-slate-600 dark:text-slate-400 text-lg">
             Simple, transparent pricing to help you manage your social presence.
           </p>
@@ -93,7 +92,7 @@ export const Pricing: React.FC = () => {
             </div>
           ))}
         </section>
-      </div>
-    </main>
+        </div>
+    </Layout>
   );
 }

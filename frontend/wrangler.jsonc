@@ -7,6 +7,7 @@
 	"name": "simple-social-thing-frontend",
 	"main": "worker/index.ts",
 	"compatibility_date": "2025-01-01",
+	"compatibility_flags": ["nodejs_compat"],
 	"assets": {
 		"directory": "./dist/",
 		"binding": "ASSETS",
@@ -37,12 +38,18 @@
 	 */
 	/**
 	 * Static Assets
-	 * https://developers.cloudflare.com/workers/static-assets/binding/
+	 * https://developers.cloudflare.com/workelocalConnectionStringrs/static-assets/binding/
 	 */
 	// "assets": { "directory": "./public/", "binding": "ASSETS" }
 	/**
 	 * Service Bindings (communicate between multiple Workers)
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
 	 */
-	// "services": [{ "binding": "MY_SERVICE", "service": "my-service" }]
+	// "services": [{ "binding": "MY_SERVICE", "service": "my-service" }],
+	"hyperdrive": [
+		{
+		"binding": "HYPERDRIVE",
+		"id": "6a6669283cec49e9978addebda7e2727"
+		}
+	]
 }

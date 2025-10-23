@@ -1,10 +1,9 @@
 import React from 'react';
-import { TopNavigation } from '../components/TopNavigation';
+import { Layout } from '../components/Layout';
 
 export const Features: React.FC = () => {
   return (
-    <main className="min-h-screen px-4 md:px-8 pt-24 pb-16 bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-950 dark:via-blue-950 dark:to-indigo-950">
-      <TopNavigation />
+    <Layout>
       <div className="max-w-5xl mx-auto space-y-8">
         <header className="text-center space-y-3">
           <h1 className="text-4xl md:text-5xl font-extrabold gradient-text">Features</h1>
@@ -40,6 +39,6 @@ export const Features: React.FC = () => {
           </div>
         </section>
       </div>
-    </main>
+    </Layout>
   );
 };

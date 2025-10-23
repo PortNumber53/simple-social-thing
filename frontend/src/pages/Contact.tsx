@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { TopNavigation } from '../components/TopNavigation';
+import { Layout } from '../components/Layout';
 
 export const Contact: React.FC = () => {
   const [name, setName] = useState('');
@@ -17,15 +17,14 @@ export const Contact: React.FC = () => {
   };
 
   return (
-    <main className="min-h-screen px-4 md:px-8 pt-24 pb-16 bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-950 dark:via-blue-950 dark:to-indigo-950">
-      <TopNavigation />
+    <Layout>
       <div className="max-w-3xl mx-auto space-y-8">
-        <header className="text-center space-y-3">
-          <h1 className="text-4xl md:text-5xl font-extrabold gradient-text">Contact</h1>
-          <p className="text-slate-600 dark:text-slate-400 text-lg">
-            Tell us about your social presence goals. We'll reach out shortly.
-          </p>
-        </header>
+          <header className="text-center space-y-3">
+            <h1 className="text-4xl md:text-5xl font-extrabold gradient-text">Contact</h1>
+            <p className="text-slate-600 dark:text-slate-400 text-lg">
+              Tell us about your social presence goals. We'll reach out shortly.
+            </p>
+          </header>
 
         <form onSubmit={handleSubmit} className="card p-6 space-y-4">
           {status && (
@@ -71,6 +70,6 @@ export const Contact: React.FC = () => {
           </div>
         </form>
       </div>
-    </main>
+    </Layout>
   );
 }

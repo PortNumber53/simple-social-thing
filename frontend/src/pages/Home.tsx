@@ -1,13 +1,12 @@
 import React from 'react';
 import { GoogleLoginButton } from '../components/GoogleLoginButton';
-import { TopNavigation } from '../components/TopNavigation';
+import { Layout } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 
 export const Home: React.FC = () => {
   const { isAuthenticated } = useAuth();
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 pt-24 pb-16 bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-950 dark:via-blue-950 dark:to-indigo-950">
-      <TopNavigation />
+    <Layout headerPaddingClass="pt-32 md:pt-36">
       <div className="w-full max-w-5xl mx-auto space-y-8 animate-fade-in">
 
         {/* Hero Section */}
@@ -44,14 +43,7 @@ export const Home: React.FC = () => {
             )}
           </div>
         </div>
-
-        {/* Footer */}
-        <div className="text-center pt-8">
-          <p className='text-slate-500 dark:text-slate-400 text-sm'>
-            Simplify your social presence with scheduling, analytics, and a unified inbox.
-          </p>
-        </div>
       </div>
-    </div>
+    </Layout>
   );
 };
