@@ -1,83 +1,120 @@
+import postgres from 'postgres';
+
 interface Env {
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
-  XATA_API_KEY?: string;
-  XATA_DATABASE_URL?: string;
   USE_MOCK_AUTH?: string;
   ASSETS?: Fetcher;
+  INSTAGRAM_APP_ID?: string;
+  INSTAGRAM_APP_SECRET?: string;
+  // Hyperdrive binding is available on env.HYPERDRIVE in CF; typing as any to avoid SDK requirement here
+  // HYPERDRIVE?: { connectionString: string };
+}
+
+// --- Hyperdrive (Postgres) helpers ---
+type SqlClient = ReturnType<typeof postgres> | null;
+
+function getSql(env: any): SqlClient {
+  try {
+    // Prefer Hyperdrive binding in prod; in local, if it resolves to hyperdrive.local (Miniflare),
+    // fall back to DATABASE_URL to avoid local CONNECT_TIMEOUTs.
+    let cs: string | undefined = env?.HYPERDRIVE?.connectionString;
+    if (!cs || /hyperdrive\.local/i.test(cs)) {
+      cs = env?.DATABASE_URL || cs;
+    }
+    if (!cs) return null;
+    return postgres(cs, { ssl: 'require' });
+  } catch {
+    return null;
+  }
+}
+
+async function sqlUpsertUser(sql: NonNullable<SqlClient>, user: { id: string; email: string; name: string; imageUrl?: string | null }): Promise<string> {
+  // Try update by email first (handles existing rows created with a different id)
+  const updated = await sql<{ id: string }[]>`
+    UPDATE public."Users"
+    SET name = ${user.name}, "imageUrl" = ${user.imageUrl ?? null}
+    WHERE email = ${user.email}
+    RETURNING id;
+  `;
+  if (updated.length > 0) return updated[0].id;
+
+  // If no row for that email, insert a new one using the Google id
+  const inserted = await sql<{ id: string }[]>`
+    INSERT INTO public."Users" (id, email, name, "imageUrl")
+    VALUES (${user.id}, ${user.email}, ${user.name}, ${user.imageUrl ?? null})
+    ON CONFLICT (id) DO UPDATE SET
+      email=EXCLUDED.email,
+      name=EXCLUDED.name,
+      "imageUrl"=EXCLUDED."imageUrl"
+    RETURNING id;
+  `;
+  return inserted[0]?.id ?? user.id;
+}
+
+async function sqlUpsertSocial(sql: NonNullable<SqlClient>, conn: { userId: string; provider: string; providerId: string; email?: string | null; name?: string | null }) {
+  const id = `${conn.provider}:${conn.providerId}`;
+  await sql`
+    INSERT INTO public."SocialConnections" (id, "userId", provider, "providerId", email, name, "createdAt")
+    VALUES (${id}, ${conn.userId}, ${conn.provider}, ${conn.providerId}, ${conn.email ?? null}, ${conn.name ?? null}, NOW())
+    ON CONFLICT (provider, "providerId") DO UPDATE SET
+      "userId" = EXCLUDED."userId",
+      email = EXCLUDED.email,
+      name = EXCLUDED.name;
+  `;
+}
+
+async function sqlQuerySocial(sql: NonNullable<SqlClient>, userId: string, provider: string) {
+  const rows = await sql<{
+    id: string; userId: string; provider: string; providerId: string; name: string | null
+  }[]>`
+    SELECT id, "userId", provider, "providerId", name
+    FROM public."SocialConnections"
+    WHERE "userId" = ${userId} AND provider = ${provider}
+    ORDER BY "createdAt" DESC
+    LIMIT 1;
+  `;
+  return rows[0] || null;
+}
+
+// --- Generic cookie helpers ---
+function getCookie(cookieHeader: string, name: string): string | null {
+  const parts = cookieHeader.split(/;\s*/);
+  for (const p of parts) {
+    const idx = p.indexOf('=');
+    if (idx === -1) continue;
+    const k = p.slice(0, idx);
+    if (k === name) return decodeURIComponent(p.slice(idx + 1));
+  }
+  return null;
+}
+
+function buildSidCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
+  const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
+  const parts = [
+    `sid=${encodeURIComponent(value)}`,
+    `Path=/`,
+    `HttpOnly`,
+    `SameSite=Lax`,
+  ];
+  if (maxAgeSeconds > 0) {
+    parts.push(`Max-Age=${maxAgeSeconds}`);
+  } else {
+    parts.push('Max-Age=0');
+  }
+  if (isHttps) parts.push('Secure');
+  return parts.join('; ');
 }
 
 async function persistSocialConnection(
-  env: Env,
-  conn: { userId: string; provider: string; providerId: string; email?: string; name?: string }
-) {
-  if (!env.XATA_API_KEY || !env.XATA_DATABASE_URL) return;
-  const base = env.XATA_DATABASE_URL.replace(/\/$/, '');
-  const id = `${conn.provider}:${conn.providerId}`;
-  // Try create
-  const createRes = await fetch(`${base}/tables/SocialConnections/data`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${env.XATA_API_KEY}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
-    body: JSON.stringify({
-      id,
-      userId: conn.userId,
-      provider: conn.provider,
-      providerId: conn.providerId,
-      email: conn.email,
-      name: conn.name,
-    })
-  });
-  if (createRes.ok) return;
-  // If exists, update by id
-  await fetch(`${base}/tables/SocialConnections/data/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    headers: {
-      'Authorization': `Bearer ${env.XATA_API_KEY}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
-    body: JSON.stringify({
-      userId: conn.userId,
-      provider: conn.provider,
-      providerId: conn.providerId,
-      email: conn.email,
-      name: conn.name,
-    })
-  }).catch(() => {});
-}
+  _env: Env,
+  _conn: { userId: string; provider: string; providerId: string; email?: string; name?: string }
+) { /* no-op: Hyperdrive SQL is authoritative */ }
 
 async function persistUser(
-  env: Env,
-  user: { id: string; email: string; name: string; imageUrl?: string }
-) {
-  if (!env.XATA_API_KEY || !env.XATA_DATABASE_URL) return;
-  const base = env.XATA_DATABASE_URL.replace(/\/$/, '');
-  // Try create
-  const createRes = await fetch(`${base}/tables/users/data`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${env.XATA_API_KEY}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
-    body: JSON.stringify({ id: user.id, email: user.email, name: user.name, imageUrl: user.imageUrl })
-  });
-  if (createRes.ok) return;
-  // If create failed (likely exists), try update by id
-  await fetch(`${base}/tables/users/data/${encodeURIComponent(user.id)}`, {
-    method: 'PATCH',
-    headers: {
-      'Authorization': `Bearer ${env.XATA_API_KEY}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-    },
-    body: JSON.stringify({ email: user.email, name: user.name, imageUrl: user.imageUrl })
-  }).catch(() => {});
-}
+  _env: Env,
+  _user: { id: string; email: string; name: string; imageUrl?: string }
+) { /* no-op: Hyperdrive SQL is authoritative */ }
 
 interface GoogleTokenResponse {
   access_token: string;
@@ -105,9 +142,42 @@ export default {
 
     // Handle other API routes
     if (url.pathname.startsWith("/api/")) {
-      return Response.json({
-        name: "Cloudflare",
-      });
+      // Connection status endpoint
+      if (url.pathname === "/api/integrations/status") {
+        const cookie = request.headers.get('Cookie') || '';
+        const conn = parseInstagramCookie(cookie);
+        const sid = getCookie(cookie, 'sid');
+        // Prefer Hyperdrive-backed status if we have a session id and SQL client
+        if (sid) {
+          const sql = getSql(env as any);
+          if (sql) {
+            try {
+              const row = await sqlQuerySocial(sql, sid, 'instagram');
+              if (row) {
+                return Response.json({ instagram: { connected: true, account: { id: row.providerId, username: row.name || null } } });
+              }
+            } catch {}
+          }
+        }
+        // Fallback to cookie-only status
+        return Response.json({ instagram: conn ? { connected: true, account: conn } : { connected: false } });
+      }
+
+      // Instagram disconnect clears cookie
+      if (url.pathname === "/api/integrations/instagram/disconnect") {
+        const headers = new Headers({ 'Set-Cookie': buildInstagramCookie('', 0) });
+        return new Response(null, { status: 204, headers });
+      }
+      // Instagram OAuth start
+      if (url.pathname === "/api/integrations/instagram/auth") {
+        return startInstagramOAuth(request, env);
+      }
+      // Instagram OAuth callback
+      if (url.pathname === "/api/integrations/instagram/callback") {
+        return handleInstagramCallback(request, env);
+      }
+
+      return Response.json({ ok: true });
     }
 
     // For all non-API requests, delegate to the static assets handler
@@ -119,6 +189,132 @@ export default {
     return new Response(null, { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
+
+async function startInstagramOAuth(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:5173` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/instagram/callback', url.origin).toString();
+
+  if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'instagram_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
+  }
+
+  const scopes = [
+    'instagram_basic',
+    'pages_show_list',
+    'pages_manage_metadata',
+    'instagram_manage_messages',
+    'instagram_manage_comments',
+    'business_management',
+    'pages_read_engagement'
+  ].join(',');
+
+  const state = crypto.randomUUID();
+  const authUrl = new URL('https://www.facebook.com/v18.0/dialog/oauth');
+  authUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID!);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('scope', scopes);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('state', state);
+
+  return Response.redirect(authUrl.toString(), 302);
+}
+
+async function handleInstagramCallback(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:5173` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/instagram/callback', url.origin).toString();
+
+  const code = url.searchParams.get('code');
+  const error = url.searchParams.get('error');
+
+  const useMock = env.USE_MOCK_AUTH === 'true' || !env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET;
+  if (useMock) {
+    const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'instagram', account: { id: 'mock-ig-123', name: 'Mock Instagram' } }));
+    return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
+  }
+
+  if (error) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error }));
+    return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
+  }
+  if (!code) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'missing_code' }));
+    return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
+  }
+
+  // Exchange code for short-lived token
+  const tokenUrl = new URL('https://graph.facebook.com/v18.0/oauth/access_token');
+  tokenUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID!);
+  tokenUrl.searchParams.set('client_secret', env.INSTAGRAM_APP_SECRET!);
+  tokenUrl.searchParams.set('redirect_uri', redirectUri);
+  tokenUrl.searchParams.set('code', code);
+
+  try {
+    // Step 1: Exchange code for short-lived token
+    const tokenRes = await fetch(tokenUrl.toString(), { headers: { 'Accept': 'application/json' }});
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text().catch(() => '');
+      console.error('[IG] token_exchange_failed', tokenRes.status, errText);
+      const data = encodeURIComponent(JSON.stringify({ success: false, error: 'token_exchange_failed', status: tokenRes.status }));
+      return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
+    }
+    const short = (await tokenRes.json()) as { access_token: string };
+
+    // Step 2: Get user pages and find linked Instagram business account
+    const pagesRes = await fetch(`https://graph.facebook.com/v18.0/me/accounts?fields=name,instagram_business_account&access_token=${encodeURIComponent(short.access_token)}`);
+    if (!pagesRes.ok) {
+      const errText = await pagesRes.text().catch(() => '');
+      console.error('[IG] pages_fetch_failed', pagesRes.status, errText);
+      const data = encodeURIComponent(JSON.stringify({ success: false, error: 'pages_fetch_failed', status: pagesRes.status }));
+      return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
+    }
+    const pages = (await pagesRes.json()) as { data?: Array<{ id: string; name: string; instagram_business_account?: { id: string } }> };
+    const summary = (pages.data || []).slice(0, 8).map(p => ({ id: p.id, name: p.name, hasIg: !!p.instagram_business_account?.id }));
+    console.log('[IG] pages summary', JSON.stringify(summary));
+    const withIg = pages.data?.find(p => p.instagram_business_account?.id);
+    if (!withIg) {
+      const data = encodeURIComponent(JSON.stringify({ success: false, error: 'no_instagram_business_account_linked', pages: summary }));
+      return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
+    }
+
+    // Step 3: Fetch IG username for display
+    const igId = withIg.instagram_business_account!.id;
+    const igRes = await fetch(`https://graph.facebook.com/v18.0/${encodeURIComponent(igId)}?fields=username&access_token=${encodeURIComponent(short.access_token)}`);
+    const ig = igRes.ok ? ((await igRes.json()) as { username?: string }) : {};
+
+    // Persist connection via Hyperdrive SQL when available (falls back to no-op on DB)
+    const cookieHeader = request.headers.get('Cookie') || '';
+    const sid = getCookie(cookieHeader, 'sid');
+    const sql = getSql(env as any);
+    if (sql && sid) {
+      try {
+        await sqlUpsertSocial(sql, {
+          userId: sid,
+          provider: 'instagram',
+          providerId: igId,
+          name: ig.username || null,
+        });
+      } catch {}
+    }
+
+    // Set a cookie with minimal IG connection info and redirect back to client
+    const cookieValue = JSON.stringify({ id: igId, username: ig.username || null });
+    const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'instagram', account: { id: igId, username: ig.username || null } }));
+    const location = `${clientUrl}/integrations?instagram=${data}`;
+    const headers = new Headers();
+    headers.set('Location', location);
+    headers.append('Set-Cookie', buildInstagramCookie(cookieValue, 60 * 60 * 24 * 30, request.url)); // 30 days
+    return new Response(null, { status: 302, headers });
+  } catch (e) {
+    console.error('[IG] internal_error', e);
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'internal_error' }));
+    return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
+  }
+}
 
 async function handleOAuthCallback(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -243,28 +439,57 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
       imageUrl: userData.picture,
       accessToken: tokenData.access_token,
     };
+    console.log('Google picture:', userData.picture)
 
-    await persistUser(env, {
-      id: frontendUserData.id,
-      email: frontendUserData.email,
-      name: frontendUserData.name,
-      imageUrl: frontendUserData.imageUrl,
-    });
-    await persistSocialConnection(env, {
-      userId: frontendUserData.id,
-      provider: 'google',
-      providerId: userData.id,
-      email: frontendUserData.email,
-      name: frontendUserData.name,
-    });
+    // Upsert user into Postgres via Hyperdrive if available
+    {
+      const sql = getSql(env as any);
+      if (sql) {
+        let canonicalUserId = frontendUserData.id;
+        try {
+          canonicalUserId = await sqlUpsertUser(sql, {
+            id: frontendUserData.id,
+            email: frontendUserData.email,
+            name: frontendUserData.name,
+            imageUrl: frontendUserData.imageUrl || null,
+          });
+        } catch (e) {
+          console.error('[DB] sqlUpsertUser failed', e);
+        }
+        try {
+          // Also record Google connection (optional)
+          await sqlUpsertSocial(sql, {
+            userId: canonicalUserId,
+            provider: 'google',
+            providerId: userData.id,
+            email: frontendUserData.email,
+            name: frontendUserData.name,
+          });
+        } catch (e) {
+          console.error('[DB] sqlUpsertSocial (google) failed', e);
+        }
+      }
+    }
 
-    // Redirect back to frontend with user data in URL parameter
-    const userDataParam = encodeURIComponent(JSON.stringify({
-      success: true,
-      user: frontendUserData,
-    }));
-
-    return Response.redirect(`${clientUrl}?oauth=${userDataParam}`, 302);
+    // Redirect back to frontend with user data in URL parameter and set session cookie (sid)
+    const userDataParam = encodeURIComponent(JSON.stringify({ success: true, user: frontendUserData }));
+    const headers = new Headers();
+    headers.set('Location', `${clientUrl}?oauth=${userDataParam}`);
+    // Prefer canonical DB user id in the session cookie to satisfy FK constraints later
+    const sql = getSql(env as any);
+    let sidValue = frontendUserData.id;
+    if (sql) {
+      try {
+        sidValue = await sqlUpsertUser(sql, {
+          id: frontendUserData.id,
+          email: frontendUserData.email,
+          name: frontendUserData.name,
+          imageUrl: frontendUserData.imageUrl || null,
+        });
+      } catch {}
+    }
+    headers.append('Set-Cookie', buildSidCookie(sidValue, 60 * 60 * 24 * 30, request.url));
+    return new Response(null, { status: 302, headers });
 
   } catch (error) {
     console.error('OAuth callback error:', error);
@@ -272,5 +497,41 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
       error: 'internal_error',
       error_description: 'An internal error occurred during OAuth processing'
     }, { status: 500 });
+  }
+}
+
+// --- Cookie helpers for Instagram connection persistence ---
+function buildInstagramCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
+  const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
+  const parts = [
+    `ig_conn=${encodeURIComponent(value)}`,
+    `Path=/`,
+    `HttpOnly`,
+    `SameSite=Lax`,
+  ];
+  if (maxAgeSeconds > 0) {
+    parts.push(`Max-Age=${maxAgeSeconds}`);
+  } else {
+    parts.push('Max-Age=0');
+  }
+  if (isHttps) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function parseInstagramCookie(cookieHeader: string): { id: string; username: string | null } | null {
+  const entries = cookieHeader
+    .split(/;\s*/)
+    .map(kv => {
+      const idx = kv.indexOf('=');
+      if (idx === -1) return [kv, ''];
+      return [kv.slice(0, idx), decodeURIComponent(kv.slice(idx + 1))] as [string, string];
+    });
+  const cookies = Object.fromEntries(entries);
+  const raw = cookies['ig_conn'];
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
   }
 }

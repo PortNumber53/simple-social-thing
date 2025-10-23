@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { TopNavigation } from '../components/TopNavigation';
+import { Layout } from '../components/Layout';
 import { StatusBar } from '../components/StatusBar';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -60,11 +60,8 @@ export const Profile: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-950 dark:via-blue-950 dark:to-indigo-950">
-      <TopNavigation />
-      
-      <main className="pt-20 pb-14 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-4xl mx-auto">
+    <Layout>
+        <div className="max-w-4xl mx-auto pt-6">
           {/* Header */}
           <div className="mb-8 animate-fade-in">
             <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-2">
@@ -283,9 +280,7 @@ export const Profile: React.FC = () => {
             </div>
           </div>
         </div>
-      </main>
-
       <StatusBar />
-    </div>
+    </Layout>
   );
 };
