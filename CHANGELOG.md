@@ -6,6 +6,7 @@
 - Improved security by removing hardcoded database credentials from wrangler configs.
 - Fixed Hyperdrive local development configuration.
 - Reduced database query timeout from 60s to 5s for faster OAuth flow.
+- Updated Jenkins pipeline for automated deployments to production server.
 
 ### Backend
 - Created Go backend with Air for hot reload development
@@ -18,10 +19,13 @@
   - `backend/.air.toml` - Air hot reload configuration
   - `backend/README.md` - Complete setup and usage documentation
 - Added deployment infrastructure
-  - `deploy/Jenkinsfile` - Multi-configuration Jenkins pipeline for dev/staging/production
-  - `deploy/deploy-{dev,staging,production}.sh` - Environment-specific deployment scripts
-  - `deploy/systemd/*.service` - Systemd service files for each environment
+  - `deploy/Jenkinsfile` - Multi-architecture build pipeline (amd64/arm64) with automated deployment to web1
+  - `deploy/dbtool-migrate.sh` - Database migration script for Jenkins
+  - `deploy/README.md` - Complete deployment documentation
+  - `deploy/deploy-{dev,staging,production}.sh` - Legacy environment-specific deployment scripts
+  - `deploy/systemd/*.service` - Legacy systemd service files
 - Backend runs on port `18002` with hot reload via Air
+- Jenkins pipeline deploys to `/var/www/vhosts/simple.truvis.co` on web1
 
 ### Frontend
 - `frontend/worker/index.ts`

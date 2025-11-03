@@ -1,96 +1,139 @@
+// Declarative Pipeline with a build matrix ready for CI and multi-arch
+// Builds Linux binaries for amd64 and arm64; deploys amd64 to web1.
+
 pipeline {
-    agent any
-    
-    parameters {
-        choice(
-            name: 'ENVIRONMENT',
-            choices: ['dev', 'staging', 'production'],
-            description: 'Target environment'
-        )
-        booleanParam(
-            name: 'RUN_MIGRATIONS',
-            defaultValue: false,
-            description: 'Run database migrations'
-        )
+  agent any
+
+  options {
+    timestamps()
+    ansiColor('xterm')
+    skipDefaultCheckout(false)
+  }
+
+  environment {
+    GO111MODULE = 'on'
+    // Deployment targets
+    TARGET_HOST    = 'web1'
+    TARGET_DIR     = '/var/www/vhosts/simple.truvis.co'
+    SERVICE_NAME   = 'simple-social-thing'
+    SSH_CREDENTIALS = 'brain-jenkins-private-key'  // Jenkins credential ID (Username with private key)
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+        sh 'git rev-parse --short HEAD'
+      }
     }
-    
-    environment {
-        GO_VERSION = '1.23'
-        APP_NAME = 'simple-social-thing-backend'
-    }
-    
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
+
+    stage('Build Matrix') {
+      matrix {
+        axes {
+          axis {
+            name 'GOARCH'
+            values 'amd64', 'arm64'
+          }
         }
-        
-        stage('Setup Go') {
+        stages {
+          stage('Build') {
             steps {
-                sh '''
-                    go version
-                    cd backend
-                    go mod download
+              dir('backend') {
+                sh label: 'Go build', script: '''
+                  set -euo pipefail
+                  go version || true
+                  export GOOS=linux
+                  export CGO_ENABLED=0
+                  echo "Building for $GOOS/$GOARCH"
+                  out="simple-social-thing-${GOOS}-${GOARCH}"
+                  go build -ldflags="-s -w" -o "$out" ./cmd/api
                 '''
+              }
             }
-        }
-        
-        stage('Run Tests') {
+          }
+          stage('Archive') {
             steps {
-                sh '''
-                    cd backend
-                    go test ./... -v
-                '''
+              sh '''
+                set -euo pipefail
+                mkdir -p artifacts
+                cp backend/simple-social-thing-linux-${GOARCH} artifacts/
+              '''
+              stash name: "bin-${GOARCH}", includes: "artifacts/simple-social-thing-linux-${GOARCH}"
             }
+          }
         }
-        
-        stage('Build') {
-            steps {
-                sh '''
-                    cd backend
-                    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/api ./cmd/api
-                '''
-            }
+        post {
+          success {
+            echo "Built ${GOARCH} successfully"
+          }
         }
-        
-        stage('Run Migrations') {
-            when {
-                expression { params.RUN_MIGRATIONS == true }
-            }
-            steps {
-                script {
-                    withCredentials([string(credentialsId: "database-url-${params.ENVIRONMENT}", variable: 'DATABASE_URL')]) {
-                        sh '''
-                            cd backend
-                            go run db/migrate.go -direction=up
-                        '''
-                    }
-                }
-            }
-        }
-        
-        stage('Deploy') {
-            steps {
-                script {
-                    def deployScript = "deploy/deploy-${params.ENVIRONMENT}.sh"
-                    if (fileExists(deployScript)) {
-                        sh "chmod +x ${deployScript}"
-                        sh "./${deployScript}"
-                    } else {
-                        error "Deployment script not found: ${deployScript}"
-                    }
-                }
-            }
-        }
+      }
     }
-    
-    post {
-        success {
-            echo "Deployment to ${params.ENVIRONMENT} completed successfully!"
-        }
-        failure {
-            echo "Deployment to ${params.ENVIRONMENT} failed!"
-        }
+
+    stage('DB Migrate (All)') {
+      when { expression { return env.XATA_DATABASE_URL?.trim() } }
+      steps {
+        sh label: 'dbtool diagnostics', script: '''
+          set -euo pipefail
+          echo "dbtool version: $(dbtool --version || echo not-found)"
+        '''
+        sh 'bash deploy/dbtool-migrate.sh'
+      }
     }
+
+    stage('Deploy (amd64 → web1)') {
+      steps {
+        unstash "bin-amd64"
+        sshagent(credentials: [env.SSH_CREDENTIALS]) {
+          sh label: 'Upload & install', script: '''
+            set -euo pipefail
+            BIN_LOCAL="artifacts/simple-social-thing-linux-amd64"
+            # Upload binary and unit file to /tmp on target
+            scp "$BIN_LOCAL" grimlock@${TARGET_HOST}:/tmp/simple-social-thing
+            cat > simple-social-thing.service << 'EOF'
+[Unit]
+Description=Simple Social Thing
+After=network-online.target
+[Service]
+User=grimlock
+Group=grimlock
+WorkingDirectory=${TARGET_DIR}
+EnvironmentFile=/etc/simple-social-thing/config.ini
+Environment=PORT=18002
+ExecStart=${TARGET_DIR}/simple-social-thing
+Restart=always
+RestartSec=2s
+NoNewPrivileges=true
+LimitNOFILE=65536
+StandardOutput=append:${TARGET_DIR}/logs/app.log
+StandardError=append:${TARGET_DIR}/logs/error.log
+[Install]
+WantedBy=multi-user.target
+EOF
+            scp simple-social-thing.service grimlock@${TARGET_HOST}:/tmp/simple-social-thing.service
+
+            # Prepare target and (re)start service
+            ssh grimlock@${TARGET_HOST} "
+              set -euo pipefail
+              sudo mkdir -p ${TARGET_DIR} ${TARGET_DIR}/logs
+              sudo chown -R grimlock:grimlock ${TARGET_DIR}
+              sudo mv /tmp/simple-social-thing ${TARGET_DIR}/simple-social-thing
+              sudo chown grimlock:grimlock ${TARGET_DIR}/simple-social-thing
+              sudo chmod 0755 ${TARGET_DIR}/simple-social-thing
+              sudo mv /tmp/simple-social-thing.service /etc/systemd/system/${SERVICE_NAME}.service
+              sudo systemctl daemon-reload
+              sudo systemctl enable ${SERVICE_NAME}
+              sudo systemctl restart ${SERVICE_NAME}
+            "
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    success { echo 'Pipeline completed successfully.' }
+    failure { echo 'Pipeline failed.' }
+    always  { sh 'ls -lah artifacts || true' }
+  }
 }
