@@ -7,7 +7,7 @@ This directory contains the Jenkins pipeline and deployment scripts for Simple S
 The `Jenkinsfile` defines a multi-architecture build pipeline that:
 
 1. **Builds** Go binaries for both `amd64` and `arm64` architectures
-2. **Runs database migrations** (if `XATA_DATABASE_URL` is set)
+2. **Runs database migrations** (if `DATABASE_URL` is set)
 3. **Deploys** the `amd64` binary to `web1` server
 
 ### Environment Variables
@@ -18,7 +18,7 @@ Configure these in Jenkins:
 - `TARGET_DIR` - Deployment directory (default: `/var/www/vhosts/simple.truvis.co`)
 - `SERVICE_NAME` - Systemd service name (default: `simple-social-thing`)
 - `SSH_CREDENTIALS` - Jenkins credential ID for SSH key (default: `brain-jenkins-private-key`)
-- `XATA_DATABASE_URL` - Database connection string (optional, for migrations)
+- `DATABASE_URL` - Database connection string (optional, for migrations)
 
 ### Jenkins Credentials
 
@@ -29,7 +29,7 @@ Required Jenkins credentials:
    - Username: `grimlock`
    - Private key: SSH key for accessing web1
 
-2. **Database URL** (optional, `XATA_DATABASE_URL`)
+2. **Database URL** (optional, `DATABASE_URL`)
    - Type: Secret text
    - Value: PostgreSQL connection string
 
@@ -37,7 +37,7 @@ Required Jenkins credentials:
 
 1. **Checkout** - Clones the repository
 2. **Build Matrix** - Builds binaries for amd64 and arm64
-3. **DB Migrate** - Runs database migrations (if XATA_DATABASE_URL is set)
+3. **DB Migrate** - Runs database migrations (if DATABASE_URL is set)
 4. **Deploy** - Deploys amd64 binary to web1 and restarts the service
 
 ## Server Setup
@@ -112,7 +112,7 @@ tail -f /var/www/vhosts/simple.truvis.co/logs/error.log
 
 ## Database Migrations
 
-Migrations are run automatically during deployment if `XATA_DATABASE_URL` is set in Jenkins.
+Migrations are run automatically during deployment if `DATABASE_URL` is set in Jenkins.
 
 ### Manual Migration
 
@@ -126,7 +126,7 @@ DATABASE_URL="postgresql://..." go run db/migrate.go -direction=up
 Or use the migration script:
 
 ```bash
-XATA_DATABASE_URL="postgresql://..." bash deploy/dbtool-migrate.sh
+DATABASE_URL="postgresql://..." bash deploy/dbtool-migrate.sh
 ```
 
 ## Build Artifacts

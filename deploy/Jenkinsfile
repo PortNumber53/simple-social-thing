@@ -71,7 +71,7 @@ pipeline {
     }
 
     stage('DB Migrate (All)') {
-      when { expression { return env.XATA_DATABASE_URL?.trim() } }
+      when { expression { return env.DATABASE_URL?.trim() } }
       steps {
         sh label: 'dbtool diagnostics', script: '''
           set -euo pipefail
