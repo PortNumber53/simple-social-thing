@@ -1,0 +1,8 @@
+# Simple Social Thing Configuration
+# Copy this file to /etc/simple-social-thing/config.ini and update with your values
+
+# Database connection string
+DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
+
+# Optional: Additional environment variables
+# PORT=18002
