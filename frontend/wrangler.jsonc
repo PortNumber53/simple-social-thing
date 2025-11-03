@@ -7,7 +7,9 @@
 	"name": "simple-social-thing-frontend",
 	"main": "worker/index.ts",
 	"compatibility_date": "2025-01-01",
-	"compatibility_flags": ["nodejs_compat"],
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
 	"assets": {
 		"directory": "./dist/",
 		"binding": "ASSETS",
@@ -48,8 +50,8 @@
 	// "services": [{ "binding": "MY_SERVICE", "service": "my-service" }],
 	"hyperdrive": [
 		{
-		"binding": "HYPERDRIVE",
-		"id": "6a6669283cec49e9978addebda7e2727"
+			"binding": "HYPERDRIVE",
+			"id": "c07c0f479336421898ecaa1767952941"
 		}
 	]
 }

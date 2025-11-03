@@ -16,18 +16,10 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
   const handleGoogleLogin = () => {
     setIsLoading(true);
 
-    // Generate Google OAuth URL that redirects to our worker
+    // Generate Google OAuth URL that redirects to our current origin
+    // The Vite dev server will proxy /api requests to the worker
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    
-    // Determine worker origin dynamically
-    // In production, use the current origin (same domain as frontend)
-    // In local dev, use VITE_WORKER_ORIGIN if set (e.g., http://localhost:8787)
-    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const workerOrigin = (isLocalhost && import.meta.env.VITE_WORKER_ORIGIN) 
-      ? import.meta.env.VITE_WORKER_ORIGIN 
-      : window.location.origin;
-    
-    const redirectUri = `${workerOrigin}/api/auth/google/callback`;
+    const redirectUri = `${window.location.origin}/api/auth/google/callback`;
     const scope = 'openid email profile';
     const state = Math.random().toString(36).substring(2, 15);
 

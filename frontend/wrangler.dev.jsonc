@@ -1,0 +1,22 @@
+/**
+ * Development configuration for Wrangler
+ * This config is used for local development only
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "simple-social-thing-frontend-dev",
+	"main": "worker/index.ts",
+	"compatibility_date": "2025-01-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"observability": {
+		"enabled": true
+	},
+	"hyperdrive": [
+		{
+			"binding": "HYPERDRIVE",
+			"id": "c07c0f479336421898ecaa1767952941"
+		}
+	]
+}

@@ -1,5 +1,54 @@
 # Changelog
 
+## 2025-11-03
+
+- Added Go backend API with hot reload, migrations, and multi-environment deployment.
+- Improved security by removing hardcoded database credentials from wrangler configs.
+- Fixed Hyperdrive local development configuration.
+- Reduced database query timeout from 60s to 5s for faster OAuth flow.
+
+### Backend
+- Created Go backend with Air for hot reload development
+  - `backend/cmd/api/main.go` - Main application entry point
+  - `backend/internal/handlers/handlers.go` - HTTP handlers for Users, SocialConnections, Teams
+  - `backend/internal/models/models.go` - Data models
+  - `backend/db/migrate.go` - Database migration tool
+  - `backend/db/migrations/001_initial_schema.up.sql` - Initial schema migration
+  - `backend/Makefile` - Convenience commands (dev, build, test, migrate-up, migrate-down)
+  - `backend/.air.toml` - Air hot reload configuration
+  - `backend/README.md` - Complete setup and usage documentation
+- Added deployment infrastructure
+  - `deploy/Jenkinsfile` - Multi-configuration Jenkins pipeline for dev/staging/production
+  - `deploy/deploy-{dev,staging,production}.sh` - Environment-specific deployment scripts
+  - `deploy/systemd/*.service` - Systemd service files for each environment
+- Backend runs on port `18002` with hot reload via Air
+
+### Frontend
+- `frontend/worker/index.ts`
+  - Reduced database query timeout from 60 seconds to 5 seconds for faster OAuth callback
+  - Improved error handling and logging for database operations
+- `frontend/package.json`
+  - Updated `dev:worker` script to source `.dev.vars` and set `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE` from `DATABASE_URL`
+  - Uses bash with `set -a` to properly export environment variables
+- `frontend/wrangler.jsonc`
+  - Removed hardcoded database connection string (production config)
+- `frontend/wrangler.dev.jsonc`
+  - Created separate dev configuration
+  - Removed hardcoded `localConnectionString` - now uses environment variable
+- `frontend/.dev.vars.example`
+  - Updated port references to `18002`
+
+### Security Improvements
+- No hardcoded database credentials in version-controlled files
+- `.dev.vars` properly gitignored
+- Production uses Cloudflare Hyperdrive config (secure)
+- Local development uses environment variable for database connection
+
+### Notes
+- Start backend dev: `cd backend && make dev`
+- Start frontend dev: `cd frontend && npm run dev`
+- Run migrations: `cd backend && make migrate-up`
+
 ## 2025-10-22
 
 - Migrate persistence from Xata REST to Postgres via Cloudflare Hyperdrive in the Worker.

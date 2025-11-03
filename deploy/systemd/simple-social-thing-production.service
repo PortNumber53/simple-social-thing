@@ -1,0 +1,18 @@
+[Unit]
+Description=Simple Social Thing Backend - PRODUCTION
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/simple-social-thing/production
+ExecStart=/opt/simple-social-thing/production/api
+Restart=on-failure
+RestartSec=5s
+
+Environment="PORT=8082"
+Environment="ENVIRONMENT=production"
+EnvironmentFile=/opt/simple-social-thing/production/.env
+
+[Install]
+WantedBy=multi-user.target

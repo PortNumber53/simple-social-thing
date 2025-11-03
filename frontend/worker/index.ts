@@ -23,7 +23,12 @@ function getSql(env: any): SqlClient {
       cs = env?.DATABASE_URL || cs;
     }
     if (!cs) return null;
-    return postgres(cs, { ssl: 'require' });
+    return postgres(cs, { 
+      ssl: 'require',
+      connect_timeout: 5,  // 5 second timeout instead of default 30s
+      idle_timeout: 10,
+      max_lifetime: 60
+    });
   } catch {
     return null;
   }
@@ -142,6 +147,20 @@ export default {
 
     // Handle other API routes
     if (url.pathname.startsWith("/api/")) {
+      // DB ping endpoint
+      if (url.pathname === "/api/db/ping") {
+        const sql = getSql(env as any);
+        if (!sql) {
+          return Response.json({ ok: false, error: 'no_sql_client' }, { status: 503 });
+        }
+        try {
+          await sql`select 1 as one`;
+          return Response.json({ ok: true });
+        } catch (e) {
+          console.error('[DB] ping failed', e);
+          return Response.json({ ok: false, error: 'db_unreachable' }, { status: 500 });
+        }
+      }
       // Connection status endpoint
       if (url.pathname === "/api/integrations/status") {
         const cookie = request.headers.get('Cookie') || '';
@@ -320,8 +339,7 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
-  const redirectUri = new URL('/api/auth/google/callback', url.origin).toString();
-
+  
   // Determine client URL dynamically
   // For local dev: worker is on :8787, frontend is on :5173
   // For production: both are on the same domain
@@ -329,6 +347,12 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
   const clientUrl = isLocalhost
     ? `http://localhost:5173`
     : url.origin.replace(/\/api.*$/, '');
+  
+  // The redirect_uri must match what was sent to Google in the auth request
+  // In dev: frontend sends localhost:5173, in prod: same as url.origin
+  const redirectUri = isLocalhost
+    ? `${clientUrl}/api/auth/google/callback`
+    : new URL('/api/auth/google/callback', url.origin).toString();
 
   // Handle OAuth errors
   if (error) {

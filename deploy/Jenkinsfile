@@ -1,0 +1,96 @@
+pipeline {
+    agent any
+    
+    parameters {
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['dev', 'staging', 'production'],
+            description: 'Target environment'
+        )
+        booleanParam(
+            name: 'RUN_MIGRATIONS',
+            defaultValue: false,
+            description: 'Run database migrations'
+        )
+    }
+    
+    environment {
+        GO_VERSION = '1.23'
+        APP_NAME = 'simple-social-thing-backend'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Setup Go') {
+            steps {
+                sh '''
+                    go version
+                    cd backend
+                    go mod download
+                '''
+            }
+        }
+        
+        stage('Run Tests') {
+            steps {
+                sh '''
+                    cd backend
+                    go test ./... -v
+                '''
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                sh '''
+                    cd backend
+                    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/api ./cmd/api
+                '''
+            }
+        }
+        
+        stage('Run Migrations') {
+            when {
+                expression { params.RUN_MIGRATIONS == true }
+            }
+            steps {
+                script {
+                    withCredentials([string(credentialsId: "database-url-${params.ENVIRONMENT}", variable: 'DATABASE_URL')]) {
+                        sh '''
+                            cd backend
+                            go run db/migrate.go -direction=up
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                script {
+                    def deployScript = "deploy/deploy-${params.ENVIRONMENT}.sh"
+                    if (fileExists(deployScript)) {
+                        sh "chmod +x ${deployScript}"
+                        sh "./${deployScript}"
+                    } else {
+                        error "Deployment script not found: ${deployScript}"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "Deployment to ${params.ENVIRONMENT} completed successfully!"
+        }
+        failure {
+            echo "Deployment to ${params.ENVIRONMENT} failed!"
+        }
+    }
+}
