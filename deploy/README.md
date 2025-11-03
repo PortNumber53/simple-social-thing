@@ -42,29 +42,47 @@ Required Jenkins credentials:
 
 ## Server Setup
 
+### Automated Setup
+
+The Jenkins pipeline automatically handles most of the server setup:
+
+1. **Creates deployment directories:**
+   - `/var/www/vhosts/simple.truvis.co`
+   - `/var/www/vhosts/simple.truvis.co/logs`
+
+2. **Creates config directory:**
+   - `/etc/simple-social-thing`
+
+3. **Initializes config file (first deployment only):**
+   - Copies `config.ini.sample` to `/etc/simple-social-thing/config.ini`
+   - Sets ownership to `root:grimlock`
+   - Sets permissions to `640`
+   - **Does NOT overwrite existing config files**
+
+### Manual Configuration Required
+
+After the first deployment, you must edit the config file with your actual values:
+
+```bash
+sudo nano /etc/simple-social-thing/config.ini
+```
+
+Update the `DATABASE_URL` with your actual database connection string:
+
+```ini
+# Simple Social Thing Configuration
+DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
+```
+
+Then restart the service:
+
+```bash
+sudo systemctl restart simple-social-thing
+```
+
 ### Prerequisites on Target Server (web1)
 
-1. **Create deployment directory:**
-   ```bash
-   sudo mkdir -p /var/www/vhosts/simple.truvis.co/logs
-   sudo chown -R grimlock:grimlock /var/www/vhosts/simple.truvis.co
-   ```
-
-2. **Create config directory:**
-   ```bash
-   sudo mkdir -p /etc/simple-social-thing
-   ```
-
-3. **Create config file** (`/etc/simple-social-thing/config.ini`):
-   ```ini
-   DATABASE_URL=postgresql://user:pass@host:5432/dbname?sslmode=require
-   ```
-
-4. **Set permissions:**
-   ```bash
-   sudo chown root:grimlock /etc/simple-social-thing/config.ini
-   sudo chmod 640 /etc/simple-social-thing/config.ini
-   ```
+The only prerequisite is SSH access for the `grimlock` user with sudo privileges. The pipeline handles everything else automatically.
 
 ### Systemd Service
 

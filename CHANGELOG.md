@@ -21,11 +21,13 @@
 - Added deployment infrastructure
   - `deploy/Jenkinsfile` - Multi-architecture build pipeline (amd64/arm64) with automated deployment to web1
   - `deploy/dbtool-migrate.sh` - Database migration script for Jenkins
+  - `deploy/config.ini.sample` - Sample configuration file
   - `deploy/README.md` - Complete deployment documentation
   - `deploy/deploy-{dev,staging,production}.sh` - Legacy environment-specific deployment scripts
   - `deploy/systemd/*.service` - Legacy systemd service files
 - Backend runs on port `18002` with hot reload via Air
 - Jenkins pipeline deploys to `/var/www/vhosts/simple.truvis.co` on web1
+- Automated config setup: creates `/etc/simple-social-thing/config.ini` from sample on first deploy (never overwrites)
 
 ### Frontend
 - `frontend/worker/index.ts`
