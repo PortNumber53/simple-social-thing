@@ -11,10 +11,10 @@ echo "=== Running Database Migrations ==="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Check if XATA_DATABASE_URL is set
-if [[ -z "${XATA_DATABASE_URL:-}" ]]; then
-  echo "WARNING: XATA_DATABASE_URL is not set, skipping migrations"
-  echo "To run migrations, set XATA_DATABASE_URL environment variable in Jenkins"
+# Check if DATABASE_URL is set
+if [[ -z "${DATABASE_URL:-}" ]]; then
+  echo "WARNING: DATABASE_URL is not set, skipping migrations"
+  echo "To run migrations, set DATABASE_URL environment variable in Jenkins"
   exit 0
 fi
 
