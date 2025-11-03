@@ -1,0 +1,18 @@
+[Unit]
+Description=Simple Social Thing Backend - DEV
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/simple-social-thing/dev
+ExecStart=/opt/simple-social-thing/dev/api
+Restart=on-failure
+RestartSec=5s
+
+Environment="PORT=18002"
+Environment="ENVIRONMENT=dev"
+EnvironmentFile=/opt/simple-social-thing/dev/.env
+
+[Install]
+WantedBy=multi-user.target

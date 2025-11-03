@@ -4,9 +4,9 @@
 	"version": "0.0.0",
 	"type": "module",
 	"scripts": {
-		"dev": "concurrently -n client,worker -c green,cyan \"npm:dev:client\" \"npm:dev:worker\"",
+		"dev": "rm -rf node_modules/.vite && concurrently -n client,worker -c green,cyan \"npm:dev:client\" \"npm:dev:worker\"",
 		"dev:client": "VITE_DISABLE_CF_PLUGIN=1 vite",
-		"dev:worker": "wrangler dev --port 8787 --config wrangler.jsonc",
+		"dev:worker": "bash -c 'set -a && source .dev.vars && CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=$DATABASE_URL wrangler dev --port 8787 --config wrangler.dev.jsonc'",
 		"build": "tsc -b && vite build",
 		"lint": "eslint .",
 		"preview": "npm run build && vite preview",

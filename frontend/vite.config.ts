@@ -11,5 +11,13 @@ export default defineConfig(({ mode }) => {
   if (enableCloudflarePlugin) plugins.push(cloudflare());
   return {
     plugins,
+    server: {
+      proxy: {
+        '/api': {
+          target: 'http://localhost:8787',
+          changeOrigin: true,
+        },
+      },
+    },
   };
 });
