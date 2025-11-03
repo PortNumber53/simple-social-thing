@@ -47,8 +47,9 @@ StandardError=append:/var/www/vhosts/simple.truvis.co/logs/error.log
 WantedBy=multi-user.target
 EOF
 
-# Upload service file
+# Upload service file and config sample
 scp /tmp/simple-social-thing.service grimlock@${TARGET_HOST}:/tmp/simple-social-thing.service
+scp deploy/config.ini.sample grimlock@${TARGET_HOST}:/tmp/config.ini.sample
 
 # Deploy on target server
 echo "Installing on $TARGET_HOST..."
@@ -58,6 +59,23 @@ ssh grimlock@${TARGET_HOST} "
   # Create directories
   sudo mkdir -p ${TARGET_DIR} ${TARGET_DIR}/logs
   sudo chown -R grimlock:grimlock ${TARGET_DIR}
+  
+  # Setup config directory and file
+  sudo mkdir -p /etc/simple-social-thing
+  
+  # Only copy sample config if config.ini doesn't exist
+  if [ ! -f /etc/simple-social-thing/config.ini ]; then
+    echo 'Config file does not exist, creating from sample...'
+    sudo cp /tmp/config.ini.sample /etc/simple-social-thing/config.ini
+    sudo chown root:grimlock /etc/simple-social-thing/config.ini
+    sudo chmod 640 /etc/simple-social-thing/config.ini
+    echo 'WARNING: Please edit /etc/simple-social-thing/config.ini with your actual values!'
+  else
+    echo 'Config file already exists, skipping...'
+  fi
+  
+  # Clean up temp config sample
+  rm -f /tmp/config.ini.sample
   
   # Install binary
   sudo mv /tmp/simple-social-thing ${TARGET_DIR}/simple-social-thing
