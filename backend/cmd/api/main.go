@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/PortNumber53/simple-social-thing/backend/internal/handlers"
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -36,7 +39,19 @@ func main() {
 		log.Fatalf("Failed to ping database: %v", err)
 	}
 
-	log.Println("Successfully connected to database")
+	// Run migrations on startup
+	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	if err != nil {
+		log.Fatalf("Failed to init migration driver: %v", err)
+	}
+	migrator, err := migrate.NewWithDatabaseInstance("file://db/migrations", "postgres", driver)
+	if err != nil {
+		log.Fatalf("Failed to create migrator: %v", err)
+	}
+	if err := migrator.Up(); err != nil && err != migrate.ErrNoChange {
+		log.Fatalf("Database migration failed: %v", err)
+	}
+	log.Println("Database is up-to-date")
 
 	// Initialize handlers
 	h := handlers.New(db)
@@ -60,6 +75,13 @@ func main() {
 	r.HandleFunc("/api/teams", h.CreateTeam).Methods("POST")
 	r.HandleFunc("/api/teams/{id}", h.GetTeam).Methods("GET")
 	r.HandleFunc("/api/teams/user/{userId}", h.GetUserTeams).Methods("GET")
+
+	// Suno integration endpoints
+	r.HandleFunc("/api/suno/store", h.StoreSunoTrack).Methods("POST")
+
+	// User settings (for per-user Suno API keys)
+	r.HandleFunc("/api/user-settings/{userId}/{key}", h.GetUserSetting).Methods("GET")
+	r.HandleFunc("/api/user-settings/{userId}/{key}", h.UpsertUserSetting).Methods("PUT")
 
 	// CORS middleware
 	c := cors.New(cors.Options{

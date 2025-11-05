@@ -4,6 +4,9 @@ import { Features } from './pages/Features';
 import { Contact } from './pages/Contact';
 import { Pricing } from './pages/Pricing';
 import { Integrations } from './pages/Integrations';
+import { ContentMusic } from './pages/ContentMusic';
+import { ContentPosts } from './pages/ContentPosts';
+import { ContentVideos } from './pages/ContentVideos';
 import { PrivacyPolicy } from './pages/PrivacyPolicy';
 import { TermsOfService } from './pages/TermsOfService';
 import { UserDataDeletion } from './pages/UserDataDeletion';
@@ -22,33 +25,57 @@ function App() {
         <Route path="/contact" element={<Contact />} />
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/integrations" element={<Integrations />} />
+        <Route
+          path="/content/music"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+              <ContentMusic />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/content/posts"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+              <ContentPosts />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/content/videos"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+              <ContentVideos />
+            </ProtectedRoute>
+          }
+        />
         <Route path="/privacy-policy" element={<PrivacyPolicy />} />
         <Route path="/terms-of-service" element={<TermsOfService />} />
         <Route path="/user-data-deletion" element={<UserDataDeletion />} />
         <Route path="/help/instagram" element={<InstagramHelp />} />
-        <Route 
-          path="/dashboard" 
+        <Route
+          path="/dashboard"
           element={
             <ProtectedRoute fallback={<Navigate to="/" replace />}>
               <Dashboard />
             </ProtectedRoute>
-          } 
+          }
         />
-        <Route 
-          path="/account/profile" 
+        <Route
+          path="/account/profile"
           element={
             <ProtectedRoute fallback={<Navigate to="/" replace />}>
               <Profile />
             </ProtectedRoute>
-          } 
+          }
         />
-        <Route 
-          path="/account/settings" 
+        <Route
+          path="/account/settings"
           element={
             <ProtectedRoute fallback={<Navigate to="/" replace />}>
               <Settings />
             </ProtectedRoute>
-          } 
+          }
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
