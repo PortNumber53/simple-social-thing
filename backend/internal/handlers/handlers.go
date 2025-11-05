@@ -3,7 +3,12 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/PortNumber53/simple-social-thing/backend/internal/models"
 	"github.com/gorilla/mux"
@@ -11,6 +16,11 @@ import (
 
 type Handler struct {
 	db *sql.DB
+}
+
+type userSetting struct {
+	Key   string      `json:"key"`
+	Value interface{} `json:"value"`
 }
 
 func New(db *sql.DB) *Handler {
@@ -232,4 +242,138 @@ func (h *Handler) GetUserTeams(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(teams)
+}
+
+type sunoStoreRequest struct {
+	UserID      string `json:"userId"`
+	Prompt      string `json:"prompt"`
+	SunoTrackID string `json:"sunoTrackId"`
+	AudioURL    string `json:"audioUrl"`
+}
+
+type sunoStoreResponse struct {
+	OK       bool   `json:"ok"`
+	ID       string `json:"id"`
+	FilePath string `json:"filePath"`
+}
+
+func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
+	var req sunoStoreRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.AudioURL == "" {
+		http.Error(w, "audioUrl is required", http.StatusBadRequest)
+		return
+	}
+
+	// Download audio
+	resp, err := http.Get(req.AudioURL)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to download audio: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		http.Error(w, fmt.Sprintf("downstream responded with %d", resp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	// Ensure media directory exists
+	mediaDir := "media/suno"
+	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+		http.Error(w, fmt.Sprintf("failed to create media dir: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Generate ID and file path
+	id := fmt.Sprintf("suno-%d", time.Now().UnixNano())
+	fileName := fmt.Sprintf("%s.mp3", id)
+	filePath := filepath.Join(mediaDir, fileName)
+
+	out, err := os.Create(filePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to create file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		http.Error(w, fmt.Sprintf("failed to save file: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Persist metadata to DB
+	query := `
+		INSERT INTO public."SunoTracks" (id, user_id, prompt, suno_track_id, audio_url, file_path)
+		VALUES ($1, NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6)
+	`
+	if _, err := h.db.Exec(query, id, req.UserID, req.Prompt, req.SunoTrackID, req.AudioURL, filePath); err != nil {
+		http.Error(w, fmt.Sprintf("failed to insert metadata: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sunoStoreResponse{
+		OK:       true,
+		ID:       id,
+		FilePath: filePath,
+	})
+}
+
+func (h *Handler) GetUserSetting(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := vars["userId"]
+	settingKey := vars["key"]
+
+	query := `SELECT value FROM public."UserSettings" WHERE user_id = $1 AND key = $2`
+	var raw []byte
+	err := h.db.QueryRow(query, userID, settingKey).Scan(&raw)
+	if err == sql.ErrNoRows {
+		w.WriteHeader(http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"error":"not_found"}`))
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(fmt.Sprintf(`{"key":"%s","value":%s}`, settingKey, string(raw))))
+}
+
+func (h *Handler) UpsertUserSetting(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := vars["userId"]
+	settingKey := vars["key"]
+
+	var body struct {
+		Value interface{} `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	valueBytes, err := json.Marshal(body.Value)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	query := `
+		INSERT INTO public."UserSettings" (user_id, key, value, updated_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+	`
+	if _, err := h.db.Exec(query, userID, settingKey, valueBytes); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
 }

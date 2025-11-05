@@ -39,19 +39,48 @@ export const TopNavigation: React.FC = () => {
           </a>
 
           {/* Navigation Links */}
-          <div className="hidden md:flex items-center gap-6">
-            <a href="/" className="text-slate-700 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
-              Home
-            </a>
-            <a href="/features" className="text-slate-700 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
-              Features
-            </a>
-            <a href="/contact" className="text-slate-700 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
-              Contact
-            </a>
-            <a href="/pricing" className="text-slate-700 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
-              Pricing
-            </a>
+          <div className="hidden md:flex items-center gap-2 flex-1 ml-8">
+            {user ? (
+              <>
+                <a href="/dashboard" className="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                  Dashboard
+                </a>
+                <div className="relative group">
+                  <button className="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1">
+                    Content
+                    <svg className="w-4 h-4 text-slate-400 group-hover:text-slate-200 transition-colors" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 011.08 1.04l-4.25 4.25a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                  <div className="absolute left-0 mt-2 w-48 rounded-md bg-white dark:bg-slate-900 shadow-lg ring-1 ring-black/5 dark:ring-white/10 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity">
+                    <a href="/content/posts" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-t-md">Posts</a>
+                    <a href="/content/videos" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800">Videos</a>
+                    <a href="/content/music" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-b-md">Music</a>
+                  </div>
+                </div>
+                <a href="/reports" className="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                  Reports
+                </a>
+                <a href="/account/settings" className="px-3 py-2 rounded-md text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                  Settings
+                </a>
+              </>
+            ) : (
+              <>
+                <a href="/" className="text-slate-700 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+                  Home
+                </a>
+                <a href="/features" className="text-slate-700 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+                  Features
+                </a>
+                <a href="/contact" className="text-slate-700 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+                  Contact
+                </a>
+                <a href="/pricing" className="text-slate-700 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+                  Pricing
+                </a>
+              </>
+            )}
           </div>
 
           {/* User Menu */}

@@ -23,7 +23,7 @@ function getSql(env: any): SqlClient {
       cs = env?.DATABASE_URL || cs;
     }
     if (!cs) return null;
-    return postgres(cs, { 
+    return postgres(cs, {
       ssl: 'require',
       connect_timeout: 5,  // 5 second timeout instead of default 30s
       idle_timeout: 10,
@@ -95,20 +95,25 @@ function getCookie(cookieHeader: string, name: string): string | null {
 }
 
 function buildSidCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
-  const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
-  const parts = [
-    `sid=${encodeURIComponent(value)}`,
-    `Path=/`,
-    `HttpOnly`,
-    `SameSite=Lax`,
-  ];
-  if (maxAgeSeconds > 0) {
-    parts.push(`Max-Age=${maxAgeSeconds}`);
-  } else {
-    parts.push('Max-Age=0');
-  }
-  if (isHttps) parts.push('Secure');
-  return parts.join('; ');
+	const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
+	const url = requestUrl ? new URL(requestUrl) : null;
+	const parts = [
+		`sid=${encodeURIComponent(value)}`,
+		`Path=/`,
+		`HttpOnly`,
+		`SameSite=Lax`,
+	];
+	if (maxAgeSeconds > 0) {
+		parts.push(`Max-Age=${maxAgeSeconds}`);
+	} else {
+		parts.push('Max-Age=0');
+	}
+	// Local dev: cookie must be visible to both :5173 and :8787 → set Domain=localhost
+	if (url && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
+		parts.push('Domain=localhost');
+	}
+	if (isHttps) parts.push('Secure');
+	return parts.join('; ');
 }
 
 async function persistSocialConnection(
@@ -196,6 +201,17 @@ export default {
         return handleInstagramCallback(request, env);
       }
 
+      // Suno: proxy to Go backend for generation/storage
+      if (url.pathname === "/api/integrations/suno/generate") {
+        return handleSunoGenerate(request, env);
+      }
+      if (url.pathname === "/api/integrations/suno/store") {
+        return handleSunoStore(request, env);
+      }
+      if (url.pathname === "/api/integrations/suno/api-key") {
+        return handleSunoApiKey(request, env);
+      }
+
       return Response.json({ ok: true });
     }
 
@@ -208,6 +224,154 @@ export default {
     return new Response(null, { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
+
+async function handleSunoGenerate(request: Request, env: any): Promise<Response> {
+	const backendOrigin = getBackendOrigin(env, request);
+	let body: any = {};
+	try {
+		if (request.headers.get('content-type')?.includes('application/json')) {
+			body = await request.json();
+		}
+	} catch {}
+	const prompt: string = body?.prompt || 'New song from Simple Social Thing';
+	const userId: string | undefined = body?.userId;
+
+	const sid = getCookie(request.headers.get('Cookie') || '', 'sid');
+	const perUserKey = sid ? await fetchUserSunoKey(backendOrigin, sid) : null;
+	const sunoApiKey = perUserKey || env.SUNO_API_KEY;
+	const useMock = env.USE_MOCK_AUTH === 'true' || !sunoApiKey;
+
+	let audioUrl = '';
+	let sunoTrackId = '';
+
+	if (useMock) {
+		audioUrl = 'https://example.com/mock-suno-track.mp3';
+		sunoTrackId = 'mock-suno-track-id';
+	} else {
+		const sunoRes = await fetch('https://sunoapi.org/api/generate', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'Authorization': `Bearer ${sunoApiKey}`,
+			},
+			body: JSON.stringify({ prompt }),
+		});
+		if (!sunoRes.ok) {
+			const errText = await sunoRes.text().catch(() => '');
+			return Response.json({ ok: false, error: 'suno_generate_failed', status: sunoRes.status, details: errText }, { status: 502 });
+		}
+		const sunoData = await sunoRes.json().catch(() => ({}));
+		audioUrl = (sunoData?.audio_url || sunoData?.audioUrl || sunoData?.data?.audio_url || '').toString();
+		sunoTrackId = (sunoData?.id || sunoData?.track_id || sunoData?.data?.id || '').toString();
+		if (!audioUrl) {
+			return Response.json({ ok: false, error: 'suno_missing_audio_url', raw: sunoData }, { status: 502 });
+		}
+	}
+
+	// Call Go backend to store the track
+	const storeRes = await fetch(`${backendOrigin}/api/suno/store`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			userId,
+			prompt,
+			sunoTrackId,
+			audioUrl,
+		}),
+	});
+	const storeData = await storeRes.json().catch(() => ({}));
+	if (!storeRes.ok) {
+		return Response.json({ ok: false, error: 'suno_store_failed', backend: storeData }, { status: 502 });
+	}
+
+	return Response.json({ ok: true, suno: { audioUrl, sunoTrackId }, stored: storeData });
+}
+
+async function handleSunoStore(request: Request, env: any): Promise<Response> {
+	const backendOrigin = getBackendOrigin(env, request);
+	return fetch(`${backendOrigin}/api/suno/store`, {
+		method: request.method,
+		headers: { 'Content-Type': 'application/json' },
+		body: await request.text(),
+	});
+}
+
+async function handleSunoApiKey(request: Request, env: any): Promise<Response> {
+	const backendOrigin = getBackendOrigin(env, request);
+	const cookie = request.headers.get('Cookie') || '';
+	let sid = getCookie(cookie, 'sid');
+	// Local dev helper: if no sid, issue one so the user can save their key
+	const requestUrl = request.url;
+	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
+	const headers = new Headers();
+	if (!sid && isLocal) {
+		sid = crypto.randomUUID();
+		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
+		// ensure user exists in Go backend to satisfy FK in UserSettings
+		try {
+			await fetch(`${backendOrigin}/api/users`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
+			});
+		} catch {}
+	}
+	if (!sid) {
+		return Response.json({ ok: false, error: 'unauthenticated' }, { status: 401 });
+	}
+	if (request.method === 'GET') {
+		const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`);
+		if (res.status === 404) {
+			return Response.json({ ok: true, value: null });
+		}
+		const data = await res.json();
+		return new Response(JSON.stringify({ ok: true, value: data?.value ?? null }), { status: 200, headers });
+	}
+	if (request.method === 'PUT') {
+		const bodyText = await request.text();
+		// expect { apiKey: string }
+		let parsed: any = {};
+		try { parsed = JSON.parse(bodyText || '{}'); } catch {}
+		const apiKey = parsed?.apiKey;
+		const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ value: { apiKey } }),
+		});
+		const data = await res.json().catch(() => ({}));
+		if (!res.ok) {
+			return new Response(JSON.stringify({ ok: false, error: 'save_failed', backend: data }), { status: 500, headers });
+		}
+		return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
+	}
+	return new Response(null, { status: 405 });
+}
+
+async function fetchUserSunoKey(backendOrigin: string, userId: string): Promise<string | null> {
+	try {
+		const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(userId)}/suno_api_key`);
+		if (!res.ok) return null;
+		const data = await res.json().catch(() => ({}));
+		const value = data?.value;
+		if (value && typeof value.apiKey === 'string' && value.apiKey.trim() !== '') {
+			return value.apiKey.trim();
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function getBackendOrigin(env: any, request: Request): string {
+	if (env.BACKEND_ORIGIN) return env.BACKEND_ORIGIN as string;
+	const url = new URL(request.url);
+	const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+	if (isLocal) {
+		return 'http://localhost:18002';
+	}
+	// fallback: same origin
+	return url.origin;
+}
 
 async function startInstagramOAuth(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -339,7 +503,7 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
-  
+
   // Determine client URL dynamically
   // For local dev: worker is on :8787, frontend is on :5173
   // For production: both are on the same domain
@@ -347,7 +511,7 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
   const clientUrl = isLocalhost
     ? `http://localhost:5173`
     : url.origin.replace(/\/api.*$/, '');
-  
+
   // The redirect_uri must match what was sent to Google in the auth request
   // In dev: frontend sends localhost:5173, in prod: same as url.origin
   const redirectUri = isLocalhost
