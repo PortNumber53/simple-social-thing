@@ -1,5 +1,33 @@
 # Changelog
 
+## 2025-11-05
+
+- Frontend Worker: Hardened error handling for Suno API key endpoint
+  - `GET /api/integrations/suno/api-key` now returns `{ ok: false, error: 'backend_unreachable' }` (502) when the Go backend cannot be reached instead of throwing "Network connection lost.".
+  - Non-OK backend responses now surface as `{ ok: false, error: 'backend_error', status, details }` (502) instead of crashing the Worker.
+  - `PUT /api/integrations/suno/api-key` now returns `{ ok: false, error: 'backend_unreachable' }` (502) when the Go backend cannot be reached.
+  - Preserves `sid` Set-Cookie behavior for local dev when issuing a new session.
+
+### Backend
+- Implemented graceful shutdown on Ctrl+C (SIGINT/SIGTERM)
+  - Handle OS signals and call `http.Server.Shutdown` with a 5s timeout to stop cleanly when running via `air` or directly.
+
+### Suno Integration
+- Corrected API base and path to `https://api.sunoapi.org/api/v1/generate`.
+- Implemented async polling of `generate/record-info` to retrieve `audioUrl` on SUCCESS.
+- Polling strategy: 30 attempts over ~3 minutes with exponential backoff (2s, 4s, 6s, 8s, then 10s) to accommodate 1-2 minute generation time.
+- Track generation lifecycle: Create task record immediately with taskId, poll for completion, update with audioUrl and status (pending/completed/failed/timeout).
+- Added `task_id`, `status`, `model`, `updated_at` columns to SunoTracks table (migration 004).
+- Backend endpoints: `POST /api/suno/tasks` (create), `PUT /api/suno/tracks/{id}` (update).
+- Removed mock fallbacks; real API key required. Returns `missing_suno_api_key` (400) when absent.
+- Added detailed logging in Worker (request, taskId, poll status) and Backend (store, user-settings) to aid debugging.
+- Added model selector UI (V3_5, V4, V4_5, V4_5PLUS, V5) with V4 default.
+- Fixed required `callBackUrl` and `instrumental` parameters in generate requests (instrumental defaults to false for vocals).
+
+### Bug Fixes
+- Fixed `sqlUpsertSocial` ON CONFLICT clause to match schema's `UNIQUE("userId", provider)` constraint instead of `(provider, "providerId")`.
+- Added error logging when backend is unreachable during local dev sid issuance for Suno API key endpoint.
+
 ## 2025-11-03
 
 - Added Go backend API with hot reload, migrations, and multi-environment deployment.

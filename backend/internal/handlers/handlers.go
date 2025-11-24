@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"io"
 	"net/http"
 	"os"
@@ -251,6 +252,24 @@ type sunoStoreRequest struct {
 	AudioURL    string `json:"audioUrl"`
 }
 
+type sunoCreateTaskRequest struct {
+	UserID string `json:"userId"`
+	Prompt string `json:"prompt"`
+	TaskID string `json:"taskId"`
+	Model  string `json:"model"`
+}
+
+type sunoCreateTaskResponse struct {
+	OK bool   `json:"ok"`
+	ID string `json:"id"`
+}
+
+type sunoUpdateTrackRequest struct {
+	SunoTrackID string `json:"sunoTrackId"`
+	AudioURL    string `json:"audioUrl"`
+	Status      string `json:"status"`
+}
+
 type sunoStoreResponse struct {
 	OK       bool   `json:"ok"`
 	ID       string `json:"id"`
@@ -260,59 +279,65 @@ type sunoStoreResponse struct {
 func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
 	var req sunoStoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[Suno][Store] invalid JSON: %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if req.AudioURL == "" {
+		log.Printf("[Suno][Store] missing audioUrl in request: %+v", req)
 		http.Error(w, "audioUrl is required", http.StatusBadRequest)
 		return
 	}
 
-	// Download audio
+	log.Printf("[Suno][Store] downloading audio userId=%s sunoTrackId=%s url=%s", req.UserID, req.SunoTrackID, req.AudioURL)
 	resp, err := http.Get(req.AudioURL)
 	if err != nil {
+		log.Printf("[Suno][Store] download error: %v", err)
 		http.Error(w, fmt.Sprintf("failed to download audio: %v", err), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Printf("[Suno][Store] download non-2xx: %d", resp.StatusCode)
 		http.Error(w, fmt.Sprintf("downstream responded with %d", resp.StatusCode), http.StatusBadGateway)
 		return
 	}
 
-	// Ensure media directory exists
 	mediaDir := "media/suno"
 	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+		log.Printf("[Suno][Store] mkdir error: %v", err)
 		http.Error(w, fmt.Sprintf("failed to create media dir: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Generate ID and file path
 	id := fmt.Sprintf("suno-%d", time.Now().UnixNano())
 	fileName := fmt.Sprintf("%s.mp3", id)
 	filePath := filepath.Join(mediaDir, fileName)
 
 	out, err := os.Create(filePath)
 	if err != nil {
+		log.Printf("[Suno][Store] create file error: %v", err)
 		http.Error(w, fmt.Sprintf("failed to create file: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer out.Close()
 
 	if _, err := io.Copy(out, resp.Body); err != nil {
+		log.Printf("[Suno][Store] save file error: %v", err)
 		http.Error(w, fmt.Sprintf("failed to save file: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Persist metadata to DB
 	query := `
-		INSERT INTO public."SunoTracks" (id, user_id, prompt, suno_track_id, audio_url, file_path)
-		VALUES ($1, NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6)
+		INSERT INTO public."SunoTracks" (id, user_id, prompt, suno_track_id, audio_url, file_path, status, updated_at)
+		VALUES ($1, NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6, 'completed', NOW())
 	`
 	if _, err := h.db.Exec(query, id, req.UserID, req.Prompt, req.SunoTrackID, req.AudioURL, filePath); err != nil {
+		log.Printf("[Suno][Store] DB insert error: %v", err)
 		http.Error(w, fmt.Sprintf("failed to insert metadata: %v", err), http.StatusInternalServerError)
 		return
 	}
+	log.Printf("[Suno][Store] stored id=%s file=%s userId=%s", id, filePath, req.UserID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(sunoStoreResponse{
@@ -322,21 +347,128 @@ func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) CreateSunoTask(w http.ResponseWriter, r *http.Request) {
+	var req sunoCreateTaskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[Suno][CreateTask] invalid JSON: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.TaskID == "" {
+		log.Printf("[Suno][CreateTask] missing taskId")
+		http.Error(w, "taskId is required", http.StatusBadRequest)
+		return
+	}
+
+	id := fmt.Sprintf("suno-%d", time.Now().UnixNano())
+	query := `
+		INSERT INTO public."SunoTracks" (id, user_id, prompt, task_id, model, status, created_at, updated_at)
+		VALUES ($1, NULLIF($2, ''), $3, $4, $5, 'pending', NOW(), NOW())
+	`
+	if _, err := h.db.Exec(query, id, req.UserID, req.Prompt, req.TaskID, req.Model); err != nil {
+		log.Printf("[Suno][CreateTask] DB insert error: %v", err)
+		http.Error(w, fmt.Sprintf("failed to insert task: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("[Suno][CreateTask] created id=%s taskId=%s userId=%s", id, req.TaskID, req.UserID)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(sunoCreateTaskResponse{
+		OK: true,
+		ID: id,
+	})
+}
+
+func (h *Handler) UpdateSunoTrack(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	trackID := vars["id"]
+	var req sunoUpdateTrackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[Suno][UpdateTrack] invalid JSON: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Download audio if URL provided and status is completed
+	var filePath string
+	if req.AudioURL != "" && req.Status == "completed" {
+		log.Printf("[Suno][UpdateTrack] downloading audio id=%s url=%s", trackID, req.AudioURL)
+		resp, err := http.Get(req.AudioURL)
+		if err != nil {
+			log.Printf("[Suno][UpdateTrack] download error: %v", err)
+			http.Error(w, fmt.Sprintf("failed to download audio: %v", err), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			log.Printf("[Suno][UpdateTrack] download non-2xx: %d", resp.StatusCode)
+			http.Error(w, fmt.Sprintf("downstream responded with %d", resp.StatusCode), http.StatusBadGateway)
+			return
+		}
+
+		mediaDir := "media/suno"
+		if err := os.MkdirAll(mediaDir, 0755); err != nil {
+			log.Printf("[Suno][UpdateTrack] mkdir error: %v", err)
+			http.Error(w, fmt.Sprintf("failed to create media dir: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		fileName := fmt.Sprintf("%s.mp3", trackID)
+		filePath = filepath.Join(mediaDir, fileName)
+
+		out, err := os.Create(filePath)
+		if err != nil {
+			log.Printf("[Suno][UpdateTrack] create file error: %v", err)
+			http.Error(w, fmt.Sprintf("failed to create file: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer out.Close()
+
+		if _, err := io.Copy(out, resp.Body); err != nil {
+			log.Printf("[Suno][UpdateTrack] save file error: %v", err)
+			http.Error(w, fmt.Sprintf("failed to save file: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	query := `
+		UPDATE public."SunoTracks"
+		SET suno_track_id = COALESCE(NULLIF($1, ''), suno_track_id),
+		    audio_url = COALESCE(NULLIF($2, ''), audio_url),
+		    file_path = COALESCE(NULLIF($3, ''), file_path),
+		    status = COALESCE(NULLIF($4, ''), status),
+		    updated_at = NOW()
+		WHERE id = $5
+	`
+	if _, err := h.db.Exec(query, req.SunoTrackID, req.AudioURL, filePath, req.Status, trackID); err != nil {
+		log.Printf("[Suno][UpdateTrack] DB update error: %v", err)
+		http.Error(w, fmt.Sprintf("failed to update track: %v", err), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("[Suno][UpdateTrack] updated id=%s status=%s", trackID, req.Status)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
+
 func (h *Handler) GetUserSetting(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["userId"]
 	settingKey := vars["key"]
+	log.Printf("[UserSettings][Get] userId=%s key=%s", userID, settingKey)
 
 	query := `SELECT value FROM public."UserSettings" WHERE user_id = $1 AND key = $2`
 	var raw []byte
 	err := h.db.QueryRow(query, userID, settingKey).Scan(&raw)
 	if err == sql.ErrNoRows {
+		log.Printf("[UserSettings][Get] not found userId=%s key=%s", userID, settingKey)
 		w.WriteHeader(http.StatusNotFound)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"error":"not_found"}`))
 		return
 	}
 	if err != nil {
+		log.Printf("[UserSettings][Get] query error userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -349,17 +481,20 @@ func (h *Handler) UpsertUserSetting(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["userId"]
 	settingKey := vars["key"]
+	log.Printf("[UserSettings][Upsert] userId=%s key=%s", userID, settingKey)
 
 	var body struct {
 		Value interface{} `json:"value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		log.Printf("[UserSettings][Upsert] invalid JSON userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	valueBytes, err := json.Marshal(body.Value)
 	if err != nil {
+		log.Printf("[UserSettings][Upsert] marshal error userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -370,9 +505,11 @@ func (h *Handler) UpsertUserSetting(w http.ResponseWriter, r *http.Request) {
 		ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
 	`
 	if _, err := h.db.Exec(query, userID, settingKey, valueBytes); err != nil {
+		log.Printf("[UserSettings][Upsert] DB upsert error userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	log.Printf("[UserSettings][Upsert] success userId=%s key=%s", userID, settingKey)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ok":true}`))
