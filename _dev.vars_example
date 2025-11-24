@@ -1,0 +1,43 @@
+# Cloudflare Worker / Vite local dev vars example
+# Copy to `frontend/.dev.vars` for wrangler dev, or merge into your existing `.dev.vars`.
+# These values are read by `frontend/worker/index.ts` and Vite (VITE_*).
+
+# --- Google OAuth (Worker-side) ---
+GOOGLE_CLIENT_ID=your_google_client_id_here
+GOOGLE_CLIENT_SECRET=your_google_client_secret_here
+
+# --- Instagram OAuth (Worker-side) ---
+INSTAGRAM_APP_ID=your_instagram_app_id_here
+INSTAGRAM_APP_SECRET=your_instagram_app_secret_here
+
+# --- Suno integration (Worker-side) ---
+SUNO_API_KEY=your_suno_api_key_here
+# Required by Suno API even if you don't use it yet.
+SUNO_CALLBACK_URL=https://example.com/callback
+
+# --- Backend origin override (optional) ---
+# Used by worker to call Go backend directly in local dev.
+BACKEND_ORIGIN=http://localhost:18002
+
+# --- Database / Hyperdrive local ---
+# Used when worker is configured with Hyperdrive in prod; for local dev set this to your Postgres URL.
+# You can reuse DATABASE_URL from your backend .env.
+DATABASE_URL=postgresql://user:password@localhost:5432/dbname
+CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://user:password@localhost:5432/dbname
+
+# --- Frontend build vars (Vite) ---
+VITE_WORKER_ORIGIN=http://localhost:8787
+VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
+# Some frontend helpers reference this; only needed if you do client-side OAuth flows.
+VITE_GOOGLE_CLIENT_SECRET=your_google_client_secret_here
+VITE_DISABLE_CF_PLUGIN=1
+
+# --- Local dev switches ---
+# Set true to bypass real OAuth when running locally.
+USE_MOCK_AUTH=false
+
+# --- Legacy / optional Xata (if you still use it) ---
+XATA_API_KEY=
+XATA_DATABASE_URL=
+
+
