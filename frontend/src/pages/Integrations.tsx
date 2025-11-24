@@ -5,6 +5,7 @@ export const Integrations: React.FC = () => {
   const [igStatus, setIgStatus] = useState<string | null>(null);
   const [igAccount, setIgAccount] = useState<{ id: string; username: string | null } | null>(null);
   const [sunoApiKey, setSunoApiKey] = useState<string>('');
+  const [sunoStatus, setSunoStatus] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -49,7 +50,9 @@ export const Integrations: React.FC = () => {
         const workerOrigin = (isLocalhost && import.meta.env.VITE_WORKER_ORIGIN)
           ? import.meta.env.VITE_WORKER_ORIGIN
           : window.location.origin;
-        const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`);
+        const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, {
+          credentials: 'include',
+        });
         const data = await res.json();
         if (data?.ok && data?.value?.apiKey) {
           setSunoApiKey(data.value.apiKey);
@@ -78,6 +81,7 @@ export const Integrations: React.FC = () => {
       const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ apiKey: sunoApiKey }),
       });
       if (!res.ok) {
@@ -169,6 +173,9 @@ export const Integrations: React.FC = () => {
                   placeholder="Enter your Suno API key"
                 />
                 <button onClick={saveSunoApiKey} className="btn btn-primary">Save key</button>
+                {sunoStatus && (
+                  <div className="text-sm text-slate-600 dark:text-slate-300">{sunoStatus}</div>
+                )}
               </div>
             </div>
           </div>

@@ -27,6 +27,9 @@ go.work.sum
 # env file
 .env
 
+# Generated media (e.g., Suno mp3 downloads)
+backend/media/
+
 # Editor/IDE
 # .idea/
 # .vscode/

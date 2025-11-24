@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/PortNumber53/simple-social-thing/backend/internal/handlers"
@@ -77,6 +80,8 @@ func main() {
 	r.HandleFunc("/api/teams/user/{userId}", h.GetUserTeams).Methods("GET")
 
 	// Suno integration endpoints
+	r.HandleFunc("/api/suno/tasks", h.CreateSunoTask).Methods("POST")
+	r.HandleFunc("/api/suno/tracks/{id}", h.UpdateSunoTrack).Methods("PUT")
 	r.HandleFunc("/api/suno/store", h.StoreSunoTrack).Methods("POST")
 
 	// User settings (for per-user Suno API keys)
@@ -106,8 +111,23 @@ func main() {
 		ReadTimeout:  15 * time.Second,
 	}
 
+	// Handle graceful shutdown on SIGINT/SIGTERM
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-stop
+		log.Println("Shutting down server...")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("Server shutdown error: %v", err)
+		}
+	}()
+
 	log.Printf("Server starting on port %s", port)
-	if err := srv.ListenAndServe(); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+	log.Println("Server stopped")
 }

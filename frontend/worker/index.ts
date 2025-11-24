@@ -62,8 +62,8 @@ async function sqlUpsertSocial(sql: NonNullable<SqlClient>, conn: { userId: stri
   await sql`
     INSERT INTO public."SocialConnections" (id, "userId", provider, "providerId", email, name, "createdAt")
     VALUES (${id}, ${conn.userId}, ${conn.provider}, ${conn.providerId}, ${conn.email ?? null}, ${conn.name ?? null}, NOW())
-    ON CONFLICT (provider, "providerId") DO UPDATE SET
-      "userId" = EXCLUDED."userId",
+    ON CONFLICT ("userId", provider) DO UPDATE SET
+      "providerId" = EXCLUDED."providerId",
       email = EXCLUDED.email,
       name = EXCLUDED.name;
   `;
@@ -227,6 +227,18 @@ export default {
 
 async function handleSunoGenerate(request: Request, env: any): Promise<Response> {
 	const backendOrigin = getBackendOrigin(env, request);
+	const headers = new Headers();
+	const origin = request.headers.get('Origin') || '*';
+	if (origin !== '') {
+		headers.set('Access-Control-Allow-Origin', origin);
+		headers.set('Vary', 'Origin');
+		headers.set('Access-Control-Allow-Credentials', 'true');
+		headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+		headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+	}
+	if (request.method === 'OPTIONS') {
+		return new Response(null, { status: 204, headers });
+	}
 	let body: any = {};
 	try {
 		if (request.headers.get('content-type')?.includes('application/json')) {
@@ -234,61 +246,156 @@ async function handleSunoGenerate(request: Request, env: any): Promise<Response>
 		}
 	} catch {}
 	const prompt: string = body?.prompt || 'New song from Simple Social Thing';
-	const userId: string | undefined = body?.userId;
-
+	const model: string = (body?.model || 'V4').toString();
 	const sid = getCookie(request.headers.get('Cookie') || '', 'sid');
+	const userId: string | undefined = body?.userId || sid || undefined;
+	console.log('[Suno] generate request', JSON.stringify({ hasSid: !!sid, hasUserId: !!userId, promptLen: prompt?.length || 0, model }));
+
 	const perUserKey = sid ? await fetchUserSunoKey(backendOrigin, sid) : null;
 	const sunoApiKey = perUserKey || env.SUNO_API_KEY;
-	const useMock = env.USE_MOCK_AUTH === 'true' || !sunoApiKey;
+	console.log('[Suno] key source', perUserKey ? 'per-user' : (env.SUNO_API_KEY ? 'env' : 'none'));
+
+	if (!sunoApiKey || typeof sunoApiKey !== 'string' || sunoApiKey.trim() === '') {
+		return Response.json({ ok: false, error: 'missing_suno_api_key' }, { status: 400, headers });
+	}
 
 	let audioUrl = '';
 	let sunoTrackId = '';
 
-	if (useMock) {
-		audioUrl = 'https://example.com/mock-suno-track.mp3';
-		sunoTrackId = 'mock-suno-track-id';
-	} else {
-		const sunoRes = await fetch('https://sunoapi.org/api/generate', {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'Authorization': `Bearer ${sunoApiKey}`,
-			},
-			body: JSON.stringify({ prompt }),
-		});
-		if (!sunoRes.ok) {
-			const errText = await sunoRes.text().catch(() => '');
-			return Response.json({ ok: false, error: 'suno_generate_failed', status: sunoRes.status, details: errText }, { status: 502 });
-		}
-		const sunoData = await sunoRes.json().catch(() => ({}));
-		audioUrl = (sunoData?.audio_url || sunoData?.audioUrl || sunoData?.data?.audio_url || '').toString();
-		sunoTrackId = (sunoData?.id || sunoData?.track_id || sunoData?.data?.id || '').toString();
-		if (!audioUrl) {
-			return Response.json({ ok: false, error: 'suno_missing_audio_url', raw: sunoData }, { status: 502 });
-		}
-	}
-
-	// Call Go backend to store the track
-	const storeRes = await fetch(`${backendOrigin}/api/suno/store`, {
+	console.log('[Suno] POST /api/v1/generate');
+	const callBackUrl = env.SUNO_CALLBACK_URL || 'https://example.com/callback';
+	const sunoRes = await fetch('https://api.sunoapi.org/api/v1/generate', {
 		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			userId,
-			prompt,
-			sunoTrackId,
-			audioUrl,
-		}),
+		headers: {
+			'Content-Type': 'application/json',
+			'Authorization': `Bearer ${sunoApiKey}`,
+		},
+		body: JSON.stringify({ prompt, customMode: false, callBackUrl, model, instrumental: false }),
 	});
-	const storeData = await storeRes.json().catch(() => ({}));
-	if (!storeRes.ok) {
-		return Response.json({ ok: false, error: 'suno_store_failed', backend: storeData }, { status: 502 });
+	if (!sunoRes.ok) {
+		const errText = await sunoRes.text().catch(() => '');
+		console.error('[Suno] generate failed', sunoRes.status, errText?.slice(0, 300));
+		return Response.json({ ok: false, error: 'suno_generate_failed', status: sunoRes.status, details: errText }, { status: 502, headers });
+	}
+	const rawText = await sunoRes.text().catch(() => '');
+	let sunoData: any = {} as any;
+	try { sunoData = JSON.parse(rawText); } catch {}
+	const taskId = (
+		  sunoData?.data?.taskId
+		|| sunoData?.taskId
+		|| sunoData?.data?.id
+		|| sunoData?.id
+		|| ''
+	).toString();
+	console.log('[Suno] taskId', taskId || '(none)');
+	if (!taskId) {
+		console.error('[Suno] generate response (trimmed)', rawText.slice(0, 500));
+	}
+	if (!taskId) {
+		return Response.json({ ok: false, error: 'suno_missing_task_id', raw: sunoData }, { status: 502, headers });
 	}
 
-	return Response.json({ ok: true, suno: { audioUrl, sunoTrackId }, stored: storeData });
+	// Create task record immediately so we can track it
+	let trackRecordId = '';
+	try {
+		const createRes = await fetch(`${backendOrigin}/api/suno/tasks`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ userId, prompt, taskId, model }),
+		});
+		const createData: any = await createRes.json().catch(() => ({} as any));
+		trackRecordId = createData?.id || '';
+		console.log('[Suno] created track record', trackRecordId);
+	} catch (e) {
+		console.error('[Suno] failed to create track record', e);
+	}
+
+	// Poll for record info until SUCCESS and extract audioUrl
+	// Suno generation takes 1-2 minutes, so poll for up to 3 minutes with exponential backoff
+	let pollAttempts = 30;
+	let lastDetails = '';
+	let attemptNum = 0;
+	while (pollAttempts-- > 0) {
+		attemptNum++;
+		const recRes = await fetch(`https://api.sunoapi.org/api/v1/generate/record-info?taskId=${encodeURIComponent(taskId)}`, {
+			headers: { 'Authorization': `Bearer ${sunoApiKey}` }
+		});
+		const recData: any = await recRes.json().catch(() => ({} as any));
+		// Keep some details to aid debugging
+		try { lastDetails = JSON.stringify({ code: recData?.code, msg: recData?.msg, status: recData?.data?.status }); } catch {}
+		const status = recData?.data?.status;
+		console.log('[Suno] poll', { attempt: attemptNum, status });
+		if (status === 'SUCCESS') {
+			const first = recData?.data?.response?.sunoData?.[0];
+			audioUrl = (first?.audioUrl || '').toString();
+			sunoTrackId = (first?.id || '').toString();
+			console.log('[Suno] success', { hasAudio: !!audioUrl, trackId: sunoTrackId || '(none)' });
+			break;
+		}
+		if (status === 'FAILED') {
+			console.error('[Suno] generation failed', lastDetails?.slice(0, 300));
+			// Update track record to failed status
+			if (trackRecordId) {
+				try {
+					await fetch(`${backendOrigin}/api/suno/tracks/${trackRecordId}`, {
+						method: 'PUT',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ status: 'failed' }),
+					});
+				} catch {}
+			}
+			return Response.json({ ok: false, error: 'suno_generation_failed', details: recData }, { status: 502, headers });
+		}
+		// Exponential backoff: 2s, 4s, 6s, 8s, then 10s for remaining attempts
+		const waitMs = Math.min(attemptNum * 2000, 10000);
+		await new Promise((r) => setTimeout(r, waitMs));
+	}
+	if (!audioUrl) {
+		console.error('[Suno] no audio after poll', lastDetails?.slice(0, 300));
+		// Update track record to timeout status
+		if (trackRecordId) {
+			try {
+				await fetch(`${backendOrigin}/api/suno/tracks/${trackRecordId}`, {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ status: 'timeout' }),
+				});
+			} catch {}
+		}
+		return Response.json({ ok: false, error: 'suno_no_audio_after_poll', details: lastDetails || sunoData }, { status: 504, headers });
+	}
+
+	// Update track record with completed audio
+	if (trackRecordId) {
+		try {
+			await fetch(`${backendOrigin}/api/suno/tracks/${trackRecordId}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ sunoTrackId, audioUrl, status: 'completed' }),
+			});
+			console.log('[Suno] updated track record to completed');
+		} catch (e) {
+			console.error('[Suno] failed to update track record', e);
+		}
+	}
+
+	return Response.json({ ok: true, suno: { audioUrl, sunoTrackId }, trackId: trackRecordId }, { headers });
 }
 
 async function handleSunoStore(request: Request, env: any): Promise<Response> {
 	const backendOrigin = getBackendOrigin(env, request);
+	const headers = new Headers();
+	const origin = request.headers.get('Origin') || '*';
+	if (origin !== '') {
+		headers.set('Access-Control-Allow-Origin', origin);
+		headers.set('Vary', 'Origin');
+		headers.set('Access-Control-Allow-Credentials', 'true');
+		headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+		headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+	}
+	if (request.method === 'OPTIONS') {
+		return new Response(null, { status: 204, headers });
+	}
 	return fetch(`${backendOrigin}/api/suno/store`, {
 		method: request.method,
 		headers: { 'Content-Type': 'application/json' },
@@ -304,28 +411,55 @@ async function handleSunoApiKey(request: Request, env: any): Promise<Response> {
 	const requestUrl = request.url;
 	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
 	const headers = new Headers();
+	const origin = request.headers.get('Origin') || '*';
+	if (origin !== '') {
+		headers.set('Access-Control-Allow-Origin', origin);
+		headers.set('Vary', 'Origin');
+		headers.set('Access-Control-Allow-Credentials', 'true');
+		headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+		headers.set('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
+	}
+	if (request.method === 'OPTIONS') {
+		return new Response(null, { status: 204, headers });
+	}
 	if (!sid && isLocal) {
 		sid = crypto.randomUUID();
 		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
 		// ensure user exists in Go backend to satisfy FK in UserSettings
 		try {
-			await fetch(`${backendOrigin}/api/users`, {
+			const userRes = await fetch(`${backendOrigin}/api/users`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
 			});
-		} catch {}
+			if (!userRes.ok) {
+				console.error('[SunoApiKey] failed to create user for new sid', userRes.status, await userRes.text().catch(() => ''));
+			}
+		} catch (e) {
+			console.error('[SunoApiKey] backend unreachable when creating user for new sid', e);
+		}
 	}
 	if (!sid) {
-		return Response.json({ ok: false, error: 'unauthenticated' }, { status: 401 });
+		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
 	}
 	if (request.method === 'GET') {
-		const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`);
-		if (res.status === 404) {
-			return Response.json({ ok: true, value: null });
+		try {
+			const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`);
+			if (res.status === 404) {
+				return Response.json({ ok: true, value: null }, { headers });
+			}
+			if (!res.ok) {
+				const errText = await res.text().catch(() => '');
+				return new Response(
+					JSON.stringify({ ok: false, error: 'backend_error', status: res.status, details: errText }),
+					{ status: 502, headers }
+				);
+			}
+			const data = await res.json().catch(() => ({}));
+			return new Response(JSON.stringify({ ok: true, value: data?.value ?? null }), { status: 200, headers });
+		} catch (e) {
+			return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable' }), { status: 502, headers });
 		}
-		const data = await res.json();
-		return new Response(JSON.stringify({ ok: true, value: data?.value ?? null }), { status: 200, headers });
 	}
 	if (request.method === 'PUT') {
 		const bodyText = await request.text();
@@ -333,11 +467,16 @@ async function handleSunoApiKey(request: Request, env: any): Promise<Response> {
 		let parsed: any = {};
 		try { parsed = JSON.parse(bodyText || '{}'); } catch {}
 		const apiKey = parsed?.apiKey;
-		const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`, {
-			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ value: { apiKey } }),
-		});
+		let res: Response;
+		try {
+			res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ value: { apiKey } }),
+			});
+		} catch (e) {
+			return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable' }), { status: 502, headers });
+		}
 		const data = await res.json().catch(() => ({}));
 		if (!res.ok) {
 			return new Response(JSON.stringify({ ok: false, error: 'save_failed', backend: data }), { status: 500, headers });
