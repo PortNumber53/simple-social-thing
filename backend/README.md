@@ -34,7 +34,7 @@ go install github.com/air-verse/air@latest
 3. Create `.env` file:
 ```bash
 DATABASE_URL=postgresql://user:pass@host:5432/dbname?sslmode=require
-PORT=18002
+PORT=18911
 ```
 
 4. Run migrations:
@@ -47,7 +47,7 @@ go run db/migrate.go -direction=up
 air
 ```
 
-The API will be available at `http://localhost:18002`
+The API will be available at `http://localhost:18911`
 
 ## API Endpoints
 
@@ -94,9 +94,9 @@ go run db/migrate.go -direction=up -steps=1
 
 The project uses Jenkins for multi-environment deployment:
 
-- **DEV**: Development environment (port 18002)
-- **STAGING**: Staging environment (port 8081)
-- **PRODUCTION**: Production environment (port 8082)
+- **DEV**: Development environment (port 18911)
+- **STAGING**: Staging environment (port 18911)
+- **PRODUCTION**: Production environment (port 18911)
 
 ### Manual Deployment
 
@@ -163,7 +163,7 @@ backend/
 ## Environment Variables
 
 - `DATABASE_URL` - PostgreSQL connection string (required)
-- `PORT` - Server port (default: 18002)
+- `PORT` - Server port (default: 18911)
 - `ENVIRONMENT` - Environment name (dev/staging/production)
 
 ## Testing

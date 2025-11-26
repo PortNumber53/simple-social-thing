@@ -12,12 +12,18 @@ export default defineConfig(({ mode }) => {
   return {
     plugins,
     server: {
+      port: 18910,
+      strictPort: true,
       proxy: {
         '/api': {
-          target: 'http://localhost:8787',
+          target: 'http://localhost:18912',
           changeOrigin: true,
         },
       },
+    },
+    preview: {
+      port: 18910,
+      strictPort: true,
     },
   };
 });

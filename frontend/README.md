@@ -76,7 +76,7 @@ This project includes Google OAuth authentication for user sign-in.
    - Click "Create Credentials" > "OAuth 2.0 Client IDs"
    - Choose "Web application"
    - Add authorized redirect URIs:
-     - For development: `http://localhost:8788/api/auth/google/callback`
+     - For development: `http://localhost:18912/api/auth/google/callback`
      - For production: `https://your-worker.your-subdomain.workers.dev/api/auth/google/callback`
    - Note down your **Client ID** and **Client Secret**
 
@@ -121,9 +121,9 @@ VITE_GOOGLE_CLIENT_SECRET=your_google_client_secret_here
    - Production-ready for Cloudflare deployment
 
 3. **Development vs Production:**
-   - **Frontend:** Runs on `http://localhost:5173` (Vite dev server)
-   - **Worker:** Runs on `http://localhost:8788` (Wrangler dev server)
-   - **OAuth Flow:** Frontend → Google OAuth → Worker (port 8788) → Frontend (port 5173)
+   - **Frontend:** Runs on `http://localhost:18910` (Vite dev server)
+   - **Worker:** Runs on `http://localhost:18912` (Wrangler dev server)
+   - **OAuth Flow:** Frontend → Google OAuth → Worker (port 18912) → Frontend (port 18910)
 
 ### 4. Deployment
 

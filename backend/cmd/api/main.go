@@ -101,7 +101,7 @@ func main() {
 	// Start server
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "18002"
+		port = "18911"
 	}
 
 	srv := &http.Server{

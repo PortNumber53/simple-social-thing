@@ -10,7 +10,7 @@ ExecStart=/opt/simple-social-thing/staging/api
 Restart=on-failure
 RestartSec=5s
 
-Environment="PORT=8081"
+Environment="PORT=18911"
 Environment="ENVIRONMENT=staging"
 EnvironmentFile=/opt/simple-social-thing/staging/.env
 

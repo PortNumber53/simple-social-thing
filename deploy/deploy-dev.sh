@@ -5,7 +5,7 @@ echo "Deploying to DEV environment..."
 
 # Set environment variables
 export ENVIRONMENT=dev
-export PORT=18002
+export PORT=18911
 
 # Copy binary to deployment location
 echo "Copying binary..."

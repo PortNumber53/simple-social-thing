@@ -34,7 +34,7 @@ User=grimlock
 Group=grimlock
 WorkingDirectory=/var/www/vhosts/simple.truvis.co
 EnvironmentFile=/etc/simple-social-thing/config.ini
-Environment=PORT=18002
+Environment=PORT=18911
 ExecStart=/var/www/vhosts/simple.truvis.co/simple-social-thing
 Restart=always
 RestartSec=2s
@@ -55,14 +55,14 @@ scp deploy/config.ini.sample grimlock@${TARGET_HOST}:/tmp/config.ini.sample
 echo "Installing on $TARGET_HOST..."
 ssh grimlock@${TARGET_HOST} "
   set -euo pipefail
-  
+
   # Create directories
   sudo mkdir -p ${TARGET_DIR} ${TARGET_DIR}/logs
   sudo chown -R grimlock:grimlock ${TARGET_DIR}
-  
+
   # Setup config directory and file
   sudo mkdir -p /etc/simple-social-thing
-  
+
   # Only copy sample config if config.ini doesn't exist
   if [ ! -f /etc/simple-social-thing/config.ini ]; then
     echo 'Config file does not exist, creating from sample...'
@@ -73,23 +73,23 @@ ssh grimlock@${TARGET_HOST} "
   else
     echo 'Config file already exists, skipping...'
   fi
-  
+
   # Clean up temp config sample
   rm -f /tmp/config.ini.sample
-  
+
   # Install binary
   sudo mv /tmp/simple-social-thing ${TARGET_DIR}/simple-social-thing
   sudo chown grimlock:grimlock ${TARGET_DIR}/simple-social-thing
   sudo chmod 0755 ${TARGET_DIR}/simple-social-thing
-  
+
   # Install systemd service
   sudo mv /tmp/simple-social-thing.service /etc/systemd/system/${SERVICE_NAME}.service
   sudo systemctl daemon-reload
   sudo systemctl enable ${SERVICE_NAME}
-  
+
   # Restart service
   sudo systemctl restart ${SERVICE_NAME}
-  
+
   # Show status
   sleep 2
   sudo systemctl status ${SERVICE_NAME} --no-pager || true
