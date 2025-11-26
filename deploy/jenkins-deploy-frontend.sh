@@ -54,10 +54,12 @@ put_secret "XATA_API_KEY" "${XATA_API_KEY:-}"
 put_secret "XATA_DATABASE_URL" "${XATA_DATABASE_URL:-}"
 
 echo "=== Frontend: build ==="
+rm -rf dist
 npm run build
 
 echo "=== Frontend: deploy (wrangler) ==="
-npx --yes wrangler deploy --config wrangler.jsonc
+# Force ensures assets re-upload even if Wrangler believes nothing changed (helps recover from a bad/empty asset upload state).
+npx --yes wrangler deploy --config wrangler.jsonc --force
 
 echo "=== Frontend deploy complete ==="
 
