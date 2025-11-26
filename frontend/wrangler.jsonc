@@ -11,7 +11,8 @@
 		"nodejs_compat"
 	],
 	"assets": {
-		"directory": "./dist/",
+		// When `@cloudflare/vite-plugin` is enabled during `vite build`, the client bundle is emitted under `dist/client`.
+		"directory": "./dist/client/",
 		"binding": "ASSETS",
 		"not_found_handling": "single-page-application"
 	},
