@@ -9,13 +9,25 @@ pipeline {
     skipDefaultCheckout(false)
   }
 
+  parameters {
+    booleanParam(name: 'DEPLOY_FRONTEND', defaultValue: true, description: 'Deploy frontend (Cloudflare Worker + assets) on master')
+    booleanParam(name: 'DEPLOY_ARM64', defaultValue: true, description: 'Deploy backend arm64 binary to Oracle ARM64 fleet on master')
+  }
+
   environment {
     GO111MODULE = 'on'
-    // Deployment targets
-    TARGET_HOST    = 'web1'
+    // Backend deployment targets
     TARGET_DIR     = '/var/www/vhosts/simple.truvis.co'
     SERVICE_NAME   = 'simple-social-thing'
     SSH_CREDENTIALS = 'brain-jenkins-private-key'  // Jenkins credential ID (Username with private key)
+
+    // Machines listed in NOTES.md
+    BACKEND_AMD64_HOSTS = 'web1'
+    BACKEND_AMD64_SSH_USER = 'grimlock'
+
+    // Oracle - Ubuntu - ARM64 machines
+    BACKEND_ARM64_HOSTS = '163.192.9.21 129.146.3.224 150.136.217.87 164.152.111.231 168.138.152.114 144.24.200.77'
+    BACKEND_ARM64_SSH_USER = 'ubuntu'
   }
 
   stages {
@@ -70,21 +82,81 @@ pipeline {
     }
 
     stage('DB Migrate (All)') {
-      when { expression { return env.DATABASE_URL?.trim() } }
+      when { branch 'master' }
       steps {
-        sh label: 'dbtool diagnostics', script: '''
-          set -euo pipefail
-          echo "dbtool version: $(dbtool --version || echo not-found)"
-        '''
-        sh 'bash deploy/dbtool-migrate.sh'
+        withCredentials([
+          string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL')
+        ]) {
+          sh label: 'dbtool diagnostics', script: '''
+            set -euo pipefail
+            echo "dbtool version: $(dbtool --version || echo not-found)"
+          '''
+          sh 'bash deploy/dbtool-migrate.sh'
+        }
       }
     }
 
-    stage('Deploy (amd64 → web1)') {
+    stage('Deploy Backend (amd64 → web1)') {
+      when { branch 'master' }
       steps {
         unstash "bin-amd64"
         sshagent(credentials: [env.SSH_CREDENTIALS]) {
-          sh label: 'Deploy via script', script: 'bash deploy/jenkins-deploy-amd64.sh'
+          sh label: 'Deploy via script', script: '''
+            set -euo pipefail
+            GOARCH=amd64 \
+            TARGET_HOSTS="$BACKEND_AMD64_HOSTS" \
+            SSH_USER="$BACKEND_AMD64_SSH_USER" \
+            TARGET_DIR="$TARGET_DIR" \
+            SERVICE_NAME="$SERVICE_NAME" \
+            bash deploy/jenkins-deploy-amd64.sh
+          '''
+        }
+      }
+    }
+
+    stage('Deploy Backend (arm64 → Oracle fleet)') {
+      when {
+        allOf {
+          branch 'master'
+          expression { return params.DEPLOY_ARM64 }
+        }
+      }
+      steps {
+        unstash "bin-arm64"
+        sshagent(credentials: [env.SSH_CREDENTIALS]) {
+          sh label: 'Deploy via script', script: '''
+            set -euo pipefail
+            GOARCH=arm64 \
+            TARGET_HOSTS="$BACKEND_ARM64_HOSTS" \
+            SSH_USER="$BACKEND_ARM64_SSH_USER" \
+            TARGET_DIR="$TARGET_DIR" \
+            SERVICE_NAME="$SERVICE_NAME" \
+            bash deploy/jenkins-deploy-amd64.sh
+          '''
+        }
+      }
+    }
+
+    stage('Deploy Frontend (Cloudflare)') {
+      when {
+        allOf {
+          branch 'master'
+          expression { return params.DEPLOY_FRONTEND }
+        }
+      }
+      steps {
+        withCredentials([
+          string(credentialsId: 'prod-google-client-id-simple-social-thing', variable: 'GOOGLE_CLIENT_ID'),
+          string(credentialsId: 'prod-google-client-secret-simple-social-thing', variable: 'GOOGLE_CLIENT_SECRET'),
+          string(credentialsId: 'prod-jwt-secret-simple-social-thing', variable: 'JWT_SECRET'),
+          string(credentialsId: 'prod-stripe-secret-key-simple-social-thing', variable: 'STRIPE_SECRET_KEY'),
+          string(credentialsId: 'prod-stripe-publishable-key-simple-social-thing', variable: 'STRIPE_PUBLISHABLE_KEY'),
+          string(credentialsId: 'prod-stripe-webhook-secret-simple-social-thing', variable: 'STRIPE_WEBHOOK_SECRET'),
+          string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
+          string(credentialsId: 'prod-xata-api-key-simple-social-thing', variable: 'XATA_API_KEY'),
+          string(credentialsId: 'prod-xata-database-url-simple-social-thing', variable: 'XATA_DATABASE_URL')
+        ]) {
+          sh label: 'Deploy frontend via wrangler', script: 'bash deploy/jenkins-deploy-frontend.sh'
         }
       }
     }

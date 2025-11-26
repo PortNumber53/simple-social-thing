@@ -5,4 +5,4 @@
 DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 
 # Optional: Additional environment variables
-# PORT=18911
+PORT=18911
