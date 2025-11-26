@@ -58,9 +58,21 @@ rm -rf dist
 npm run build
 
 echo "=== Frontend: deploy (wrangler) ==="
-# Force ensures assets re-upload even if Wrangler believes nothing changed (helps recover from a bad/empty asset upload state).
-npx --yes wrangler deploy --config wrangler.jsonc --force
+# When `@cloudflare/vite-plugin` is enabled, it can emit the client bundle under `dist/client/`.
+# The assets binding must point at the directory that contains `index.html` at its root.
+ASSETS_DIR="dist"
+if [[ -f "dist/client/index.html" ]]; then
+  ASSETS_DIR="dist/client"
+fi
+if [[ ! -f "${ASSETS_DIR}/index.html" ]]; then
+  echo "ERROR: expected ${ASSETS_DIR}/index.html but it does not exist"
+  echo "Contents of dist/:"
+  ls -lah dist || true
+  echo "Contents of dist/client/:"
+  ls -lah dist/client || true
+  exit 1
+fi
+
+npx --yes wrangler deploy --config wrangler.jsonc --assets "${ASSETS_DIR}"
 
 echo "=== Frontend deploy complete ==="
-
-
