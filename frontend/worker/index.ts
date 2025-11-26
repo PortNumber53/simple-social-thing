@@ -169,6 +169,24 @@ export default {
   async fetch(request: Request, env: Env) {
     const url = new URL(request.url);
 
+    // Debug endpoint to help diagnose asset binding / routing issues in production.
+    // (Safe: does not expose secrets; only reports whether ASSETS is present and whether index.html can be fetched.)
+    if (url.pathname === "/__debug/assets") {
+      const hasAssets = !!env.ASSETS;
+      let indexStatus: number | null = null;
+      if (env.ASSETS) {
+        try {
+          const indexUrl = new URL(request.url);
+          indexUrl.pathname = "/index.html";
+          const r = await env.ASSETS.fetch(new Request(indexUrl, request));
+          indexStatus = r.status;
+        } catch {
+          indexStatus = -1;
+        }
+      }
+      return Response.json({ ok: true, hasAssets, indexStatus });
+    }
+
     // Handle OAuth callback first (more specific route)
     if (url.pathname === "/api/auth/google/callback") {
       return handleOAuthCallback(request, env);
@@ -242,7 +260,21 @@ export default {
     // For all non-API requests, delegate to the static assets handler
     // This enables SPA routing (e.g., /dashboard, /features, /contact)
     if (env.ASSETS) {
-      return env.ASSETS.fetch(request);
+      let res = await env.ASSETS.fetch(request);
+      // Some configurations do not map "/" → "/index.html" automatically.
+      // Also provide an SPA fallback for non-file routes.
+      if (res.status === 404) {
+        const accept = request.headers.get("Accept") || "";
+        const looksLikeHtmlRoute =
+          url.pathname === "/" ||
+          (!url.pathname.includes(".") && accept.includes("text/html"));
+        if (looksLikeHtmlRoute) {
+          const indexUrl = new URL(request.url);
+          indexUrl.pathname = "/index.html";
+          res = await env.ASSETS.fetch(new Request(indexUrl, request));
+        }
+      }
+      return res;
     }
 
     return new Response(null, { status: 404 });
