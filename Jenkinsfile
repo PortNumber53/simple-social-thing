@@ -99,17 +99,24 @@ pipeline {
         stage('Deploy Backend (amd64 → web1)') {
           steps {
             unstash "bin-amd64"
-            sshagent(credentials: [env.SSH_CREDENTIALS]) {
-              sh label: 'Deploy via script', script: '''
-                set -euo pipefail
-                GOARCH=amd64 \
-                TARGET_HOSTS="$BACKEND_AMD64_HOSTS" \
-                SSH_USER="$BACKEND_AMD64_SSH_USER" \
-                SSH_PORT="$BACKEND_AMD64_SSH_PORT" \
-                TARGET_DIR="$TARGET_DIR" \
-                SERVICE_NAME="$SERVICE_NAME" \
-                bash deploy/jenkins-deploy-amd64.sh
-              '''
+            withCredentials([
+              string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL')
+            ]) {
+              sshagent(credentials: [env.SSH_CREDENTIALS]) {
+                sh label: 'Deploy via script', script: '''
+                  set -euo pipefail
+                  GOARCH=amd64 \
+                  TARGET_HOSTS="$BACKEND_AMD64_HOSTS" \
+                  SSH_USER="$BACKEND_AMD64_SSH_USER" \
+                  SSH_PORT="$BACKEND_AMD64_SSH_PORT" \
+                  TARGET_DIR="$TARGET_DIR" \
+                  SERVICE_NAME="$SERVICE_NAME" \
+                  DATABASE_URL="$DATABASE_URL" \
+                  APP_PORT="18911" \
+                  ENVIRONMENT_NAME="production" \
+                  bash deploy/jenkins-deploy-amd64.sh
+                '''
+              }
             }
           }
         }
@@ -117,17 +124,24 @@ pipeline {
         stage('Deploy Backend (arm64 → Oracle fleet)') {
           steps {
             unstash "bin-arm64"
-            sshagent(credentials: [env.SSH_CREDENTIALS]) {
-              sh label: 'Deploy via script', script: '''
-                set -euo pipefail
-                GOARCH=arm64 \
-                TARGET_HOSTS="$BACKEND_ARM64_HOSTS" \
-                SSH_USER="$BACKEND_ARM64_SSH_USER" \
-                SSH_PORT="$BACKEND_ARM64_SSH_PORT" \
-                TARGET_DIR="$TARGET_DIR" \
-                SERVICE_NAME="$SERVICE_NAME" \
-                bash deploy/jenkins-deploy-amd64.sh
-              '''
+            withCredentials([
+              string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL')
+            ]) {
+              sshagent(credentials: [env.SSH_CREDENTIALS]) {
+                sh label: 'Deploy via script', script: '''
+                  set -euo pipefail
+                  GOARCH=arm64 \
+                  TARGET_HOSTS="$BACKEND_ARM64_HOSTS" \
+                  SSH_USER="$BACKEND_ARM64_SSH_USER" \
+                  SSH_PORT="$BACKEND_ARM64_SSH_PORT" \
+                  TARGET_DIR="$TARGET_DIR" \
+                  SERVICE_NAME="$SERVICE_NAME" \
+                  DATABASE_URL="$DATABASE_URL" \
+                  APP_PORT="18911" \
+                  ENVIRONMENT_NAME="production" \
+                  bash deploy/jenkins-deploy-amd64.sh
+                '''
+              }
             }
           }
         }
