@@ -76,23 +76,23 @@ for TARGET_HOST in "${HOSTS[@]}"; do
   ssh -p "${SSH_PORT}" "${SSH_USER}@${TARGET_HOST}" bash -s <<EOF
 set -euo pipefail
 
-# Create application directories
+# Create application directories (avoid failing deploy on chown/user-group mismatches)
 sudo mkdir -p "${TARGET_DIR}" "${TARGET_DIR}/logs"
-sudo chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${TARGET_DIR}"
+sudo chmod 0755 "${TARGET_DIR}" "${TARGET_DIR}/logs"
 
 # (Re)generate config on every deploy (from Jenkins secrets)
-sudo mkdir -p /etc/simple-social-thing
+sudo install -d -m 0755 /etc/simple-social-thing
 sudo tee /etc/simple-social-thing/config.ini >/dev/null <<CFG
 DATABASE_URL=${DATABASE_URL}
 PORT=${APP_PORT}
 ENVIRONMENT=${ENVIRONMENT_NAME}
 CFG
-sudo chown root:"${SERVICE_GROUP}" /etc/simple-social-thing/config.ini
-sudo chmod 640 /etc/simple-social-thing/config.ini
+sudo chown root:root /etc/simple-social-thing/config.ini
+sudo chmod 0640 /etc/simple-social-thing/config.ini
+sudo test -f /etc/simple-social-thing/config.ini
 
 # Install binary
 sudo mv /tmp/simple-social-thing "${TARGET_DIR}/simple-social-thing"
-sudo chown "${SERVICE_USER}:${SERVICE_GROUP}" "${TARGET_DIR}/simple-social-thing"
 sudo chmod 0755 "${TARGET_DIR}/simple-social-thing"
 
 # Install and restart service
