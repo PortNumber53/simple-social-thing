@@ -8,6 +8,7 @@ interface Env {
   INSTAGRAM_APP_ID?: string;
   INSTAGRAM_APP_SECRET?: string;
   SUNO_API_KEY?: string;
+  SUNO_CALLBACK_URL?: string;
   BACKEND_ORIGIN?: string;
   DATABASE_URL?: string;
   // Hyperdrive binding is available on env.HYPERDRIVE in CF
@@ -187,6 +188,11 @@ export default {
       return Response.json({ ok: true, hasAssets, indexStatus });
     }
 
+    // Suno callbacks (from https://docs.sunoapi.org/) - allow both with and without trailing slash.
+    if (url.pathname === "/callback/suno/music" || url.pathname === "/callback/suno/music/") {
+      return handleSunoCallback(request);
+    }
+
     // Handle OAuth callback first (more specific route)
     if (url.pathname === "/api/auth/google/callback") {
       return handleOAuthCallback(request, env);
@@ -294,6 +300,7 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 	const bodyObj = asRecord(body);
 	const prompt = getString(bodyObj?.['prompt']) ?? 'New song from Simple Social Thing';
 	const userId = getString(bodyObj?.['userId']) ?? undefined;
+	const model = getString(bodyObj?.['model']) ?? 'V4';
 
 	const sid = getCookie(request.headers.get('Cookie') || '', 'sid');
 	const perUserKey = sid ? await fetchUserSunoKey(backendOrigin, sid) : null;
@@ -307,29 +314,75 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 		audioUrl = 'https://example.com/mock-suno-track.mp3';
 		sunoTrackId = 'mock-suno-track-id';
 	} else {
-		const sunoRes = await fetch('https://sunoapi.org/api/generate', {
+		// Suno API (3rd-party) supports async callbacks + polling.
+		// Docs: https://docs.sunoapi.org/suno-api/generate-music
+		const origin = new URL(request.url).origin;
+		const callBackUrl =
+			(env.SUNO_CALLBACK_URL && env.SUNO_CALLBACK_URL.trim() !== '')
+				? env.SUNO_CALLBACK_URL.trim()
+				: new URL('/callback/suno/music/', origin).toString();
+
+		const sunoRes = await fetch('https://api.sunoapi.org/api/v1/generate', {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
 				'Authorization': `Bearer ${sunoApiKey}`,
 			},
-			body: JSON.stringify({ prompt }),
+			body: JSON.stringify({
+				prompt,
+				customMode: false,
+				instrumental: false,
+				model,
+				callBackUrl,
+			}),
 		});
 		if (!sunoRes.ok) {
 			const errText = await sunoRes.text().catch(() => '');
 			return Response.json({ ok: false, error: 'suno_generate_failed', status: sunoRes.status, details: errText }, { status: 502 });
 		}
-		const sunoData: unknown = await sunoRes.json().catch(() => null);
-		const sunoObj = asRecord(sunoData);
-		const inner = sunoObj ? asRecord(sunoObj['data']) : null;
 
-		const audioCandidate = sunoObj?.['audio_url'] ?? sunoObj?.['audioUrl'] ?? inner?.['audio_url'];
-		const idCandidate = sunoObj?.['id'] ?? sunoObj?.['track_id'] ?? inner?.['id'];
+		// Response is { code, msg, data: { taskId } }
+		const sunoStart: unknown = await sunoRes.json().catch(() => null);
+		const startObj = asRecord(sunoStart);
+		const dataObj = startObj ? asRecord(startObj['data']) : null;
+		const taskId = dataObj ? getString(dataObj['taskId']) : null;
+		if (!taskId) {
+			return Response.json({ ok: false, error: 'suno_missing_task_id', raw: sunoStart }, { status: 502 });
+		}
 
-		audioUrl = typeof audioCandidate === 'string' ? audioCandidate : String(audioCandidate ?? '');
-		sunoTrackId = typeof idCandidate === 'string' ? idCandidate : String(idCandidate ?? '');
+		// Poll until SUCCESS and extract first track audioUrl/id
+		let attempts = 30;
+		let attemptNum = 0;
+		let lastStatus: string | null = null;
+		while (attempts-- > 0) {
+			attemptNum++;
+			const recRes = await fetch(`https://api.sunoapi.org/api/v1/generate/record-info?taskId=${encodeURIComponent(taskId)}`, {
+				headers: { 'Authorization': `Bearer ${sunoApiKey}`, 'Accept': 'application/json' },
+			});
+			const recData: unknown = await recRes.json().catch(() => null);
+			const recObj = asRecord(recData);
+			const recInner = recObj ? asRecord(recObj['data']) : null;
+			lastStatus = getString(recInner?.['status']) ?? lastStatus;
+
+			if (lastStatus === 'SUCCESS') {
+				const respObj = recInner ? asRecord(recInner['response']) : null;
+				const sunoDataArr = respObj ? (respObj['sunoData'] as unknown) : null;
+				const first = Array.isArray(sunoDataArr) ? asRecord(sunoDataArr[0]) : null;
+				audioUrl = getString(first?.['audioUrl']) ?? '';
+				sunoTrackId = getString(first?.['id']) ?? '';
+				if (audioUrl) break;
+			}
+			if (lastStatus === 'FAILED') {
+				return Response.json({ ok: false, error: 'suno_generation_failed', taskId, details: recData }, { status: 502 });
+			}
+
+			// Exponential backoff: 2s, 4s, 6s, 8s, then 10s max
+			const waitMs = Math.min(attemptNum * 2000, 10000);
+			await new Promise((r) => setTimeout(r, waitMs));
+		}
+
 		if (!audioUrl) {
-			return Response.json({ ok: false, error: 'suno_missing_audio_url', raw: sunoData }, { status: 502 });
+			return Response.json({ ok: false, error: 'suno_no_audio_after_poll', details: { taskId, lastStatus } }, { status: 504 });
 		}
 	}
 
@@ -350,6 +403,16 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 	}
 
 	return Response.json({ ok: true, suno: { audioUrl, sunoTrackId }, stored: storeData });
+}
+
+async function handleSunoCallback(request: Request): Promise<Response> {
+	// Suno callbacks are provider → our endpoint. We accept JSON and return 200 quickly.
+	// Docs: https://docs.sunoapi.org/suno-api/generate-music (Music Generation Callbacks).
+	if (request.method !== 'POST') return new Response(null, { status: 405 });
+	const payloadText = await request.text().catch(() => '');
+	// Do not log unbounded data.
+	console.log('[Suno][Callback]', payloadText.slice(0, 4000));
+	return new Response('ok', { status: 200, headers: { 'Content-Type': 'text/plain' } });
 }
 
 async function handleSunoStore(request: Request, env: Env): Promise<Response> {

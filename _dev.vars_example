@@ -12,12 +12,15 @@ INSTAGRAM_APP_SECRET=your_instagram_app_secret_here
 
 # --- Suno integration (Worker-side) ---
 SUNO_API_KEY=your_suno_api_key_here
-# Required by Suno API even if you don't use it yet.
-SUNO_CALLBACK_URL=https://example.com/callback
+# Suno API callback URL (where Suno reports generation status updates).
+# Recommended format (prod): https://<deployed_hostname>/callback/suno/music/
+# Example (prod): https://simple.truvis.co/callback/suno/music/
+# Example (local): http://localhost:18912/callback/suno/music/
+SUNO_CALLBACK_URL=https://simple.truvis.co/callback/suno/music/
 
 # --- Backend origin override (optional) ---
 # Used by worker to call Go backend directly in local dev.
-BACKEND_ORIGIN=http://localhost:18002
+BACKEND_ORIGIN=http://localhost:18911
 
 # --- Database / Hyperdrive local ---
 # Used when worker is configured with Hyperdrive in prod; for local dev set this to your Postgres URL.
@@ -26,7 +29,7 @@ DATABASE_URL=postgresql://user:password@localhost:5432/dbname
 CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://user:password@localhost:5432/dbname
 
 # --- Frontend build vars (Vite) ---
-VITE_WORKER_ORIGIN=http://localhost:8787
+VITE_WORKER_ORIGIN=http://localhost:18912
 VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
 # Some frontend helpers reference this; only needed if you do client-side OAuth flows.
 VITE_GOOGLE_CLIENT_SECRET=your_google_client_secret_here

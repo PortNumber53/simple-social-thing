@@ -6,8 +6,8 @@
 # REQUIRED for backend + migrations
 DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 
-# Backend HTTP port (optional; defaults to 18002 in Go, 4000 in legacy TS server)
-PORT=18002
+# Backend HTTP port (optional; defaults to 18911 in Go)
+PORT=18911
 
 # Optional environment name: dev | staging | production
 ENVIRONMENT=dev
@@ -15,12 +15,14 @@ ENVIRONMENT=dev
 # --- Local development helpers ---
 # If you run the Cloudflare Worker locally and want it to hit a non-default backend origin:
 # (otherwise worker uses same-origin or VITE_WORKER_ORIGIN)
-BACKEND_ORIGIN=http://localhost:18002
+BACKEND_ORIGIN=http://localhost:18911
 
 # --- Suno integration ---
 # NOTE: Worker reads SUNO_API_KEY and SUNO_CALLBACK_URL from its own vars (.dev.vars / wrangler secrets),
 # but it can be convenient to keep a copy here for reference.
 SUNO_API_KEY=your_suno_api_key_here
-SUNO_CALLBACK_URL=https://example.com/callback
+# Suno API callback URL to receive generation updates.
+# Recommended format: https://<deployed_hostname>/callback/suno/music/
+SUNO_CALLBACK_URL=https://simple.truvis.co/callback/suno/music/
 
 
