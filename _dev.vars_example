@@ -42,5 +42,3 @@ USE_MOCK_AUTH=false
 # --- Legacy / optional Xata (if you still use it) ---
 XATA_API_KEY=
 XATA_DATABASE_URL=
-
-
