@@ -9,11 +9,6 @@ pipeline {
     skipDefaultCheckout(false)
   }
 
-  parameters {
-    booleanParam(name: 'DEPLOY_FRONTEND', defaultValue: true, description: 'Deploy frontend (Cloudflare Worker + assets) on master')
-    booleanParam(name: 'DEPLOY_ARM64', defaultValue: true, description: 'Deploy backend arm64 binary to Oracle ARM64 fleet on master')
-  }
-
   environment {
     GO111MODULE = 'on'
     // Backend deployment targets
@@ -98,70 +93,62 @@ pipeline {
       }
     }
 
-    stage('Deploy Backend (amd64 → web1)') {
+    stage('Deploy (parallel)') {
       when { branch 'master' }
-      steps {
-        unstash "bin-amd64"
-        sshagent(credentials: [env.SSH_CREDENTIALS]) {
-          sh label: 'Deploy via script', script: '''
-            set -euo pipefail
-            GOARCH=amd64 \
-            TARGET_HOSTS="$BACKEND_AMD64_HOSTS" \
-            SSH_USER="$BACKEND_AMD64_SSH_USER" \
-            SSH_PORT="$BACKEND_AMD64_SSH_PORT" \
-            TARGET_DIR="$TARGET_DIR" \
-            SERVICE_NAME="$SERVICE_NAME" \
-            bash deploy/jenkins-deploy-amd64.sh
-          '''
+      parallel {
+        stage('Deploy Backend (amd64 → web1)') {
+          steps {
+            unstash "bin-amd64"
+            sshagent(credentials: [env.SSH_CREDENTIALS]) {
+              sh label: 'Deploy via script', script: '''
+                set -euo pipefail
+                GOARCH=amd64 \
+                TARGET_HOSTS="$BACKEND_AMD64_HOSTS" \
+                SSH_USER="$BACKEND_AMD64_SSH_USER" \
+                SSH_PORT="$BACKEND_AMD64_SSH_PORT" \
+                TARGET_DIR="$TARGET_DIR" \
+                SERVICE_NAME="$SERVICE_NAME" \
+                bash deploy/jenkins-deploy-amd64.sh
+              '''
+            }
+          }
         }
-      }
-    }
 
-    stage('Deploy Backend (arm64 → Oracle fleet)') {
-      when {
-        allOf {
-          branch 'master'
-          expression { return params.DEPLOY_ARM64 }
+        stage('Deploy Backend (arm64 → Oracle fleet)') {
+          steps {
+            unstash "bin-arm64"
+            sshagent(credentials: [env.SSH_CREDENTIALS]) {
+              sh label: 'Deploy via script', script: '''
+                set -euo pipefail
+                GOARCH=arm64 \
+                TARGET_HOSTS="$BACKEND_ARM64_HOSTS" \
+                SSH_USER="$BACKEND_ARM64_SSH_USER" \
+                SSH_PORT="$BACKEND_ARM64_SSH_PORT" \
+                TARGET_DIR="$TARGET_DIR" \
+                SERVICE_NAME="$SERVICE_NAME" \
+                bash deploy/jenkins-deploy-amd64.sh
+              '''
+            }
+          }
         }
-      }
-      steps {
-        unstash "bin-arm64"
-        sshagent(credentials: [env.SSH_CREDENTIALS]) {
-          sh label: 'Deploy via script', script: '''
-            set -euo pipefail
-            GOARCH=arm64 \
-            TARGET_HOSTS="$BACKEND_ARM64_HOSTS" \
-            SSH_USER="$BACKEND_ARM64_SSH_USER" \
-            SSH_PORT="$BACKEND_ARM64_SSH_PORT" \
-            TARGET_DIR="$TARGET_DIR" \
-            SERVICE_NAME="$SERVICE_NAME" \
-            bash deploy/jenkins-deploy-amd64.sh
-          '''
-        }
-      }
-    }
 
-    stage('Deploy Frontend (Cloudflare)') {
-      when {
-        allOf {
-          branch 'master'
-          expression { return params.DEPLOY_FRONTEND }
-        }
-      }
-      steps {
-        withCredentials([
-          string(credentialsId: 'cloudflare-api-token', variable: 'CLOUDFLARE_API_TOKEN'),
-          string(credentialsId: 'prod-google-client-id-simple-social-thing', variable: 'GOOGLE_CLIENT_ID'),
-          string(credentialsId: 'prod-google-client-secret-simple-social-thing', variable: 'GOOGLE_CLIENT_SECRET'),
-          string(credentialsId: 'prod-jwt-secret-simple-social-thing', variable: 'JWT_SECRET'),
-          string(credentialsId: 'prod-stripe-secret-key-simple-social-thing', variable: 'STRIPE_SECRET_KEY'),
-          string(credentialsId: 'prod-stripe-publishable-key-simple-social-thing', variable: 'STRIPE_PUBLISHABLE_KEY'),
-          string(credentialsId: 'prod-stripe-webhook-secret-simple-social-thing', variable: 'STRIPE_WEBHOOK_SECRET'),
-          string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
-          string(credentialsId: 'prod-xata-api-key-simple-social-thing', variable: 'XATA_API_KEY'),
-          string(credentialsId: 'prod-xata-database-url-simple-social-thing', variable: 'XATA_DATABASE_URL')
-        ]) {
-          sh label: 'Deploy frontend via wrangler', script: 'bash deploy/jenkins-deploy-frontend.sh'
+        stage('Deploy Frontend (Cloudflare)') {
+          steps {
+            withCredentials([
+              string(credentialsId: 'cloudflare-api-token', variable: 'CLOUDFLARE_API_TOKEN'),
+              string(credentialsId: 'prod-google-client-id-simple-social-thing', variable: 'GOOGLE_CLIENT_ID'),
+              string(credentialsId: 'prod-google-client-secret-simple-social-thing', variable: 'GOOGLE_CLIENT_SECRET'),
+              string(credentialsId: 'prod-jwt-secret-simple-social-thing', variable: 'JWT_SECRET'),
+              string(credentialsId: 'prod-stripe-secret-key-simple-social-thing', variable: 'STRIPE_SECRET_KEY'),
+              string(credentialsId: 'prod-stripe-publishable-key-simple-social-thing', variable: 'STRIPE_PUBLISHABLE_KEY'),
+              string(credentialsId: 'prod-stripe-webhook-secret-simple-social-thing', variable: 'STRIPE_WEBHOOK_SECRET'),
+              string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
+              string(credentialsId: 'prod-xata-api-key-simple-social-thing', variable: 'XATA_API_KEY'),
+              string(credentialsId: 'prod-xata-database-url-simple-social-thing', variable: 'XATA_DATABASE_URL')
+            ]) {
+              sh label: 'Deploy frontend via wrangler', script: 'bash deploy/jenkins-deploy-frontend.sh'
+            }
+          }
         }
       }
     }
