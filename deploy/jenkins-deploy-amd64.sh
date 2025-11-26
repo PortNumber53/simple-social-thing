@@ -31,9 +31,19 @@ if [[ -z "${DATABASE_URL}" ]]; then
 fi
 
 BIN_LOCAL="artifacts/simple-social-thing-linux-${GOARCH}"
+MIGRATIONS_DIR_LOCAL="backend/db/migrations"
 
 if [[ ! -f "$BIN_LOCAL" ]]; then
   echo "ERROR: Binary not found at $BIN_LOCAL"
+  exit 1
+fi
+
+if [[ ! -d "${MIGRATIONS_DIR_LOCAL}" ]]; then
+  echo "ERROR: Migrations directory not found at ${MIGRATIONS_DIR_LOCAL}"
+  exit 1
+fi
+if ! ls -1 "${MIGRATIONS_DIR_LOCAL}"/*.sql >/dev/null 2>&1; then
+  echo "ERROR: No migration .sql files found under ${MIGRATIONS_DIR_LOCAL}"
   exit 1
 fi
 
@@ -68,8 +78,10 @@ EOF
 for TARGET_HOST in "${HOSTS[@]}"; do
   echo "=== Deploying ${BIN_LOCAL} (${GOARCH}) to ${SSH_USER}@${TARGET_HOST}:${TARGET_DIR} (service: ${SERVICE_NAME}) ==="
 
-  # Upload binary and unit file to /tmp on target
+  # Upload binary, migrations, and unit file to /tmp on target
+  ssh -p "${SSH_PORT}" "${SSH_USER}@${TARGET_HOST}" "rm -rf /tmp/sst-migrations && mkdir -p /tmp/sst-migrations"
   scp -P "${SSH_PORT}" "$BIN_LOCAL" "${SSH_USER}@${TARGET_HOST}:/tmp/simple-social-thing"
+  scp -P "${SSH_PORT}" "${MIGRATIONS_DIR_LOCAL}"/*.sql "${SSH_USER}@${TARGET_HOST}:/tmp/sst-migrations/"
   scp -P "${SSH_PORT}" simple-social-thing.service "${SSH_USER}@${TARGET_HOST}:/tmp/simple-social-thing.service"
 
   # Prepare target and (re)start service
@@ -79,6 +91,11 @@ set -euo pipefail
 # Create application directories (avoid failing deploy on chown/user-group mismatches)
 sudo mkdir -p "${TARGET_DIR}" "${TARGET_DIR}/logs"
 sudo chmod 0755 "${TARGET_DIR}" "${TARGET_DIR}/logs"
+
+# Ensure DB migration files exist next to deployed binary for runtime migrate-on-startup.
+sudo mkdir -p "${TARGET_DIR}/db/migrations"
+sudo cp -f /tmp/sst-migrations/*.sql "${TARGET_DIR}/db/migrations/"
+rm -rf /tmp/sst-migrations
 
 # (Re)generate config on every deploy (from Jenkins secrets)
 sudo install -d -m 0755 /etc/simple-social-thing
