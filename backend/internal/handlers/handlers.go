@@ -347,6 +347,26 @@ func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// SunoMusicCallback receives async generation callbacks from the SunoAPI provider.
+// We currently accept and log the payload for observability and return 200 quickly.
+// Docs: https://docs.sunoapi.org/suno-api/generate-music (Music Generation Callbacks)
+func (h *Handler) SunoMusicCallback(w http.ResponseWriter, r *http.Request) {
+	_ = h // placeholder for future DB updates (task status -> SunoTracks)
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MB cap
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	log.Printf("[Suno][Callback] %s", string(body))
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
 func (h *Handler) CreateSunoTask(w http.ResponseWriter, r *http.Request) {
 	var req sunoCreateTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

@@ -83,6 +83,9 @@ func main() {
 	r.HandleFunc("/api/suno/tasks", h.CreateSunoTask).Methods("POST")
 	r.HandleFunc("/api/suno/tracks/{id}", h.UpdateSunoTrack).Methods("PUT")
 	r.HandleFunc("/api/suno/store", h.StoreSunoTrack).Methods("POST")
+	// Suno async callbacks (SunoAPI provider → our backend)
+	r.HandleFunc("/callback/suno/music", h.SunoMusicCallback).Methods("POST")
+	r.HandleFunc("/callback/suno/music/", h.SunoMusicCallback).Methods("POST")
 
 	// User settings (for per-user Suno API keys)
 	r.HandleFunc("/api/user-settings/{userId}/{key}", h.GetUserSetting).Methods("GET")
