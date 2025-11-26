@@ -12,8 +12,8 @@ pipeline {
   environment {
     GO111MODULE = 'on'
     // Backend deployment targets
-    TARGET_DIR     = '/var/www/vhosts/simple.truvis.co'
-    SERVICE_NAME   = 'simple-social-thing'
+    TARGET_DIR     = '/var/www/vhosts/api-simple.truvis.co'
+    SERVICE_NAME   = 'api-simple-social-thing'
     SSH_CREDENTIALS = 'brain-jenkins-private-key'  // Jenkins credential ID (Username with private key)
 
     // Machines listed in NOTES.md
@@ -152,11 +152,16 @@ pipeline {
               string(credentialsId: 'cloudflare-api-token', variable: 'CLOUDFLARE_API_TOKEN'),
               string(credentialsId: 'prod-google-client-id-simple-social-thing', variable: 'GOOGLE_CLIENT_ID'),
               string(credentialsId: 'prod-google-client-secret-simple-social-thing', variable: 'GOOGLE_CLIENT_SECRET'),
+              string(credentialsId: 'prod-instagram-app-id-simple-social-thing', variable: 'INSTAGRAM_APP_ID'),
+              // Optional: if you add this credential later, uncomment
+              // string(credentialsId: 'prod-instagram-app-secret-simple-social-thing', variable: 'INSTAGRAM_APP_SECRET'),
               string(credentialsId: 'prod-jwt-secret-simple-social-thing', variable: 'JWT_SECRET'),
               string(credentialsId: 'prod-stripe-secret-key-simple-social-thing', variable: 'STRIPE_SECRET_KEY'),
               string(credentialsId: 'prod-stripe-publishable-key-simple-social-thing', variable: 'STRIPE_PUBLISHABLE_KEY'),
               string(credentialsId: 'prod-stripe-webhook-secret-simple-social-thing', variable: 'STRIPE_WEBHOOK_SECRET'),
               string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
+              string(credentialsId: 'prod-suno-api-key-simple-social-thing', variable: 'SUNO_API_KEY'),
+              string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'BACKEND_ORIGIN'),
               string(credentialsId: 'prod-xata-api-key-simple-social-thing', variable: 'XATA_API_KEY'),
               string(credentialsId: 'prod-xata-database-url-simple-social-thing', variable: 'XATA_DATABASE_URL')
             ]) {
