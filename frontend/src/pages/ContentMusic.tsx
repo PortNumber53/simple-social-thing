@@ -16,11 +16,17 @@ export const ContentMusic: React.FC = () => {
 					? import.meta.env.VITE_WORKER_ORIGIN
 					: window.location.origin;
 				const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, { credentials: 'include' });
-				const data = await res.json();
-				if (data?.ok && data?.value?.apiKey) {
-					setApiKey(data.value.apiKey);
+				const data: unknown = await res.json().catch(() => null);
+				if (data && typeof data === 'object' && 'ok' in data) {
+					const ok = (data as { ok?: unknown }).ok === true;
+					const apiKeyVal = (data as { value?: { apiKey?: unknown } }).value?.apiKey;
+					if (ok && typeof apiKeyVal === 'string' && apiKeyVal.trim() !== '') {
+						setApiKey(apiKeyVal);
+					}
 				}
-			} catch {}
+			} catch {
+				setStatus('Could not load Suno API key.');
+			}
 		};
 		loadKey();
 	}, []);
@@ -35,16 +41,17 @@ export const ContentMusic: React.FC = () => {
 			const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
-				credentials: 'include',
 				body: JSON.stringify({ apiKey }),
+				credentials: 'include',
 			});
 			if (!res.ok) {
 				setStatus('Failed to save key');
 				return;
 			}
 			setStatus('Key saved');
-		} catch (e: any) {
-			setStatus(`Failed to save key: ${e?.message || e}`);
+		} catch (e: unknown) {
+			const msg = e instanceof Error ? e.message : String(e);
+			setStatus(`Failed to save key: ${msg}`);
 		}
 	};
 
@@ -73,8 +80,9 @@ export const ContentMusic: React.FC = () => {
 			if (data?.stored?.filePath) {
 				setFilePath(data.stored.filePath);
 			}
-		} catch (e: any) {
-			setStatus(`Suno failed: ${e?.message || e}`);
+		} catch (e: unknown) {
+			const msg = e instanceof Error ? e.message : String(e);
+			setStatus(`Suno failed: ${msg}`);
 		}
 	};
 

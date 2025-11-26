@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 
+type SunoApiKeyResponse = { ok?: boolean; value?: { apiKey?: unknown } };
+
 export const Integrations: React.FC = () => {
   const [igStatus, setIgStatus] = useState<string | null>(null);
   const [igAccount, setIgAccount] = useState<{ id: string; username: string | null } | null>(null);
@@ -17,7 +19,7 @@ export const Integrations: React.FC = () => {
           setIgStatus('Instagram connected successfully.');
           if (data.account && data.account.id) {
             setIgAccount({ id: data.account.id, username: data.account.username ?? null });
-            try { localStorage.setItem('ig_conn', JSON.stringify({ id: data.account.id, username: data.account.username ?? null })); } catch {}
+            try { localStorage.setItem('ig_conn', JSON.stringify({ id: data.account.id, username: data.account.username ?? null })); } catch { void 0; }
           }
         } else {
           setIgStatus(`Instagram connection failed: ${data.error || 'Unknown error'}`);
@@ -38,7 +40,7 @@ export const Integrations: React.FC = () => {
             setIgAccount({ id: String(parsed.id), username: parsed.username ?? null });
           }
         }
-      } catch {}
+      } catch { void 0; }
     }
   }, []);
 
@@ -50,14 +52,13 @@ export const Integrations: React.FC = () => {
         const workerOrigin = (isLocalhost && import.meta.env.VITE_WORKER_ORIGIN)
           ? import.meta.env.VITE_WORKER_ORIGIN
           : window.location.origin;
-        const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, {
-          credentials: 'include',
-        });
-        const data = await res.json();
-        if (data?.ok && data?.value?.apiKey) {
-          setSunoApiKey(data.value.apiKey);
+        const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, { credentials: 'include' });
+        const data: unknown = await res.json().catch(() => null);
+        const parsed: SunoApiKeyResponse | null = data && typeof data === 'object' ? (data as SunoApiKeyResponse) : null;
+        if (parsed?.ok && typeof parsed.value?.apiKey === 'string' && parsed.value.apiKey.trim() !== '') {
+          setSunoApiKey(parsed.value.apiKey);
         }
-      } catch {}
+      } catch { void 0; }
     };
     load();
   }, []);
@@ -81,21 +82,22 @@ export const Integrations: React.FC = () => {
       const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ apiKey: sunoApiKey }),
+        credentials: 'include',
       });
       if (!res.ok) {
         setSunoStatus('Failed to save Suno API key.');
         return;
       }
       setSunoStatus('Suno API key saved.');
-    } catch (e: any) {
-      setSunoStatus(`Failed to save Suno API key: ${e?.message || e}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSunoStatus(`Failed to save Suno API key: ${msg}`);
     }
   };
 
   const disconnectInstagram = async () => {
-    try { localStorage.removeItem('ig_conn'); } catch {}
+    try { localStorage.removeItem('ig_conn'); } catch { void 0; }
     setIgAccount(null);
     setIgStatus('Instagram disconnected.');
     // Best-effort tell worker to clear cookie
@@ -104,8 +106,8 @@ export const Integrations: React.FC = () => {
       const workerOrigin = (isLocalhost && import.meta.env.VITE_WORKER_ORIGIN)
         ? import.meta.env.VITE_WORKER_ORIGIN
         : window.location.origin;
-      await fetch(`${workerOrigin}/api/integrations/instagram/disconnect`, { method: 'POST' });
-    } catch {}
+      await fetch(`${workerOrigin}/api/integrations/instagram/disconnect`, { method: 'POST', credentials: 'include' });
+    } catch { void 0; }
   };
   return (
     <Layout>
@@ -174,7 +176,7 @@ export const Integrations: React.FC = () => {
                 />
                 <button onClick={saveSunoApiKey} className="btn btn-primary">Save key</button>
                 {sunoStatus && (
-                  <div className="text-sm text-slate-600 dark:text-slate-300">{sunoStatus}</div>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">{sunoStatus}</p>
                 )}
               </div>
             </div>

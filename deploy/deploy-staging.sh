@@ -5,7 +5,7 @@ echo "Deploying to STAGING environment..."
 
 # Set environment variables
 export ENVIRONMENT=staging
-export PORT=18002
+export PORT=18911
 
 # Copy binary to deployment location
 echo "Copying binary..."

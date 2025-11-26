@@ -10,7 +10,7 @@ XATA_API_KEY=your_xata_api_key_here
 XATA_DATABASE_URL=your_xata_database_url_here
 
 # Frontend Build Variables (VITE_* prefix)
-VITE_WORKER_ORIGIN=http://localhost:8787
+VITE_WORKER_ORIGIN=http://localhost:18912
 VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
 VITE_DISABLE_CF_PLUGIN=1
 

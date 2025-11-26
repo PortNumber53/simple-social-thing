@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 
@@ -38,7 +39,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       const stored = localStorage.getItem('user');
       return stored ? (JSON.parse(stored) as User) : null;
-    } catch (e) {
+    } catch {
       localStorage.removeItem('user');
       return null;
     }
@@ -48,15 +49,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   useEffect(() => {
     // Check for OAuth callback data in URL (for redirect flow)
-    checkForOAuthCallback();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const run = async () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const oauthData = urlParams.get('oauth');
 
-  const checkForOAuthCallback = async () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const oauthData = urlParams.get('oauth');
+      if (!oauthData) return;
 
-    if (oauthData) {
       setIsLoading(true);
       try {
         const userData = JSON.parse(decodeURIComponent(oauthData));
@@ -65,25 +63,35 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           setUser(userData.user);
           localStorage.setItem('user', JSON.stringify(userData.user));
           setError(null);
-          
+
           // Redirect to dashboard after successful authentication
           window.history.replaceState({}, document.title, '/dashboard');
           window.location.href = '/dashboard';
-        } else if (userData.error) {
+          return;
+        }
+
+        if (userData.error) {
           setError(userData.error_description || userData.error);
           // Clean up URL on error
           window.history.replaceState({}, document.title, '/');
           setIsLoading(false);
+          return;
         }
-      } catch (error) {
-        console.error('Error processing OAuth callback:', error);
+
+        setError('Authentication failed');
+        window.history.replaceState({}, document.title, '/');
+        setIsLoading(false);
+      } catch (e: unknown) {
+        console.error('Error processing OAuth callback:', e);
         setError('Authentication failed');
         // Clean up URL on error
         window.history.replaceState({}, document.title, '/');
         setIsLoading(false);
       }
-    }
-  };
+    };
+
+    void run();
+  }, []);
 
   const login = (userData: User) => {
     setUser(userData);

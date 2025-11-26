@@ -53,7 +53,7 @@
   - `deploy/README.md` - Complete deployment documentation
   - `deploy/deploy-{dev,staging,production}.sh` - Legacy environment-specific deployment scripts
   - `deploy/systemd/*.service` - Legacy systemd service files
-- Backend runs on port `18002` with hot reload via Air
+- Backend runs on port `18911` with hot reload via Air
 - Jenkins pipeline deploys to `/var/www/vhosts/simple.truvis.co` on web1
 - Automated config setup: creates `/etc/simple-social-thing/config.ini` from sample on first deploy (never overwrites)
 
@@ -70,7 +70,7 @@
   - Created separate dev configuration
   - Removed hardcoded `localConnectionString` - now uses environment variable
 - `frontend/.dev.vars.example`
-  - Updated port references to `18002`
+  - Updated port references to `18910/18911/18912`
 
 ### Security Improvements
 - No hardcoded database credentials in version-controlled files
@@ -132,7 +132,7 @@
   - Set `VITE_DISABLE_CF_PLUGIN=1` for `dev:client` to ensure plugin is disabled during dev.
   - Add `@types/node` to devDependencies.
 - `frontend/.env.local` (developer env)
-  - Documented recommended entries: `VITE_WORKER_ORIGIN=http://localhost:8787`, `VITE_DISABLE_CF_PLUGIN=1`, and `VITE_GOOGLE_CLIENT_ID`.
+  - Documented recommended entries: `VITE_WORKER_ORIGIN=http://localhost:18912`, `VITE_DISABLE_CF_PLUGIN=1`, and `VITE_GOOGLE_CLIENT_ID`.
 - `.windsurf_plan.md`
   - Added project plan with dev/prod OAuth guidance and deployment notes.
 - `frontend/wrangler.jsonc`
@@ -175,6 +175,6 @@
 
 ### Notes
 - Ensure Google OAuth client has Authorized redirect URI:
-  - Dev: `http://localhost:8787/api/auth/google/callback`
+  - Dev: `http://localhost:18912/api/auth/google/callback`
   - Prod: `https://<your-worker-domain>/api/auth/google/callback`
-- Start dev: `npm run dev` (client on 5173, worker on 8787).
+- Start dev: `npm run dev` (client on 18910, worker on 18912).

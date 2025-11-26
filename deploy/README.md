@@ -91,7 +91,7 @@ The pipeline automatically creates and manages the systemd service:
 - **Service file:** `/etc/systemd/system/simple-social-thing.service`
 - **Binary location:** `/var/www/vhosts/simple.truvis.co/simple-social-thing`
 - **Logs:** `/var/www/vhosts/simple.truvis.co/logs/`
-- **Port:** `18002`
+- **Port:** `18911`
 
 ### Manual Service Management
 
@@ -144,7 +144,7 @@ The pipeline produces the following artifacts:
 4. Pipeline runs database migrations (if configured)
 5. Pipeline deploys amd64 binary to web1
 6. Service is automatically restarted
-7. Application is live on port 18002
+7. Application is live on port 18911
 
 ## Troubleshooting
 

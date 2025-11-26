@@ -33,7 +33,7 @@ User=grimlock
 Group=grimlock
 WorkingDirectory=${TARGET_DIR}
 EnvironmentFile=/etc/simple-social-thing/config.ini
-Environment=PORT=18002
+Environment=PORT=18911
 ExecStart=${TARGET_DIR}/simple-social-thing
 Restart=always
 RestartSec=2s

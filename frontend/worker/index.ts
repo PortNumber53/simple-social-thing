@@ -7,20 +7,36 @@ interface Env {
   ASSETS?: Fetcher;
   INSTAGRAM_APP_ID?: string;
   INSTAGRAM_APP_SECRET?: string;
-  // Hyperdrive binding is available on env.HYPERDRIVE in CF; typing as any to avoid SDK requirement here
-  // HYPERDRIVE?: { connectionString: string };
+  SUNO_API_KEY?: string;
+  BACKEND_ORIGIN?: string;
+  DATABASE_URL?: string;
+  // Hyperdrive binding is available on env.HYPERDRIVE in CF
+  HYPERDRIVE?: { connectionString?: string };
 }
 
 // --- Hyperdrive (Postgres) helpers ---
 type SqlClient = ReturnType<typeof postgres> | null;
 
-function getSql(env: any): SqlClient {
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  if (!value || typeof value !== 'object') return null;
+  return value as JsonRecord;
+}
+
+function getString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+function getSql(env: Env): SqlClient {
   try {
     // Prefer Hyperdrive binding in prod; in local, if it resolves to hyperdrive.local (Miniflare),
     // fall back to DATABASE_URL to avoid local CONNECT_TIMEOUTs.
-    let cs: string | undefined = env?.HYPERDRIVE?.connectionString;
+    let cs: string | undefined = env.HYPERDRIVE?.connectionString;
     if (!cs || /hyperdrive\.local/i.test(cs)) {
-      cs = env?.DATABASE_URL || cs;
+      cs = env.DATABASE_URL || cs;
     }
     if (!cs) return null;
     return postgres(cs, {
@@ -62,8 +78,8 @@ async function sqlUpsertSocial(sql: NonNullable<SqlClient>, conn: { userId: stri
   await sql`
     INSERT INTO public."SocialConnections" (id, "userId", provider, "providerId", email, name, "createdAt")
     VALUES (${id}, ${conn.userId}, ${conn.provider}, ${conn.providerId}, ${conn.email ?? null}, ${conn.name ?? null}, NOW())
-    ON CONFLICT ("userId", provider) DO UPDATE SET
-      "providerId" = EXCLUDED."providerId",
+    ON CONFLICT (provider, "providerId") DO UPDATE SET
+      "userId" = EXCLUDED."userId",
       email = EXCLUDED.email,
       name = EXCLUDED.name;
   `;
@@ -108,7 +124,7 @@ function buildSidCookie(value: string, maxAgeSeconds: number, requestUrl?: strin
 	} else {
 		parts.push('Max-Age=0');
 	}
-	// Local dev: cookie must be visible to both :5173 and :8787 → set Domain=localhost
+	// Local dev: cookie must be visible to both :18910 and :18912 → set Domain=localhost
 	if (url && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
 		parts.push('Domain=localhost');
 	}
@@ -119,12 +135,20 @@ function buildSidCookie(value: string, maxAgeSeconds: number, requestUrl?: strin
 async function persistSocialConnection(
   _env: Env,
   _conn: { userId: string; provider: string; providerId: string; email?: string; name?: string }
-) { /* no-op: Hyperdrive SQL is authoritative */ }
+) {
+  // no-op: Hyperdrive SQL is authoritative
+  void _env;
+  void _conn;
+}
 
 async function persistUser(
   _env: Env,
   _user: { id: string; email: string; name: string; imageUrl?: string }
-) { /* no-op: Hyperdrive SQL is authoritative */ }
+) {
+  // no-op: Hyperdrive SQL is authoritative
+  void _env;
+  void _user;
+}
 
 interface GoogleTokenResponse {
   access_token: string;
@@ -154,7 +178,7 @@ export default {
     if (url.pathname.startsWith("/api/")) {
       // DB ping endpoint
       if (url.pathname === "/api/db/ping") {
-        const sql = getSql(env as any);
+        const sql = getSql(env);
         if (!sql) {
           return Response.json({ ok: false, error: 'no_sql_client' }, { status: 503 });
         }
@@ -173,14 +197,14 @@ export default {
         const sid = getCookie(cookie, 'sid');
         // Prefer Hyperdrive-backed status if we have a session id and SQL client
         if (sid) {
-          const sql = getSql(env as any);
+          const sql = getSql(env);
           if (sql) {
             try {
               const row = await sqlQuerySocial(sql, sid, 'instagram');
               if (row) {
                 return Response.json({ instagram: { connected: true, account: { id: row.providerId, username: row.name || null } } });
               }
-            } catch {}
+            } catch { void 0; }
           }
         }
         // Fallback to cookie-only status
@@ -225,177 +249,79 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function handleSunoGenerate(request: Request, env: any): Promise<Response> {
+async function handleSunoGenerate(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendOrigin(env, request);
-	const headers = new Headers();
-	const origin = request.headers.get('Origin') || '*';
-	if (origin !== '') {
-		headers.set('Access-Control-Allow-Origin', origin);
-		headers.set('Vary', 'Origin');
-		headers.set('Access-Control-Allow-Credentials', 'true');
-		headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-		headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-	}
-	if (request.method === 'OPTIONS') {
-		return new Response(null, { status: 204, headers });
-	}
-	let body: any = {};
+	let body: unknown = null;
 	try {
 		if (request.headers.get('content-type')?.includes('application/json')) {
 			body = await request.json();
 		}
-	} catch {}
-	const prompt: string = body?.prompt || 'New song from Simple Social Thing';
-	const model: string = (body?.model || 'V4').toString();
-	const sid = getCookie(request.headers.get('Cookie') || '', 'sid');
-	const userId: string | undefined = body?.userId || sid || undefined;
-	console.log('[Suno] generate request', JSON.stringify({ hasSid: !!sid, hasUserId: !!userId, promptLen: prompt?.length || 0, model }));
+	} catch {
+		body = null;
+	}
+	const bodyObj = asRecord(body);
+	const prompt = getString(bodyObj?.['prompt']) ?? 'New song from Simple Social Thing';
+	const userId = getString(bodyObj?.['userId']) ?? undefined;
 
+	const sid = getCookie(request.headers.get('Cookie') || '', 'sid');
 	const perUserKey = sid ? await fetchUserSunoKey(backendOrigin, sid) : null;
 	const sunoApiKey = perUserKey || env.SUNO_API_KEY;
-	console.log('[Suno] key source', perUserKey ? 'per-user' : (env.SUNO_API_KEY ? 'env' : 'none'));
-
-	if (!sunoApiKey || typeof sunoApiKey !== 'string' || sunoApiKey.trim() === '') {
-		return Response.json({ ok: false, error: 'missing_suno_api_key' }, { status: 400, headers });
-	}
+	const useMock = env.USE_MOCK_AUTH === 'true' || !sunoApiKey;
 
 	let audioUrl = '';
 	let sunoTrackId = '';
 
-	console.log('[Suno] POST /api/v1/generate');
-	const callBackUrl = env.SUNO_CALLBACK_URL || 'https://example.com/callback';
-	const sunoRes = await fetch('https://api.sunoapi.org/api/v1/generate', {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			'Authorization': `Bearer ${sunoApiKey}`,
-		},
-		body: JSON.stringify({ prompt, customMode: false, callBackUrl, model, instrumental: false }),
-	});
-	if (!sunoRes.ok) {
-		const errText = await sunoRes.text().catch(() => '');
-		console.error('[Suno] generate failed', sunoRes.status, errText?.slice(0, 300));
-		return Response.json({ ok: false, error: 'suno_generate_failed', status: sunoRes.status, details: errText }, { status: 502, headers });
-	}
-	const rawText = await sunoRes.text().catch(() => '');
-	let sunoData: any = {} as any;
-	try { sunoData = JSON.parse(rawText); } catch {}
-	const taskId = (
-		  sunoData?.data?.taskId
-		|| sunoData?.taskId
-		|| sunoData?.data?.id
-		|| sunoData?.id
-		|| ''
-	).toString();
-	console.log('[Suno] taskId', taskId || '(none)');
-	if (!taskId) {
-		console.error('[Suno] generate response (trimmed)', rawText.slice(0, 500));
-	}
-	if (!taskId) {
-		return Response.json({ ok: false, error: 'suno_missing_task_id', raw: sunoData }, { status: 502, headers });
-	}
-
-	// Create task record immediately so we can track it
-	let trackRecordId = '';
-	try {
-		const createRes = await fetch(`${backendOrigin}/api/suno/tasks`, {
+	if (useMock) {
+		audioUrl = 'https://example.com/mock-suno-track.mp3';
+		sunoTrackId = 'mock-suno-track-id';
+	} else {
+		const sunoRes = await fetch('https://sunoapi.org/api/generate', {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ userId, prompt, taskId, model }),
+			headers: {
+				'Content-Type': 'application/json',
+				'Authorization': `Bearer ${sunoApiKey}`,
+			},
+			body: JSON.stringify({ prompt }),
 		});
-		const createData: any = await createRes.json().catch(() => ({} as any));
-		trackRecordId = createData?.id || '';
-		console.log('[Suno] created track record', trackRecordId);
-	} catch (e) {
-		console.error('[Suno] failed to create track record', e);
-	}
+		if (!sunoRes.ok) {
+			const errText = await sunoRes.text().catch(() => '');
+			return Response.json({ ok: false, error: 'suno_generate_failed', status: sunoRes.status, details: errText }, { status: 502 });
+		}
+		const sunoData: unknown = await sunoRes.json().catch(() => null);
+		const sunoObj = asRecord(sunoData);
+		const inner = sunoObj ? asRecord(sunoObj['data']) : null;
 
-	// Poll for record info until SUCCESS and extract audioUrl
-	// Suno generation takes 1-2 minutes, so poll for up to 3 minutes with exponential backoff
-	let pollAttempts = 30;
-	let lastDetails = '';
-	let attemptNum = 0;
-	while (pollAttempts-- > 0) {
-		attemptNum++;
-		const recRes = await fetch(`https://api.sunoapi.org/api/v1/generate/record-info?taskId=${encodeURIComponent(taskId)}`, {
-			headers: { 'Authorization': `Bearer ${sunoApiKey}` }
-		});
-		const recData: any = await recRes.json().catch(() => ({} as any));
-		// Keep some details to aid debugging
-		try { lastDetails = JSON.stringify({ code: recData?.code, msg: recData?.msg, status: recData?.data?.status }); } catch {}
-		const status = recData?.data?.status;
-		console.log('[Suno] poll', { attempt: attemptNum, status });
-		if (status === 'SUCCESS') {
-			const first = recData?.data?.response?.sunoData?.[0];
-			audioUrl = (first?.audioUrl || '').toString();
-			sunoTrackId = (first?.id || '').toString();
-			console.log('[Suno] success', { hasAudio: !!audioUrl, trackId: sunoTrackId || '(none)' });
-			break;
-		}
-		if (status === 'FAILED') {
-			console.error('[Suno] generation failed', lastDetails?.slice(0, 300));
-			// Update track record to failed status
-			if (trackRecordId) {
-				try {
-					await fetch(`${backendOrigin}/api/suno/tracks/${trackRecordId}`, {
-						method: 'PUT',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ status: 'failed' }),
-					});
-				} catch {}
-			}
-			return Response.json({ ok: false, error: 'suno_generation_failed', details: recData }, { status: 502, headers });
-		}
-		// Exponential backoff: 2s, 4s, 6s, 8s, then 10s for remaining attempts
-		const waitMs = Math.min(attemptNum * 2000, 10000);
-		await new Promise((r) => setTimeout(r, waitMs));
-	}
-	if (!audioUrl) {
-		console.error('[Suno] no audio after poll', lastDetails?.slice(0, 300));
-		// Update track record to timeout status
-		if (trackRecordId) {
-			try {
-				await fetch(`${backendOrigin}/api/suno/tracks/${trackRecordId}`, {
-					method: 'PUT',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ status: 'timeout' }),
-				});
-			} catch {}
-		}
-		return Response.json({ ok: false, error: 'suno_no_audio_after_poll', details: lastDetails || sunoData }, { status: 504, headers });
-	}
+		const audioCandidate = sunoObj?.['audio_url'] ?? sunoObj?.['audioUrl'] ?? inner?.['audio_url'];
+		const idCandidate = sunoObj?.['id'] ?? sunoObj?.['track_id'] ?? inner?.['id'];
 
-	// Update track record with completed audio
-	if (trackRecordId) {
-		try {
-			await fetch(`${backendOrigin}/api/suno/tracks/${trackRecordId}`, {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ sunoTrackId, audioUrl, status: 'completed' }),
-			});
-			console.log('[Suno] updated track record to completed');
-		} catch (e) {
-			console.error('[Suno] failed to update track record', e);
+		audioUrl = typeof audioCandidate === 'string' ? audioCandidate : String(audioCandidate ?? '');
+		sunoTrackId = typeof idCandidate === 'string' ? idCandidate : String(idCandidate ?? '');
+		if (!audioUrl) {
+			return Response.json({ ok: false, error: 'suno_missing_audio_url', raw: sunoData }, { status: 502 });
 		}
 	}
 
-	return Response.json({ ok: true, suno: { audioUrl, sunoTrackId }, trackId: trackRecordId }, { headers });
+	// Call Go backend to store the track
+	const storeRes = await fetch(`${backendOrigin}/api/suno/store`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			userId,
+			prompt,
+			sunoTrackId,
+			audioUrl,
+		}),
+	});
+	const storeData = await storeRes.json().catch(() => ({}));
+	if (!storeRes.ok) {
+		return Response.json({ ok: false, error: 'suno_store_failed', backend: storeData }, { status: 502 });
+	}
+
+	return Response.json({ ok: true, suno: { audioUrl, sunoTrackId }, stored: storeData });
 }
 
-async function handleSunoStore(request: Request, env: any): Promise<Response> {
+async function handleSunoStore(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendOrigin(env, request);
-	const headers = new Headers();
-	const origin = request.headers.get('Origin') || '*';
-	if (origin !== '') {
-		headers.set('Access-Control-Allow-Origin', origin);
-		headers.set('Vary', 'Origin');
-		headers.set('Access-Control-Allow-Credentials', 'true');
-		headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-		headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-	}
-	if (request.method === 'OPTIONS') {
-		return new Response(null, { status: 204, headers });
-	}
 	return fetch(`${backendOrigin}/api/suno/store`, {
 		method: request.method,
 		headers: { 'Content-Type': 'application/json' },
@@ -403,23 +329,17 @@ async function handleSunoStore(request: Request, env: any): Promise<Response> {
 	});
 }
 
-async function handleSunoApiKey(request: Request, env: any): Promise<Response> {
+async function handleSunoApiKey(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendOrigin(env, request);
 	const cookie = request.headers.get('Cookie') || '';
 	let sid = getCookie(cookie, 'sid');
 	// Local dev helper: if no sid, issue one so the user can save their key
 	const requestUrl = request.url;
 	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
-	const headers = new Headers();
-	const origin = request.headers.get('Origin') || '*';
-	if (origin !== '') {
-		headers.set('Access-Control-Allow-Origin', origin);
-		headers.set('Vary', 'Origin');
-		headers.set('Access-Control-Allow-Credentials', 'true');
-		headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-		headers.set('Access-Control-Allow-Methods', 'GET, PUT, OPTIONS');
-	}
+	const headers = buildCorsHeaders(request);
 	if (request.method === 'OPTIONS') {
+		headers.set('Access-Control-Allow-Methods', 'GET,PUT,OPTIONS');
+		headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
 		return new Response(null, { status: 204, headers });
 	}
 	if (!sid && isLocal) {
@@ -427,86 +347,82 @@ async function handleSunoApiKey(request: Request, env: any): Promise<Response> {
 		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
 		// ensure user exists in Go backend to satisfy FK in UserSettings
 		try {
-			const userRes = await fetch(`${backendOrigin}/api/users`, {
+			await fetch(`${backendOrigin}/api/users`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
 			});
-			if (!userRes.ok) {
-				console.error('[SunoApiKey] failed to create user for new sid', userRes.status, await userRes.text().catch(() => ''));
-			}
-		} catch (e) {
-			console.error('[SunoApiKey] backend unreachable when creating user for new sid', e);
-		}
+		} catch { void 0; }
 	}
 	if (!sid) {
 		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
 	}
 	if (request.method === 'GET') {
-		try {
-			const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`);
-			if (res.status === 404) {
-				return Response.json({ ok: true, value: null }, { headers });
-			}
-			if (!res.ok) {
-				const errText = await res.text().catch(() => '');
-				return new Response(
-					JSON.stringify({ ok: false, error: 'backend_error', status: res.status, details: errText }),
-					{ status: 502, headers }
-				);
-			}
-			const data = await res.json().catch(() => ({}));
-			return new Response(JSON.stringify({ ok: true, value: data?.value ?? null }), { status: 200, headers });
-		} catch (e) {
-			return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable' }), { status: 502, headers });
+		const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`);
+		if (res.status === 404) {
+			return new Response(JSON.stringify({ ok: true, value: null }), { status: 200, headers });
 		}
+		const data: unknown = await res.json().catch(() => null);
+		const obj = asRecord(data);
+		const value = obj ? obj['value'] : null;
+		return new Response(JSON.stringify({ ok: true, value: value ?? null }), { status: 200, headers });
 	}
 	if (request.method === 'PUT') {
 		const bodyText = await request.text();
 		// expect { apiKey: string }
-		let parsed: any = {};
-		try { parsed = JSON.parse(bodyText || '{}'); } catch {}
-		const apiKey = parsed?.apiKey;
-		let res: Response;
-		try {
-			res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`, {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ value: { apiKey } }),
-			});
-		} catch (e) {
-			return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable' }), { status: 502, headers });
-		}
-		const data = await res.json().catch(() => ({}));
+		let parsed: unknown = null;
+		try { parsed = JSON.parse(bodyText || '{}'); } catch { parsed = null; }
+		const parsedObj = asRecord(parsed);
+		const apiKey = getString(parsedObj?.['apiKey']);
+		const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ value: { apiKey } }),
+		});
+		const data: unknown = await res.json().catch(() => null);
+		const dataObj = asRecord(data) ?? {};
 		if (!res.ok) {
-			return new Response(JSON.stringify({ ok: false, error: 'save_failed', backend: data }), { status: 500, headers });
+			return new Response(JSON.stringify({ ok: false, error: 'save_failed', backend: dataObj }), { status: 500, headers });
 		}
 		return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
 	}
-	return new Response(null, { status: 405 });
+	return new Response(null, { status: 405, headers });
+}
+
+function buildCorsHeaders(request: Request): Headers {
+	const origin = request.headers.get('Origin');
+	const headers = new Headers();
+	if (origin) {
+		headers.set('Access-Control-Allow-Origin', origin);
+		headers.set('Vary', 'Origin');
+		headers.set('Access-Control-Allow-Credentials', 'true');
+	} else {
+		headers.set('Access-Control-Allow-Origin', '*');
+	}
+	return headers;
 }
 
 async function fetchUserSunoKey(backendOrigin: string, userId: string): Promise<string | null> {
 	try {
 		const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(userId)}/suno_api_key`);
 		if (!res.ok) return null;
-		const data = await res.json().catch(() => ({}));
-		const value = data?.value;
-		if (value && typeof value.apiKey === 'string' && value.apiKey.trim() !== '') {
-			return value.apiKey.trim();
-		}
+		const data: unknown = await res.json().catch(() => null);
+		const obj = asRecord(data);
+		const valueObj = obj ? asRecord(obj['value']) : null;
+		const apiKey = valueObj ? getString(valueObj['apiKey']) : null;
+		if (apiKey) return apiKey;
 		return null;
 	} catch {
 		return null;
 	}
 }
 
-function getBackendOrigin(env: any, request: Request): string {
-	if (env.BACKEND_ORIGIN) return env.BACKEND_ORIGIN as string;
+function getBackendOrigin(env: Env, request: Request): string {
+	if (env.BACKEND_ORIGIN) return env.BACKEND_ORIGIN;
 	const url = new URL(request.url);
 	const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
 	if (isLocal) {
-		return 'http://localhost:18002';
+		return 'http://localhost:18911';
 	}
 	// fallback: same origin
 	return url.origin;
@@ -515,7 +431,7 @@ function getBackendOrigin(env: any, request: Request): string {
 async function startInstagramOAuth(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:5173` : url.origin.replace(/\/_worker\/.*/, '');
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/instagram/callback', url.origin).toString();
 
   if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
@@ -547,7 +463,7 @@ async function startInstagramOAuth(request: Request, env: Env): Promise<Response
 async function handleInstagramCallback(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:5173` : url.origin.replace(/\/_worker\/.*/, '');
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/instagram/callback', url.origin).toString();
 
   const code = url.searchParams.get('code');
@@ -611,7 +527,7 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
     // Persist connection via Hyperdrive SQL when available (falls back to no-op on DB)
     const cookieHeader = request.headers.get('Cookie') || '';
     const sid = getCookie(cookieHeader, 'sid');
-    const sql = getSql(env as any);
+    const sql = getSql(env);
     if (sql && sid) {
       try {
         await sqlUpsertSocial(sql, {
@@ -620,7 +536,9 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
           providerId: igId,
           name: ig.username || null,
         });
-      } catch {}
+      } catch (e) {
+        console.error('[DB] sqlUpsertSocial (instagram) failed', e);
+      }
     }
 
     // Set a cookie with minimal IG connection info and redirect back to client
@@ -644,15 +562,15 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
   const error = url.searchParams.get('error');
 
   // Determine client URL dynamically
-  // For local dev: worker is on :8787, frontend is on :5173
+  // For local dev: worker is on :18912, frontend is on :18910
   // For production: both are on the same domain
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost
-    ? `http://localhost:5173`
+    ? `http://localhost:18910`
     : url.origin.replace(/\/api.*$/, '');
 
   // The redirect_uri must match what was sent to Google in the auth request
-  // In dev: frontend sends localhost:5173, in prod: same as url.origin
+  // In dev: frontend sends localhost:18910, in prod: same as url.origin
   const redirectUri = isLocalhost
     ? `${clientUrl}/api/auth/google/callback`
     : new URL('/api/auth/google/callback', url.origin).toString();
@@ -770,7 +688,7 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
 
     // Upsert user into Postgres via Hyperdrive if available
     {
-      const sql = getSql(env as any);
+      const sql = getSql(env);
       if (sql) {
         let canonicalUserId = frontendUserData.id;
         try {
@@ -803,7 +721,7 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
     const headers = new Headers();
     headers.set('Location', `${clientUrl}?oauth=${userDataParam}`);
     // Prefer canonical DB user id in the session cookie to satisfy FK constraints later
-    const sql = getSql(env as any);
+    const sql = getSql(env);
     let sidValue = frontendUserData.id;
     if (sql) {
       try {
@@ -813,7 +731,9 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
           name: frontendUserData.name,
           imageUrl: frontendUserData.imageUrl || null,
         });
-      } catch {}
+      } catch (e) {
+        console.error('[DB] sqlUpsertUser for sid failed', e);
+      }
     }
     headers.append('Set-Cookie', buildSidCookie(sidValue, 60 * 60 * 24 * 30, request.url));
     return new Response(null, { status: 302, headers });

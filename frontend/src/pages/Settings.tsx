@@ -19,7 +19,7 @@ export const Settings: React.FC = () => {
       await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
       
       setMessage({ type: 'success', text: 'Settings saved successfully!' });
-    } catch (error) {
+    } catch {
       setMessage({ type: 'error', text: 'Failed to save settings. Please try again.' });
     } finally {
       setIsSaving(false);

@@ -10,7 +10,7 @@ ExecStart=/opt/simple-social-thing/dev/api
 Restart=on-failure
 RestartSec=5s
 
-Environment="PORT=18002"
+Environment="PORT=18911"
 Environment="ENVIRONMENT=dev"
 EnvironmentFile=/opt/simple-social-thing/dev/.env
 

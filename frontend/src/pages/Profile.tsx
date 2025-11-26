@@ -21,7 +21,7 @@ export const Profile: React.FC = () => {
       await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
       
       setMessage({ type: 'success', text: 'Display name updated successfully!' });
-    } catch (error) {
+    } catch {
       setMessage({ type: 'error', text: 'Failed to update display name. Please try again.' });
     } finally {
       setIsSaving(false);
@@ -52,7 +52,7 @@ export const Profile: React.FC = () => {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
-    } catch (error) {
+    } catch {
       setMessage({ type: 'error', text: 'Failed to change password. Please try again.' });
     } finally {
       setIsSaving(false);
