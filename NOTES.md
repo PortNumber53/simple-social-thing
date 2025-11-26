@@ -1,6 +1,7 @@
 Hyperdrive ID: 6a6669283cec49e9978addebda7e2727
 
 Jenkins Secret Names:
+- cloudflare-api-token
 - prod-xata-database-url-simple-social-thing
 - prod-database-url-simple-social-thing
 - prod-xata-api-key-simple-social-thing
@@ -12,7 +13,7 @@ Jenkins Secret Names:
 - prod-stripe-webhook-secret-simple-social-thing
 
 
-Oracle - Ubuntu - ARM64 machines - ssh port 22
+Oracle - Ubuntu - ARM64 machines - ssh port 22, user grimlock
 163.192.9.21 sanjose-prod
 129.146.3.224 phoenix-prod
 150.136.217.87 ashburnarm-prod
@@ -20,4 +21,4 @@ Oracle - Ubuntu - ARM64 machines - ssh port 22
 168.138.152.114 saopaulo-prod
 144.24.200.77 marselle-prod
 
-Arch Linux `web1` server - AMD64 - ssh port 22987
+Arch Linux `web1` server - AMD64 - ssh port 22987, user grimlock

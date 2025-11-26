@@ -28,7 +28,7 @@ pipeline {
 
     // Oracle - Ubuntu - ARM64 machines
     BACKEND_ARM64_HOSTS = '163.192.9.21 129.146.3.224 150.136.217.87 164.152.111.231 168.138.152.114 144.24.200.77'
-    BACKEND_ARM64_SSH_USER = 'ubuntu'
+    BACKEND_ARM64_SSH_USER = 'grimlock'
     BACKEND_ARM64_SSH_PORT = '22'
   }
 
@@ -150,6 +150,7 @@ pipeline {
       }
       steps {
         withCredentials([
+          string(credentialsId: 'cloudflare-api-token', variable: 'CLOUDFLARE_API_TOKEN'),
           string(credentialsId: 'prod-google-client-id-simple-social-thing', variable: 'GOOGLE_CLIENT_ID'),
           string(credentialsId: 'prod-google-client-secret-simple-social-thing', variable: 'GOOGLE_CLIENT_SECRET'),
           string(credentialsId: 'prod-jwt-secret-simple-social-thing', variable: 'JWT_SECRET'),
