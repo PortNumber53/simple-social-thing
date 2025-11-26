@@ -53,32 +53,14 @@ The Jenkins pipeline automatically handles most of the server setup:
 2. **Creates config directory:**
    - `/etc/simple-social-thing`
 
-3. **Initializes config file (first deployment only):**
-   - Copies `config.ini.sample` to `/etc/simple-social-thing/config.ini`
-   - Sets ownership to `root:grimlock`
+3. **(Re)generates config file (every deployment):**
+   - Writes `/etc/simple-social-thing/config.ini` from Jenkins secrets (masked)
+   - Sets ownership to `root:<service-group>`
    - Sets permissions to `640`
-   - **Does NOT overwrite existing config files**
 
 ### Manual Configuration Required
 
-After the first deployment, you must edit the config file with your actual values:
-
-```bash
-sudo nano /etc/simple-social-thing/config.ini
-```
-
-Update the `DATABASE_URL` with your actual database connection string:
-
-```ini
-# Simple Social Thing Configuration
-DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
-```
-
-Then restart the service:
-
-```bash
-sudo systemctl restart simple-social-thing
-```
+None for the production Jenkins deploy path: config is written from Jenkins secrets on every deploy.
 
 ### Prerequisites on Target Server (web1)
 

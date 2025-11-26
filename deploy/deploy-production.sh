@@ -34,7 +34,6 @@ User=grimlock
 Group=grimlock
 WorkingDirectory=/var/www/vhosts/simple.truvis.co
 EnvironmentFile=/etc/simple-social-thing/config.ini
-Environment=PORT=18911
 ExecStart=/var/www/vhosts/simple.truvis.co/simple-social-thing
 Restart=always
 RestartSec=2s
@@ -47,9 +46,8 @@ StandardError=append:/var/www/vhosts/simple.truvis.co/logs/error.log
 WantedBy=multi-user.target
 EOF
 
-# Upload service file and config sample
+# Upload service file
 scp /tmp/simple-social-thing.service grimlock@${TARGET_HOST}:/tmp/simple-social-thing.service
-scp deploy/config.ini.sample grimlock@${TARGET_HOST}:/tmp/config.ini.sample
 
 # Deploy on target server
 echo "Installing on $TARGET_HOST..."
@@ -63,19 +61,8 @@ ssh grimlock@${TARGET_HOST} "
   # Setup config directory and file
   sudo mkdir -p /etc/simple-social-thing
 
-  # Only copy sample config if config.ini doesn't exist
-  if [ ! -f /etc/simple-social-thing/config.ini ]; then
-    echo 'Config file does not exist, creating from sample...'
-    sudo cp /tmp/config.ini.sample /etc/simple-social-thing/config.ini
-    sudo chown root:grimlock /etc/simple-social-thing/config.ini
-    sudo chmod 640 /etc/simple-social-thing/config.ini
-    echo 'WARNING: Please edit /etc/simple-social-thing/config.ini with your actual values!'
-  else
-    echo 'Config file already exists, skipping...'
-  fi
-
-  # Clean up temp config sample
-  rm -f /tmp/config.ini.sample
+  # NOTE: This legacy script no longer ships a config sample. Ensure /etc/simple-social-thing/config.ini
+  # exists and contains DATABASE_URL and PORT.
 
   # Install binary
   sudo mv /tmp/simple-social-thing ${TARGET_DIR}/simple-social-thing
