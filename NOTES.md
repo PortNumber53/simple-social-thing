@@ -20,4 +20,4 @@ Oracle - Ubuntu - ARM64 machines - ssh port 22
 168.138.152.114 saopaulo-prod
 144.24.200.77 marselle-prod
 
-Arch Linux `web1` server - AMD64 - ssh port 22
+Arch Linux `web1` server - AMD64 - ssh port 22987

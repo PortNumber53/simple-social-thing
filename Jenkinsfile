@@ -24,10 +24,12 @@ pipeline {
     // Machines listed in NOTES.md
     BACKEND_AMD64_HOSTS = 'web1'
     BACKEND_AMD64_SSH_USER = 'grimlock'
+    BACKEND_AMD64_SSH_PORT = '22987'
 
     // Oracle - Ubuntu - ARM64 machines
     BACKEND_ARM64_HOSTS = '163.192.9.21 129.146.3.224 150.136.217.87 164.152.111.231 168.138.152.114 144.24.200.77'
     BACKEND_ARM64_SSH_USER = 'ubuntu'
+    BACKEND_ARM64_SSH_PORT = '22'
   }
 
   stages {
@@ -106,6 +108,7 @@ pipeline {
             GOARCH=amd64 \
             TARGET_HOSTS="$BACKEND_AMD64_HOSTS" \
             SSH_USER="$BACKEND_AMD64_SSH_USER" \
+            SSH_PORT="$BACKEND_AMD64_SSH_PORT" \
             TARGET_DIR="$TARGET_DIR" \
             SERVICE_NAME="$SERVICE_NAME" \
             bash deploy/jenkins-deploy-amd64.sh
@@ -129,6 +132,7 @@ pipeline {
             GOARCH=arm64 \
             TARGET_HOSTS="$BACKEND_ARM64_HOSTS" \
             SSH_USER="$BACKEND_ARM64_SSH_USER" \
+            SSH_PORT="$BACKEND_ARM64_SSH_PORT" \
             TARGET_DIR="$TARGET_DIR" \
             SERVICE_NAME="$SERVICE_NAME" \
             bash deploy/jenkins-deploy-amd64.sh
@@ -168,5 +172,3 @@ pipeline {
     always  { sh 'ls -lah artifacts || true' }
   }
 }
-
-
