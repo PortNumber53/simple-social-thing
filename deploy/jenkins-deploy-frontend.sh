@@ -20,6 +20,15 @@ if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
   exit 1
 fi
 
+require_env() {
+  local key="$1"
+  local value="${!key:-}"
+  if [[ -z "$value" ]]; then
+    echo "ERROR: required env var ${key} is not set (check Jenkins credentials wiring)"
+    exit 1
+  fi
+}
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRONTEND_DIR="${ROOT_DIR}/frontend"
 
@@ -44,8 +53,20 @@ put_secret() {
   printf '%s' "$value" | npx --yes wrangler secret put "$key" --config wrangler.jsonc
 }
 
+# Require OAuth/provider secrets we actively use in production flows.
+require_env "GOOGLE_CLIENT_ID"
+require_env "GOOGLE_CLIENT_SECRET"
+require_env "INSTAGRAM_APP_ID"
+require_env "INSTAGRAM_APP_SECRET"
+require_env "SUNO_API_KEY"
+require_env "BACKEND_ORIGIN"
+
 put_secret "GOOGLE_CLIENT_ID" "${GOOGLE_CLIENT_ID:-}"
 put_secret "GOOGLE_CLIENT_SECRET" "${GOOGLE_CLIENT_SECRET:-}"
+put_secret "INSTAGRAM_APP_ID" "${INSTAGRAM_APP_ID:-}"
+put_secret "INSTAGRAM_APP_SECRET" "${INSTAGRAM_APP_SECRET:-}"
+put_secret "SUNO_API_KEY" "${SUNO_API_KEY:-}"
+put_secret "BACKEND_ORIGIN" "${BACKEND_ORIGIN:-}"
 put_secret "JWT_SECRET" "${JWT_SECRET:-}"
 put_secret "STRIPE_SECRET_KEY" "${STRIPE_SECRET_KEY:-}"
 put_secret "STRIPE_WEBHOOK_SECRET" "${STRIPE_WEBHOOK_SECRET:-}"
