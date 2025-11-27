@@ -149,6 +149,9 @@ func main() {
 			go runner.StartProviderWorker(rootCtx, providers.InstagramProvider{}, parseInterval("SOCIAL_IMPORT_INSTAGRAM_INTERVAL_SECONDS", 15*time.Minute))
 			go runner.StartProviderWorker(rootCtx, providers.FacebookProvider{}, parseInterval("SOCIAL_IMPORT_FACEBOOK_INTERVAL_SECONDS", 30*time.Minute))
 			go runner.StartProviderWorker(rootCtx, providers.TikTokProvider{}, parseInterval("SOCIAL_IMPORT_TIKTOK_INTERVAL_SECONDS", 30*time.Minute))
+			go runner.StartProviderWorker(rootCtx, providers.YouTubeProvider{}, parseInterval("SOCIAL_IMPORT_YOUTUBE_INTERVAL_SECONDS", 60*time.Minute))
+			go runner.StartProviderWorker(rootCtx, providers.PinterestProvider{}, parseInterval("SOCIAL_IMPORT_PINTEREST_INTERVAL_SECONDS", 60*time.Minute))
+			go runner.StartProviderWorker(rootCtx, providers.ThreadsProvider{}, parseInterval("SOCIAL_IMPORT_THREADS_INTERVAL_SECONDS", 60*time.Minute))
 		} else {
 			log.Printf("[SocialWorker] disabled (set SOCIAL_IMPORT_WORKERS_ENABLED=true to enable)")
 		}

@@ -10,6 +10,9 @@ type IntegrationsStatusResponse = {
   instagram?: ProviderStatusResponse;
   tiktok?: ProviderStatusResponse;
   facebook?: ProviderStatusResponse;
+  youtube?: ProviderStatusResponse;
+  pinterest?: ProviderStatusResponse;
+  threads?: ProviderStatusResponse;
 };
 
 export const Integrations: React.FC = () => {
@@ -19,6 +22,12 @@ export const Integrations: React.FC = () => {
   const [ttAccount, setTtAccount] = useState<{ id: string; displayName: string | null } | null>(null);
   const [fbStatus, setFbStatus] = useState<string | null>(null);
   const [fbAccount, setFbAccount] = useState<{ id: string; name: string | null } | null>(null);
+  const [ytStatus, setYtStatus] = useState<string | null>(null);
+  const [ytAccount, setYtAccount] = useState<{ id: string; name: string | null } | null>(null);
+  const [pinStatus, setPinStatus] = useState<string | null>(null);
+  const [pinAccount, setPinAccount] = useState<{ id: string; name: string | null } | null>(null);
+  const [thStatus, setThStatus] = useState<string | null>(null);
+  const [thAccount, setThAccount] = useState<{ id: string; name: string | null } | null>(null);
   const [sunoApiKey, setSunoApiKey] = useState<string>('');
   const [sunoStatus, setSunoStatus] = useState<string | null>(null);
 
@@ -27,6 +36,9 @@ export const Integrations: React.FC = () => {
     const ig = params.get('instagram');
     const tt = params.get('tiktok');
     const fb = params.get('facebook');
+    const yt = params.get('youtube');
+    const pin = params.get('pinterest');
+    const th = params.get('threads');
     if (ig) {
       try {
         const data = JSON.parse(decodeURIComponent(ig));
@@ -79,6 +91,57 @@ export const Integrations: React.FC = () => {
       } finally {
         window.history.replaceState({}, document.title, '/integrations');
       }
+    } else if (yt) {
+      try {
+        const data = JSON.parse(decodeURIComponent(yt));
+        if (data.success) {
+          setYtStatus('YouTube connected successfully.');
+          if (data.account && data.account.id) {
+            setYtAccount({ id: String(data.account.id), name: data.account.name ?? null });
+            try { localStorage.setItem('yt_conn', JSON.stringify({ id: String(data.account.id), name: data.account.name ?? null })); } catch { void 0; }
+          }
+        } else {
+          setYtStatus(`YouTube connection failed: ${data.error || 'Unknown error'}`);
+        }
+      } catch {
+        setYtStatus('YouTube connection status could not be parsed.');
+      } finally {
+        window.history.replaceState({}, document.title, '/integrations');
+      }
+    } else if (pin) {
+      try {
+        const data = JSON.parse(decodeURIComponent(pin));
+        if (data.success) {
+          setPinStatus('Pinterest connected successfully.');
+          if (data.account && data.account.id) {
+            setPinAccount({ id: String(data.account.id), name: data.account.name ?? null });
+            try { localStorage.setItem('pin_conn', JSON.stringify({ id: String(data.account.id), name: data.account.name ?? null })); } catch { void 0; }
+          }
+        } else {
+          setPinStatus(`Pinterest connection failed: ${data.error || 'Unknown error'}`);
+        }
+      } catch {
+        setPinStatus('Pinterest connection status could not be parsed.');
+      } finally {
+        window.history.replaceState({}, document.title, '/integrations');
+      }
+    } else if (th) {
+      try {
+        const data = JSON.parse(decodeURIComponent(th));
+        if (data.success) {
+          setThStatus('Threads connected successfully.');
+          if (data.account && data.account.id) {
+            setThAccount({ id: String(data.account.id), name: data.account.name ?? null });
+            try { localStorage.setItem('th_conn', JSON.stringify({ id: String(data.account.id), name: data.account.name ?? null })); } catch { void 0; }
+          }
+        } else {
+          setThStatus(`Threads connection failed: ${data.error || 'Unknown error'}`);
+        }
+      } catch {
+        setThStatus('Threads connection status could not be parsed.');
+      } finally {
+        window.history.replaceState({}, document.title, '/integrations');
+      }
     } else {
       // Load existing connection from localStorage if present
       try {
@@ -105,6 +168,33 @@ export const Integrations: React.FC = () => {
           const parsed = JSON.parse(raw);
           if (parsed && parsed.id) {
             setFbAccount({ id: String(parsed.id), name: parsed.name ?? null });
+          }
+        }
+      } catch { void 0; }
+      try {
+        const raw = localStorage.getItem('yt_conn');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.id) {
+            setYtAccount({ id: String(parsed.id), name: parsed.name ?? null });
+          }
+        }
+      } catch { void 0; }
+      try {
+        const raw = localStorage.getItem('pin_conn');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.id) {
+            setPinAccount({ id: String(parsed.id), name: parsed.name ?? null });
+          }
+        }
+      } catch { void 0; }
+      try {
+        const raw = localStorage.getItem('th_conn');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.id) {
+            setThAccount({ id: String(parsed.id), name: parsed.name ?? null });
           }
         }
       } catch { void 0; }
@@ -138,6 +228,24 @@ export const Integrations: React.FC = () => {
           const name = typeof a.name === 'string' ? a.name : null;
           if (id) setFbAccount({ id, name });
         }
+        if (obj.youtube?.connected) {
+          const a = obj.youtube.account || {};
+          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+          const name = typeof a.name === 'string' ? a.name : null;
+          if (id) setYtAccount({ id, name });
+        }
+        if (obj.pinterest?.connected) {
+          const a = obj.pinterest.account || {};
+          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+          const name = typeof a.name === 'string' ? a.name : null;
+          if (id) setPinAccount({ id, name });
+        }
+        if (obj.threads?.connected) {
+          const a = obj.threads.account || {};
+          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+          const name = typeof a.name === 'string' ? a.name : null;
+          if (id) setThAccount({ id, name });
+        }
       } catch { void 0; }
     };
     loadStatus();
@@ -168,6 +276,18 @@ export const Integrations: React.FC = () => {
 
   const startFacebookAuth = () => {
     window.location.href = `/api/integrations/facebook/auth`;
+  };
+
+  const startYouTubeAuth = () => {
+    window.location.href = `/api/integrations/youtube/auth`;
+  };
+
+  const startPinterestAuth = () => {
+    window.location.href = `/api/integrations/pinterest/auth`;
+  };
+
+  const startThreadsAuth = () => {
+    window.location.href = `/api/integrations/threads/auth`;
   };
 
 
@@ -226,6 +346,27 @@ export const Integrations: React.FC = () => {
       await fetch(`/api/integrations/facebook/disconnect`, { method: 'POST', credentials: 'include' });
     } catch { void 0; }
   };
+
+  const disconnectYouTube = async () => {
+    try { localStorage.removeItem('yt_conn'); } catch { void 0; }
+    setYtAccount(null);
+    setYtStatus('YouTube disconnected.');
+    try { await fetch(`/api/integrations/youtube/disconnect`, { method: 'POST', credentials: 'include' }); } catch { void 0; }
+  };
+
+  const disconnectPinterest = async () => {
+    try { localStorage.removeItem('pin_conn'); } catch { void 0; }
+    setPinAccount(null);
+    setPinStatus('Pinterest disconnected.');
+    try { await fetch(`/api/integrations/pinterest/disconnect`, { method: 'POST', credentials: 'include' }); } catch { void 0; }
+  };
+
+  const disconnectThreads = async () => {
+    try { localStorage.removeItem('th_conn'); } catch { void 0; }
+    setThAccount(null);
+    setThStatus('Threads disconnected.');
+    try { await fetch(`/api/integrations/threads/disconnect`, { method: 'POST', credentials: 'include' }); } catch { void 0; }
+  };
   return (
     <Layout>
         <div className="max-w-5xl mx-auto space-y-8">
@@ -254,6 +395,27 @@ export const Integrations: React.FC = () => {
           <div className="max-w-xl mx-auto">
             <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
               {fbStatus}
+            </div>
+          </div>
+        )}
+        {ytStatus && (
+          <div className="max-w-xl mx-auto">
+            <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
+              {ytStatus}
+            </div>
+          </div>
+        )}
+        {pinStatus && (
+          <div className="max-w-xl mx-auto">
+            <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
+              {pinStatus}
+            </div>
+          </div>
+        )}
+        {thStatus && (
+          <div className="max-w-xl mx-auto">
+            <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
+              {thStatus}
             </div>
           </div>
         )}
@@ -308,6 +470,87 @@ export const Integrations: React.FC = () => {
                   <button onClick={startFacebookAuth} className="btn btn-primary">Connect Facebook</button>
                 )}
                 <a href="https://developers.facebook.com/docs/facebook-login/" target="_blank" rel="noreferrer" className="btn btn-secondary">
+                  Learn more
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <div className="card p-6 flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-red-600 to-red-400 flex items-center justify-center shadow-lg">
+              <span className="text-white text-lg font-bold">▶</span>
+            </div>
+            <div className="flex-1">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">YouTube</h2>
+              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
+                Connect YouTube to import your uploaded videos into the Library.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3 items-center">
+                {ytAccount ? (
+                  <>
+                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm">
+                      Connected{ytAccount.name ? ` as ${ytAccount.name}` : ''}
+                    </span>
+                    <button onClick={disconnectYouTube} className="btn btn-ghost">Disconnect</button>
+                  </>
+                ) : (
+                  <button onClick={startYouTubeAuth} className="btn btn-primary">Connect YouTube</button>
+                )}
+                <a href="https://developers.google.com/youtube/v3/docs" target="_blank" rel="noreferrer" className="btn btn-secondary">
+                  Learn more
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <div className="card p-6 flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-rose-600 to-red-500 flex items-center justify-center shadow-lg">
+              <span className="text-white text-lg font-bold">P</span>
+            </div>
+            <div className="flex-1">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Pinterest</h2>
+              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
+                Connect Pinterest to import pins into the Library.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3 items-center">
+                {pinAccount ? (
+                  <>
+                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm">
+                      Connected{pinAccount.name ? ` as ${pinAccount.name}` : ''}
+                    </span>
+                    <button onClick={disconnectPinterest} className="btn btn-ghost">Disconnect</button>
+                  </>
+                ) : (
+                  <button onClick={startPinterestAuth} className="btn btn-primary">Connect Pinterest</button>
+                )}
+                <a href="https://developers.pinterest.com/" target="_blank" rel="noreferrer" className="btn btn-secondary">
+                  Learn more
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <div className="card p-6 flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-slate-900 to-slate-500 flex items-center justify-center shadow-lg">
+              <span className="text-white text-lg font-bold">@</span>
+            </div>
+            <div className="flex-1">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Threads</h2>
+              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
+                Connect Threads to import posts into the Library.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3 items-center">
+                {thAccount ? (
+                  <>
+                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm">
+                      Connected{thAccount.name ? ` as ${thAccount.name}` : ''}
+                    </span>
+                    <button onClick={disconnectThreads} className="btn btn-ghost">Disconnect</button>
+                  </>
+                ) : (
+                  <button onClick={startThreadsAuth} className="btn btn-primary">Connect Threads</button>
+                )}
+                <a href="https://developers.facebook.com/" target="_blank" rel="noreferrer" className="btn btn-secondary">
                   Learn more
                 </a>
               </div>
