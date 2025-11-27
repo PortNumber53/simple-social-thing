@@ -1497,7 +1497,9 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/tiktok/callback', url.origin).toString();
 
-  if (!env.TIKTOK_CLIENT_KEY || !env.TIKTOK_CLIENT_SECRET) {
+  const clientKey = (env.TIKTOK_CLIENT_KEY || '').trim();
+  const clientSecret = (env.TIKTOK_CLIENT_SECRET || '').trim();
+  if (!clientKey || !clientSecret) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'tiktok_secrets_missing' }));
     return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
   }
@@ -1531,11 +1533,12 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   headers.append('Set-Cookie', buildTempCookie('tt_state', state, 10 * 60, request.url));
   headers.append('Set-Cookie', buildTempCookie('tt_verifier', verifier, 10 * 60, request.url));
 
-  // Scopes: start with Login Kit basics plus read video list; content posting scopes require app review.
-  const scopes = ['user.info.basic', 'video.list'].join(',');
+  // Scopes: keep minimal for Login Kit reliability; request additional scopes once the app is approved for them.
+  // Docs: https://developers.tiktok.com/doc/login-kit-manage-user-access-tokens
+  const scopes = ['user.info.basic'].join(',');
 
   const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
-  authUrl.searchParams.set('client_key', env.TIKTOK_CLIENT_KEY);
+  authUrl.searchParams.set('client_key', clientKey);
   authUrl.searchParams.set('scope', scopes);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('redirect_uri', redirectUri);
@@ -1566,7 +1569,9 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
     return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
   }
 
-  if (!env.TIKTOK_CLIENT_KEY || !env.TIKTOK_CLIENT_SECRET) {
+  const clientKey = (env.TIKTOK_CLIENT_KEY || '').trim();
+  const clientSecret = (env.TIKTOK_CLIENT_SECRET || '').trim();
+  if (!clientKey || !clientSecret) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'tiktok_secrets_missing' }));
     return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
   }
@@ -1592,8 +1597,8 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
     body: new URLSearchParams({
-      client_key: env.TIKTOK_CLIENT_KEY,
-      client_secret: env.TIKTOK_CLIENT_SECRET,
+      client_key: clientKey,
+      client_secret: clientSecret,
       code,
       grant_type: 'authorization_code',
       redirect_uri: redirectUri,
