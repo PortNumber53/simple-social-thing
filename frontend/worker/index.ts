@@ -2305,6 +2305,11 @@ async function handleYouTubeCallback(request: Request, env: Env): Promise<Respon
     console.warn('[YT] channel_fetch_error', e);
   }
 
+  // Even if channel lookup fails, mark as connected so UI reflects token storage (imports rely on youtube_oauth).
+  if (!channelId) {
+    channelId = `youtube-${sid}`;
+  }
+
   // Persist SocialConnections (Hyperdrive) if available
   const sql = getSql(env);
   if (sql && channelId) {
