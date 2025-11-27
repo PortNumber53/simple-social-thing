@@ -550,6 +550,10 @@ export default {
       if (url.pathname === "/api/integrations/tiktok/callback") {
         return handleTikTokCallback(request, env);
       }
+      // TikTok scope status (no secrets)
+      if (url.pathname === "/api/integrations/tiktok/scopes") {
+        return handleTikTokScopes(request, env);
+      }
       // Instagram OAuth start
       if (url.pathname === "/api/integrations/instagram/auth") {
         return startInstagramOAuth(request, env);
@@ -1809,6 +1813,7 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   }
   const scopes = Array.from(finalScopes).join(',');
 
+  headers.append('Set-Cookie', buildTempCookie('tt_scopes', scopes, 10 * 60, request.url));
   const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
   authUrl.searchParams.set('client_key', clientKey);
   authUrl.searchParams.set('scope', scopes);
@@ -1852,6 +1857,7 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
   const sid = getCookie(cookieHeader, 'sid');
   const stateCookie = getCookie(cookieHeader, 'tt_state');
   const verifier = getCookie(cookieHeader, 'tt_verifier');
+  const requestedScopes = getCookie(cookieHeader, 'tt_scopes') || null;
   const state = url.searchParams.get('state');
 
   if (!sid) {
@@ -1964,6 +1970,7 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
           tokenType,
           openId,
           scope,
+          requestedScopes,
           expiresIn,
           obtainedAt,
           expiresAt,
@@ -1988,10 +1995,50 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
   // Clear temp cookies
   headers.append('Set-Cookie', buildTempCookie('tt_state', '', 0, request.url));
   headers.append('Set-Cookie', buildTempCookie('tt_verifier', '', 0, request.url));
+  headers.append('Set-Cookie', buildTempCookie('tt_scopes', '', 0, request.url));
 
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'tiktok', account: { id: openId, displayName } }));
   headers.set('Location', `${clientUrl}/integrations?tiktok=${data}`);
   return new Response(null, { status: 302, headers });
+}
+
+async function handleTikTokScopes(request: Request, env: Env): Promise<Response> {
+  const headers = buildCorsHeaders(request);
+  if (request.method === 'OPTIONS') {
+    headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
+    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+    return new Response(null, { status: 204, headers });
+  }
+  if (request.method !== 'GET') return new Response(null, { status: 405, headers });
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  if (!sid) {
+    return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+  }
+
+  const backendOrigin = getBackendOrigin(env, request);
+  try {
+    const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/tiktok_oauth`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (res.status === 404) {
+      headers.set('Content-Type', 'application/json');
+      return new Response(JSON.stringify({ ok: true, scope: null, hasVideoList: false }), { status: 200, headers });
+    }
+    const data: unknown = await res.json().catch(() => null);
+    const obj = asRecord(data);
+    const valueObj = obj ? asRecord(obj['value']) : null;
+    const scope = getString(valueObj?.['scope']);
+    const requestedScopes = getString(valueObj?.['requestedScopes']);
+    const norm = (scope || '').replace(/\s+/g, ',');
+    const hasVideoList = norm.split(',').map(s => s.trim()).includes('video.list');
+    headers.set('Content-Type', 'application/json');
+    return new Response(JSON.stringify({ ok: true, scope: scope ?? null, requestedScopes: requestedScopes ?? null, hasVideoList }), { status: 200, headers });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
 }
 
 async function startFacebookOAuth(request: Request, env: Env): Promise<Response> {
