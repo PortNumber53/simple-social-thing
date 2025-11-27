@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -277,17 +277,17 @@ type sunoStoreResponse struct {
 }
 
 type sunoTrackRow struct {
-	ID         string     `json:"id"`
-	UserID     *string    `json:"userId,omitempty"`
-	Prompt     *string    `json:"prompt,omitempty"`
-	TaskID     *string    `json:"taskId,omitempty"`
-	Model      *string    `json:"model,omitempty"`
-	SunoTrackID *string   `json:"sunoTrackId,omitempty"`
-	AudioURL   *string    `json:"audioUrl,omitempty"`
-	FilePath   *string    `json:"filePath,omitempty"`
-	Status     *string    `json:"status,omitempty"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	UpdatedAt  *time.Time `json:"updatedAt,omitempty"`
+	ID          string     `json:"id"`
+	UserID      *string    `json:"userId,omitempty"`
+	Prompt      *string    `json:"prompt,omitempty"`
+	TaskID      *string    `json:"taskId,omitempty"`
+	Model       *string    `json:"model,omitempty"`
+	SunoTrackID *string    `json:"sunoTrackId,omitempty"`
+	AudioURL    *string    `json:"audioUrl,omitempty"`
+	FilePath    *string    `json:"filePath,omitempty"`
+	Status      *string    `json:"status,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
 }
 
 func (h *Handler) ListSunoTracksForUser(w http.ResponseWriter, r *http.Request) {
@@ -368,7 +368,7 @@ func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mediaDir := "media/suno"
-	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+	if err := os.MkdirAll(mediaDir, 0o755); err != nil {
 		log.Printf("[Suno][Store] mkdir error: %v", err)
 		http.Error(w, fmt.Sprintf("failed to create media dir: %v", err), http.StatusInternalServerError)
 		return
@@ -497,7 +497,7 @@ func (h *Handler) SunoMusicCallback(w http.ResponseWriter, r *http.Request) {
 			defer resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				mediaDir := "media/suno"
-				if err := os.MkdirAll(mediaDir, 0755); err != nil {
+				if err := os.MkdirAll(mediaDir, 0o755); err != nil {
 					log.Printf("[Suno][Callback] mkdir error: %v", err)
 				} else {
 					fileName := fmt.Sprintf("%s.mp3", trackID)
@@ -599,7 +599,7 @@ func (h *Handler) UpdateSunoTrack(w http.ResponseWriter, r *http.Request) {
 		}
 
 		mediaDir := "media/suno"
-		if err := os.MkdirAll(mediaDir, 0755); err != nil {
+		if err := os.MkdirAll(mediaDir, 0o755); err != nil {
 			log.Printf("[Suno][UpdateTrack] mkdir error: %v", err)
 			http.Error(w, fmt.Sprintf("failed to create media dir: %v", err), http.StatusInternalServerError)
 			return
@@ -647,21 +647,20 @@ func (h *Handler) GetUserSetting(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["userId"]
 	settingKey := vars["key"]
-	log.Printf("[user_settings][GetKey] userId=%s key=%s", userID, settingKey)
+	log.Printf("[UserSettings][Get] userId=%s key=%s", userID, settingKey)
 
-	// Read from consolidated JSONB document store.
-	query := `SELECT data -> ($2::text) FROM public.user_settings WHERE user_id = $1`
+	query := `SELECT value FROM public."UserSettings" WHERE user_id = $1 AND key = $2`
 	var raw []byte
 	err := h.db.QueryRow(query, userID, settingKey).Scan(&raw)
-	if err == sql.ErrNoRows || raw == nil {
-		log.Printf("[user_settings][GetKey] not found userId=%s key=%s", userID, settingKey)
+	if err == sql.ErrNoRows {
+		log.Printf("[UserSettings][Get] not found userId=%s key=%s", userID, settingKey)
 		w.WriteHeader(http.StatusNotFound)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"error":"not_found"}`))
 		return
 	}
 	if err != nil {
-		log.Printf("[user_settings][GetKey] query error userId=%s key=%s err=%v", userID, settingKey, err)
+		log.Printf("[UserSettings][Get] query error userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -674,37 +673,35 @@ func (h *Handler) UpsertUserSetting(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["userId"]
 	settingKey := vars["key"]
-	log.Printf("[user_settings][UpsertKey] userId=%s key=%s", userID, settingKey)
+	log.Printf("[UserSettings][Upsert] userId=%s key=%s", userID, settingKey)
 
 	var body struct {
 		Value interface{} `json:"value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		log.Printf("[user_settings][UpsertKey] invalid JSON userId=%s key=%s err=%v", userID, settingKey, err)
+		log.Printf("[UserSettings][Upsert] invalid JSON userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	valueBytes, err := json.Marshal(body.Value)
 	if err != nil {
-		log.Printf("[user_settings][UpsertKey] marshal error userId=%s key=%s err=%v", userID, settingKey, err)
+		log.Printf("[UserSettings][Upsert] marshal error userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	query := `
-		INSERT INTO public.user_settings (user_id, data, updated_at)
-		VALUES ($1, jsonb_build_object(($2::text), $3::jsonb), NOW())
-		ON CONFLICT (user_id) DO UPDATE SET
-			data = jsonb_set(COALESCE(public.user_settings.data, '{}'::jsonb), ARRAY[($2::text)], $3::jsonb, true),
-			updated_at = NOW()
+		INSERT INTO public."UserSettings" (user_id, key, value, updated_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
 	`
-	if _, err := h.db.Exec(query, userID, settingKey, string(valueBytes)); err != nil {
-		log.Printf("[user_settings][UpsertKey] DB upsert error userId=%s key=%s err=%v", userID, settingKey, err)
+	if _, err := h.db.Exec(query, userID, settingKey, valueBytes); err != nil {
+		log.Printf("[UserSettings][Upsert] DB upsert error userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("[user_settings][UpsertKey] success userId=%s key=%s", userID, settingKey)
+	log.Printf("[UserSettings][Upsert] success userId=%s key=%s", userID, settingKey)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ok":true}`))
@@ -718,20 +715,27 @@ func (h *Handler) GetUserSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `SELECT data FROM public.user_settings WHERE user_id = $1`
-	var raw []byte
-	err := h.db.QueryRow(query, userID).Scan(&raw)
-	if err == sql.ErrNoRows {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"ok":true,"data":{}}`))
-		return
-	}
+	query := `SELECT key, value FROM public."UserSettings" WHERE user_id = $1`
+	rows, err := h.db.Query(query, userID)
 	if err != nil {
-		log.Printf("[user_settings][GetAll] query error userId=%s err=%v", userID, err)
+		log.Printf("[UserSettings][GetAll] query error userId=%s err=%v", userID, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	defer rows.Close()
+
+	out := make(map[string]json.RawMessage)
+	for rows.Next() {
+		var k string
+		var raw []byte
+		if err := rows.Scan(&k, &raw); err != nil {
+			log.Printf("[UserSettings][GetAll] scan error userId=%s err=%v", userID, err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out[k] = json.RawMessage(raw)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(fmt.Sprintf(`{"ok":true,"data":%s}`, string(raw))))
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "data": out})
 }
