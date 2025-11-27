@@ -276,6 +276,70 @@ type sunoStoreResponse struct {
 	FilePath string `json:"filePath"`
 }
 
+type sunoTrackRow struct {
+	ID         string     `json:"id"`
+	UserID     *string    `json:"userId,omitempty"`
+	Prompt     *string    `json:"prompt,omitempty"`
+	TaskID     *string    `json:"taskId,omitempty"`
+	Model      *string    `json:"model,omitempty"`
+	SunoTrackID *string   `json:"sunoTrackId,omitempty"`
+	AudioURL   *string    `json:"audioUrl,omitempty"`
+	FilePath   *string    `json:"filePath,omitempty"`
+	Status     *string    `json:"status,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	UpdatedAt  *time.Time `json:"updatedAt,omitempty"`
+}
+
+func (h *Handler) ListSunoTracksForUser(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := vars["userId"]
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	query := `
+		SELECT id, user_id, prompt, task_id, model, suno_track_id, audio_url, file_path, status, created_at, updated_at
+		FROM public."SunoTracks"
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+		LIMIT 100
+	`
+	rows, err := h.db.Query(query, userID)
+	if err != nil {
+		log.Printf("[Suno][ListTracks] query error userId=%s err=%v", userID, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	out := make([]sunoTrackRow, 0)
+	for rows.Next() {
+		var row sunoTrackRow
+		if err := rows.Scan(
+			&row.ID,
+			&row.UserID,
+			&row.Prompt,
+			&row.TaskID,
+			&row.Model,
+			&row.SunoTrackID,
+			&row.AudioURL,
+			&row.FilePath,
+			&row.Status,
+			&row.CreatedAt,
+			&row.UpdatedAt,
+		); err != nil {
+			log.Printf("[Suno][ListTracks] scan error userId=%s err=%v", userID, err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out = append(out, row)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
 func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
 	var req sunoStoreRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -351,7 +415,6 @@ func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
 // We currently accept and log the payload for observability and return 200 quickly.
 // Docs: https://docs.sunoapi.org/suno-api/generate-music (Music Generation Callbacks)
 func (h *Handler) SunoMusicCallback(w http.ResponseWriter, r *http.Request) {
-	_ = h // placeholder for future DB updates (task status -> SunoTracks)
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -361,7 +424,116 @@ func (h *Handler) SunoMusicCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
-	log.Printf("[Suno][Callback] %s", string(body))
+
+	// Parse minimally so we can update the track row by task_id.
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Printf("[Suno][Callback] invalid JSON err=%v body=%s", err, string(body))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+		return
+	}
+
+	getMap := func(v interface{}) map[string]interface{} {
+		if m, ok := v.(map[string]interface{}); ok {
+			return m
+		}
+		return nil
+	}
+	getString2 := func(v interface{}) string {
+		if s, ok := v.(string); ok {
+			return s
+		}
+		return ""
+	}
+
+	data := getMap(payload["data"])
+	taskID := getString2(data["taskId"])
+	statusRaw := getString2(data["status"])
+	if taskID == "" {
+		log.Printf("[Suno][Callback] missing taskId payload=%s", string(body))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+		return
+	}
+
+	// Find our internal track row by task_id.
+	var trackID string
+	if err := h.db.QueryRow(`SELECT id FROM public."SunoTracks" WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1`, taskID).Scan(&trackID); err != nil {
+		log.Printf("[Suno][Callback] no track for taskId=%s err=%v payload=%s", taskID, err, string(body))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+		return
+	}
+
+	// Extract first audioUrl + provider track id if present.
+	var audioURL, sunoTrackID string
+	respObj := getMap(data["response"])
+	sunoDataAny := respObj["sunoData"]
+	if arr, ok := sunoDataAny.([]interface{}); ok && len(arr) > 0 {
+		if first := getMap(arr[0]); first != nil {
+			audioURL = getString2(first["audioUrl"])
+			sunoTrackID = getString2(first["id"])
+		}
+	}
+
+	// Map provider status to our status.
+	status := "pending"
+	switch statusRaw {
+	case "SUCCESS":
+		status = "completed"
+	case "FAILED":
+		status = "failed"
+	}
+
+	// If completed and we have an audio URL, download and store like UpdateSunoTrack does.
+	var filePath string
+	if status == "completed" && audioURL != "" {
+		log.Printf("[Suno][Callback] downloading audio taskId=%s id=%s url=%s", taskID, trackID, audioURL)
+		resp, err := http.Get(audioURL)
+		if err != nil {
+			log.Printf("[Suno][Callback] download error id=%s err=%v", trackID, err)
+		} else {
+			defer resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				mediaDir := "media/suno"
+				if err := os.MkdirAll(mediaDir, 0755); err != nil {
+					log.Printf("[Suno][Callback] mkdir error: %v", err)
+				} else {
+					fileName := fmt.Sprintf("%s.mp3", trackID)
+					filePath = filepath.Join(mediaDir, fileName)
+					out, err := os.Create(filePath)
+					if err != nil {
+						log.Printf("[Suno][Callback] create file error: %v", err)
+					} else {
+						if _, err := io.Copy(out, resp.Body); err != nil {
+							log.Printf("[Suno][Callback] save file error: %v", err)
+							_ = out.Close()
+						} else {
+							_ = out.Close()
+						}
+					}
+				}
+			} else {
+				log.Printf("[Suno][Callback] download non-2xx: %d", resp.StatusCode)
+			}
+		}
+	}
+
+	_, err = h.db.Exec(`
+		UPDATE public."SunoTracks"
+		SET suno_track_id = COALESCE(NULLIF($1, ''), suno_track_id),
+		    audio_url = COALESCE(NULLIF($2, ''), audio_url),
+		    file_path = COALESCE(NULLIF($3, ''), file_path),
+		    status = COALESCE(NULLIF($4, ''), status),
+		    updated_at = NOW()
+		WHERE id = $5
+	`, sunoTrackID, audioURL, filePath, status, trackID)
+	if err != nil {
+		log.Printf("[Suno][Callback] DB update error id=%s taskId=%s err=%v", trackID, taskID, err)
+	}
+
+	log.Printf("[Suno][Callback] updated id=%s taskId=%s status=%s", trackID, taskID, status)
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
