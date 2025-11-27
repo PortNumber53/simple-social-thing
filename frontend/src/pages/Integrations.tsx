@@ -274,6 +274,11 @@ export const Integrations: React.FC = () => {
     window.location.href = `/api/integrations/tiktok/auth`;
   };
 
+  const enableTikTokVideoImport = () => {
+    // Requests the extra `video.list` scope so backend imports can fetch videos.
+    window.location.href = `/api/integrations/tiktok/auth?scope=video.list`;
+  };
+
   const startFacebookAuth = () => {
     window.location.href = `/api/integrations/facebook/auth`;
   };
@@ -596,6 +601,9 @@ export const Integrations: React.FC = () => {
                       Connected{ttAccount.displayName ? ` as ${ttAccount.displayName}` : ''}
                     </span>
                     <button onClick={disconnectTikTok} className="btn btn-ghost">Disconnect</button>
+                    <button onClick={enableTikTokVideoImport} className="btn btn-secondary" type="button">
+                      Enable video import
+                    </button>
                   </>
                 ) : (
                   <button onClick={startTikTokAuth} className="btn btn-primary">
