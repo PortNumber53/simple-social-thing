@@ -143,6 +143,8 @@ export const Library: React.FC = () => {
                 <option value="facebook">Facebook</option>
                 <option value="tiktok">TikTok</option>
                 <option value="youtube">YouTube</option>
+                <option value="pinterest">Pinterest</option>
+                <option value="threads">Threads</option>
                 <option value="x">X</option>
               </select>
             </div>
@@ -160,6 +162,7 @@ export const Library: React.FC = () => {
                 <option value="story">Story</option>
                 <option value="video">Video</option>
                 <option value="music">Music</option>
+                <option value="pin">Pin</option>
               </select>
             </div>
 
