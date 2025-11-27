@@ -25,6 +25,8 @@ export const Library: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'gallery'>('list');
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
@@ -57,6 +59,33 @@ export const Library: React.FC = () => {
       setError(msg || 'Failed to load library.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const syncNow = async () => {
+    setSyncing(true);
+    setSyncStatus('Syncing…');
+    setError(null);
+    try {
+      const res = await fetch('/api/library/sync', { method: 'POST', credentials: 'include' });
+      const data: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        setSyncStatus('Sync failed.');
+        return;
+      }
+      const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+      const providers = obj && typeof obj.providers === 'object' && obj.providers ? (obj.providers as Record<string, any>) : null;
+      if (providers?.instagram) {
+        setSyncStatus(`Synced. Instagram fetched=${providers.instagram.fetched ?? 0} upserted=${providers.instagram.upserted ?? 0}`);
+      } else {
+        setSyncStatus('Synced.');
+      }
+      await load();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSyncStatus(`Sync failed: ${msg}`);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -149,6 +178,9 @@ export const Library: React.FC = () => {
               <button onClick={load} className="btn btn-primary">
                 {loading ? 'Loading…' : 'Apply filters'}
               </button>
+              <button onClick={syncNow} className="btn btn-secondary" type="button" disabled={syncing}>
+                {syncing ? 'Refreshing…' : 'Refresh'}
+              </button>
               <button
                 onClick={() => {
                   setNetwork('');
@@ -162,6 +194,7 @@ export const Library: React.FC = () => {
               >
                 Reset
               </button>
+              {syncStatus && <span className="text-sm text-slate-600 dark:text-slate-300">{syncStatus}</span>}
               {error && <span className="text-sm text-red-600 dark:text-red-300">{error}</span>}
             </div>
 

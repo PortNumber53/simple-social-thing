@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/PortNumber53/simple-social-thing/backend/internal/instagram"
 	"github.com/PortNumber53/simple-social-thing/backend/internal/models"
 	"github.com/gorilla/mux"
 )
@@ -525,6 +527,62 @@ func (h *Handler) ListSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	vars := mux.Vars(r)
+	userID := vars["userId"]
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	start := time.Now()
+	log.Printf("[LibrarySync] start userId=%s", userID)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+
+	type providerResult struct {
+		Fetched  int `json:"fetched"`
+		Upserted int `json:"upserted"`
+	}
+	resp := struct {
+		OK         bool                      `json:"ok"`
+		UserID     string                    `json:"userId"`
+		DurationMs int64                     `json:"durationMs"`
+		Providers  map[string]providerResult `json:"providers"`
+	}{OK: true, UserID: userID, Providers: map[string]providerResult{}}
+
+	// Instagram
+	{
+		fetched, upserted, err := instagram.SyncUser(ctx, h.db, userID, log.Default())
+		if err != nil {
+			log.Printf("[LibrarySync] instagram error userId=%s err=%v", userID, err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":       false,
+				"error":    "instagram_sync_failed",
+				"userId":   userID,
+				"details":  err.Error(),
+				"fetched":  fetched,
+				"upserted": upserted,
+			})
+			return
+		}
+		resp.Providers["instagram"] = providerResult{Fetched: fetched, Upserted: upserted}
+		log.Printf("[LibrarySync] instagram done userId=%s fetched=%d upserted=%d", userID, fetched, upserted)
+	}
+
+	resp.DurationMs = time.Since(start).Milliseconds()
+	log.Printf("[LibrarySync] done userId=%s dur=%dms", userID, resp.DurationMs)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
