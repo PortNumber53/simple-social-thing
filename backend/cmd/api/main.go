@@ -89,6 +89,8 @@ func main() {
 	r.HandleFunc("/callback/suno/music/", h.SunoMusicCallback).Methods("POST")
 
 	// User settings (for per-user Suno API keys)
+	// NOTE: Backed by `public.user_settings` JSONB store (see migrations) but we keep the per-key API for compatibility.
+	r.HandleFunc("/api/user-settings/{userId}", h.GetUserSettings).Methods("GET")
 	r.HandleFunc("/api/user-settings/{userId}/{key}", h.GetUserSetting).Methods("GET")
 	r.HandleFunc("/api/user-settings/{userId}/{key}", h.UpsertUserSetting).Methods("PUT")
 

@@ -266,6 +266,11 @@ export default {
 
     // Handle other API routes
     if (url.pathname.startsWith("/api/")) {
+      // User settings bundle for current session (sanitized; used for client-side caching)
+      if (url.pathname === "/api/user-settings") {
+        return handleUserSettingsBundle(request, env);
+      }
+
       // DB ping endpoint
       if (url.pathname === "/api/db/ping") {
         const sql = getSql(env);
@@ -585,11 +590,80 @@ async function handleSunoCredits(request: Request, env: Env): Promise<Response> 
 
 		const availableCredits = extractCreditsNumber(data);
 		console.log('[Suno][Credits][Parsed]', JSON.stringify({ availableCredits }).slice(0, 500));
+
+		// Cache credits in the DB (per-user settings) to speed up initial render.
+		if (typeof availableCredits === 'number' && Number.isFinite(availableCredits)) {
+			try {
+				await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_credits`, {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ value: { availableCredits, fetchedAt: new Date().toISOString() } }),
+				});
+			} catch { void 0; }
+		}
+
 		headers.set('Content-Type', 'application/json');
 		return new Response(JSON.stringify({ ok: true, credits: data, availableCredits }), { status: 200, headers });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		return new Response(JSON.stringify({ ok: false, error: 'suno_unreachable', details: { message } }), { status: 502, headers });
+	}
+}
+
+async function handleUserSettingsBundle(request: Request, env: Env): Promise<Response> {
+	const backendOrigin = getBackendOrigin(env, request);
+	const cookie = request.headers.get('Cookie') || '';
+	let sid = getCookie(cookie, 'sid');
+	const requestUrl = request.url;
+	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
+	const headers = buildCorsHeaders(request);
+
+	if (request.method === 'OPTIONS') {
+		headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
+		headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+		return new Response(null, { status: 204, headers });
+	}
+	if (request.method !== 'GET') return new Response(null, { status: 405, headers });
+
+	if (!sid && isLocal) {
+		sid = crypto.randomUUID();
+		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
+		// ensure user exists
+		try {
+			await fetch(`${backendOrigin}/api/users`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
+			});
+		} catch { void 0; }
+	}
+	if (!sid) {
+		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+	}
+
+	try {
+		const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}`, {
+			headers: { 'Accept': 'application/json' },
+		});
+		const text = await res.text().catch(() => '');
+		if (!res.ok) {
+			return new Response(JSON.stringify({ ok: false, error: 'settings_fetch_failed', status: res.status }), { status: 502, headers });
+		}
+		let parsed: unknown = null;
+		try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
+		const obj = asRecord(parsed);
+		const data = obj ? asRecord(obj['data']) : null;
+
+		// Sanitize: do not persist secrets in browser cache.
+		if (data && 'suno_api_key' in data) {
+			delete (data as Record<string, unknown>)['suno_api_key'];
+		}
+
+		headers.set('Content-Type', 'application/json');
+		return new Response(JSON.stringify({ ok: true, data: data ?? {} }), { status: 200, headers });
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
 }
 

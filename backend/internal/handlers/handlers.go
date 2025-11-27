@@ -647,20 +647,21 @@ func (h *Handler) GetUserSetting(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["userId"]
 	settingKey := vars["key"]
-	log.Printf("[UserSettings][Get] userId=%s key=%s", userID, settingKey)
+	log.Printf("[user_settings][GetKey] userId=%s key=%s", userID, settingKey)
 
-	query := `SELECT value FROM public."UserSettings" WHERE user_id = $1 AND key = $2`
+	// Read from consolidated JSONB document store.
+	query := `SELECT data -> $2 FROM public.user_settings WHERE user_id = $1`
 	var raw []byte
 	err := h.db.QueryRow(query, userID, settingKey).Scan(&raw)
-	if err == sql.ErrNoRows {
-		log.Printf("[UserSettings][Get] not found userId=%s key=%s", userID, settingKey)
+	if err == sql.ErrNoRows || raw == nil {
+		log.Printf("[user_settings][GetKey] not found userId=%s key=%s", userID, settingKey)
 		w.WriteHeader(http.StatusNotFound)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"error":"not_found"}`))
 		return
 	}
 	if err != nil {
-		log.Printf("[UserSettings][Get] query error userId=%s key=%s err=%v", userID, settingKey, err)
+		log.Printf("[user_settings][GetKey] query error userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -673,36 +674,64 @@ func (h *Handler) UpsertUserSetting(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["userId"]
 	settingKey := vars["key"]
-	log.Printf("[UserSettings][Upsert] userId=%s key=%s", userID, settingKey)
+	log.Printf("[user_settings][UpsertKey] userId=%s key=%s", userID, settingKey)
 
 	var body struct {
 		Value interface{} `json:"value"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		log.Printf("[UserSettings][Upsert] invalid JSON userId=%s key=%s err=%v", userID, settingKey, err)
+		log.Printf("[user_settings][UpsertKey] invalid JSON userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	valueBytes, err := json.Marshal(body.Value)
 	if err != nil {
-		log.Printf("[UserSettings][Upsert] marshal error userId=%s key=%s err=%v", userID, settingKey, err)
+		log.Printf("[user_settings][UpsertKey] marshal error userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	query := `
-		INSERT INTO public."UserSettings" (user_id, key, value, updated_at)
-		VALUES ($1, $2, $3, NOW())
-		ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+		INSERT INTO public.user_settings (user_id, data, updated_at)
+		VALUES ($1, jsonb_build_object($2, $3::jsonb), NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			data = jsonb_set(COALESCE(public.user_settings.data, '{}'::jsonb), ARRAY[$2], $3::jsonb, true),
+			updated_at = NOW()
 	`
-	if _, err := h.db.Exec(query, userID, settingKey, valueBytes); err != nil {
-		log.Printf("[UserSettings][Upsert] DB upsert error userId=%s key=%s err=%v", userID, settingKey, err)
+	if _, err := h.db.Exec(query, userID, settingKey, string(valueBytes)); err != nil {
+		log.Printf("[user_settings][UpsertKey] DB upsert error userId=%s key=%s err=%v", userID, settingKey, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("[UserSettings][Upsert] success userId=%s key=%s", userID, settingKey)
+	log.Printf("[user_settings][UpsertKey] success userId=%s key=%s", userID, settingKey)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ok":true}`))
+}
+
+func (h *Handler) GetUserSettings(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := vars["userId"]
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	query := `SELECT data FROM public.user_settings WHERE user_id = $1`
+	var raw []byte
+	err := h.db.QueryRow(query, userID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":true,"data":{}}`))
+		return
+	}
+	if err != nil {
+		log.Printf("[user_settings][GetAll] query error userId=%s err=%v", userID, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(fmt.Sprintf(`{"ok":true,"data":%s}`, string(raw))))
 }
