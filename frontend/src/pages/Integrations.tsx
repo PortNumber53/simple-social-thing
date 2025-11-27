@@ -48,12 +48,7 @@ export const Integrations: React.FC = () => {
     // Load user-specific Suno API key via worker (requires sid cookie)
     const load = async () => {
       try {
-        const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        // In local dev, prefer same-origin so Vite can proxy `/api/*` to the Wrangler worker.
-        const workerOrigin = isLocalhost
-          ? window.location.origin
-          : (import.meta.env.VITE_WORKER_ORIGIN || window.location.origin);
-        const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, { credentials: 'include' });
+        const res = await fetch(`/api/integrations/suno/api-key`, { credentials: 'include' });
         const data: unknown = await res.json().catch(() => null);
         const parsed: SunoApiKeyResponse | null = data && typeof data === 'object' ? (data as SunoApiKeyResponse) : null;
         if (parsed?.ok && typeof parsed.value?.apiKey === 'string' && parsed.value.apiKey.trim() !== '') {
@@ -65,24 +60,14 @@ export const Integrations: React.FC = () => {
   }, []);
 
   const startInstagramAuth = () => {
-    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    // In local dev, prefer same-origin so Vite can proxy `/api/*` to the Wrangler worker.
-    const workerOrigin = isLocalhost
-      ? window.location.origin
-      : (import.meta.env.VITE_WORKER_ORIGIN || window.location.origin);
-    window.location.href = `${workerOrigin}/api/integrations/instagram/auth`;
+    window.location.href = `/api/integrations/instagram/auth`;
   };
 
 
   const saveSunoApiKey = async () => {
     setSunoStatus('Saving Suno API key...');
     try {
-      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      // In local dev, prefer same-origin so Vite can proxy `/api/*` to the Wrangler worker.
-      const workerOrigin = isLocalhost
-        ? window.location.origin
-        : (import.meta.env.VITE_WORKER_ORIGIN || window.location.origin);
-      const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, {
+      const res = await fetch(`/api/integrations/suno/api-key`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: sunoApiKey }),
@@ -105,12 +90,7 @@ export const Integrations: React.FC = () => {
     setIgStatus('Instagram disconnected.');
     // Best-effort tell worker to clear cookie
     try {
-      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-      // In local dev, prefer same-origin so Vite can proxy `/api/*` to the Wrangler worker.
-      const workerOrigin = isLocalhost
-        ? window.location.origin
-        : (import.meta.env.VITE_WORKER_ORIGIN || window.location.origin);
-      await fetch(`${workerOrigin}/api/integrations/instagram/disconnect`, { method: 'POST', credentials: 'include' });
+      await fetch(`/api/integrations/instagram/disconnect`, { method: 'POST', credentials: 'include' });
     } catch { void 0; }
   };
   return (
