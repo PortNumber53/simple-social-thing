@@ -41,7 +41,12 @@ function getNumber(value: unknown): number | null {
 function extractCreditsNumber(value: unknown): number | null {
   const obj = asRecord(value);
   if (!obj) return null;
-  const dataObj = asRecord(obj['data']);
+  const dataAny = obj['data'];
+  // Suno may return a raw number here (e.g. { code, msg, data: 14.0 })
+  const direct = getNumber(dataAny);
+  if (direct !== null) return direct;
+
+  const dataObj = asRecord(dataAny);
   if (!dataObj) return null;
 
   const preferredKeys = [
