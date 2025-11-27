@@ -8,6 +8,7 @@ export const Integrations: React.FC = () => {
   const [igAccount, setIgAccount] = useState<{ id: string; username: string | null } | null>(null);
   const [sunoApiKey, setSunoApiKey] = useState<string>('');
   const [sunoStatus, setSunoStatus] = useState<string | null>(null);
+  const [tiktokStatus, setTiktokStatus] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -61,6 +62,11 @@ export const Integrations: React.FC = () => {
 
   const startInstagramAuth = () => {
     window.location.href = `/api/integrations/instagram/auth`;
+  };
+
+  const startTikTokAuth = () => {
+    // Placeholder until TikTok Login Kit OAuth flow is implemented.
+    setTiktokStatus('TikTok integration is coming soon. (Login Kit / Share Kit / Content Posting API / Webhooks)');
   };
 
 
@@ -144,6 +150,51 @@ export const Integrations: React.FC = () => {
                   <button onClick={startInstagramAuth} className="btn btn-primary">Connect Instagram</button>
                 )}
                 <a href="/help/instagram" className="btn btn-secondary">Learn more</a>
+              </div>
+            </div>
+          </div>
+
+          <div className="card p-6 flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-black to-pink-500 flex items-center justify-center shadow-lg">
+              {/* TikTok-ish note icon */}
+              <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M14.5 3a1 1 0 0 1 1 1c0 3.1 2.4 5.5 5.5 5.5a1 1 0 1 1 0 2c-1.8 0-3.5-.6-4.9-1.6V16a6 6 0 1 1-6-6 1 1 0 1 1 0 2 4 4 0 1 0 4 4V4a1 1 0 0 1 1-1z" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">TikTok</h2>
+                <span className="inline-flex items-center px-2 py-1 rounded-md bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 text-xs">
+                  Coming soon
+                </span>
+              </div>
+              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
+                We’ll integrate TikTok so you can authenticate users, share content, publish posts, and receive webhooks.
+              </p>
+              <div className="mt-3 text-sm text-slate-700 dark:text-slate-200">
+                <div className="font-medium text-slate-900 dark:text-slate-100 mb-1">Planned products</div>
+                <ul className="list-disc pl-5 space-y-1 text-slate-600 dark:text-slate-400">
+                  <li><strong>Login Kit</strong> (OAuth)</li>
+                  <li><strong>Share Kit</strong></li>
+                  <li><strong>Content Posting API</strong></li>
+                  <li><strong>Webhooks</strong></li>
+                </ul>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-3 items-center">
+                <button onClick={startTikTokAuth} className="btn btn-primary" disabled>
+                  Connect TikTok
+                </button>
+                <a
+                  href="https://developers.tiktok.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-secondary"
+                >
+                  TikTok developer docs
+                </a>
+                {tiktokStatus && (
+                  <span className="text-sm text-slate-600 dark:text-slate-400">{tiktokStatus}</span>
+                )}
               </div>
             </div>
           </div>
