@@ -297,6 +297,8 @@ type socialLibraryRow struct {
 	ContentType  string          `json:"contentType"`
 	Title        *string         `json:"title,omitempty"`
 	PermalinkURL *string         `json:"permalinkUrl,omitempty"`
+	MediaURL     *string         `json:"mediaUrl,omitempty"`
+	ThumbnailURL *string         `json:"thumbnailUrl,omitempty"`
 	PostedAt     *time.Time      `json:"postedAt,omitempty"`
 	Views        *int64          `json:"views,omitempty"`
 	Likes        *int64          `json:"likes,omitempty"`
@@ -429,7 +431,7 @@ func (h *Handler) ListSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 	}
 
 	base := `
-		SELECT id, user_id, network, content_type, title, permalink_url,
+		SELECT id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url,
 		       posted_at, views, likes, raw_payload, created_at, updated_at
 		FROM public."SocialLibraries"
 		WHERE user_id = $1
@@ -488,6 +490,8 @@ func (h *Handler) ListSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 			&row.ContentType,
 			&row.Title,
 			&row.PermalinkURL,
+			&row.MediaURL,
+			&row.ThumbnailURL,
 			&postedAt,
 			&views,
 			&likes,
