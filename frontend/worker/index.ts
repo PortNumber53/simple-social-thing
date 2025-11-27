@@ -165,6 +165,13 @@ async function sqlQuerySocial(sql: NonNullable<SqlClient>, userId: string, provi
   return rows[0] || null;
 }
 
+async function sqlDeleteSocial(sql: NonNullable<SqlClient>, userId: string, provider: string) {
+  await sql`
+    DELETE FROM public."SocialConnections"
+    WHERE "userId" = ${userId} AND provider = ${provider};
+  `;
+}
+
 // --- Generic cookie helpers ---
 function getCookie(cookieHeader: string, name: string): string | null {
   const parts = cookieHeader.split(/;\s*/);
@@ -309,6 +316,25 @@ export default {
       // Instagram disconnect clears cookie
       if (url.pathname === "/api/integrations/instagram/disconnect") {
         const headers = new Headers({ 'Set-Cookie': buildInstagramCookie('', 0) });
+        const cookie = request.headers.get('Cookie') || '';
+        const sid = getCookie(cookie, 'sid');
+        const sql = getSql(env);
+        if (sid && sql) {
+          try {
+            await sqlDeleteSocial(sql, sid, 'instagram');
+          } catch { void 0; }
+        }
+        // Best-effort: clear stored OAuth token server-side (do not block the response)
+        if (sid) {
+          const backendOrigin = getBackendOrigin(env, request);
+          try {
+            await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/instagram_oauth`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ value: null }),
+            });
+          } catch { void 0; }
+        }
         return new Response(null, { status: 204, headers });
       }
       // Instagram OAuth start
@@ -662,6 +688,9 @@ async function handleUserSettingsBundle(request: Request, env: Env): Promise<Res
 		// Sanitize: do not persist secrets in browser cache.
 		if (data && 'suno_api_key' in data) {
 			delete (data as Record<string, unknown>)['suno_api_key'];
+		}
+		if (data && 'instagram_oauth' in data) {
+			delete (data as Record<string, unknown>)['instagram_oauth'];
 		}
 
 		headers.set('Content-Type', 'application/json');
@@ -1085,6 +1114,13 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
     return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
   }
 
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
+  }
+
   // Exchange code for short-lived token
   const tokenUrl = new URL('https://graph.facebook.com/v18.0/oauth/access_token');
   tokenUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID!);
@@ -1101,10 +1137,37 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
       const data = encodeURIComponent(JSON.stringify({ success: false, error: 'token_exchange_failed', status: tokenRes.status }));
       return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
     }
-    const short = (await tokenRes.json()) as { access_token: string };
+    const short = (await tokenRes.json()) as { access_token: string; token_type?: string; expires_in?: number };
+
+    // Step 1b (recommended): exchange for long-lived user token
+    type FbExchangeResponse = { access_token: string; token_type?: string; expires_in?: number };
+    let accessToken = short.access_token;
+    let tokenType = short.token_type || 'bearer';
+    let expiresIn = short.expires_in || 0;
+    let rawTokenPayload: unknown = { short };
+    try {
+      const longUrl = new URL('https://graph.facebook.com/v18.0/oauth/access_token');
+      longUrl.searchParams.set('grant_type', 'fb_exchange_token');
+      longUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID!);
+      longUrl.searchParams.set('client_secret', env.INSTAGRAM_APP_SECRET!);
+      longUrl.searchParams.set('fb_exchange_token', short.access_token);
+      const longRes = await fetch(longUrl.toString(), { headers: { 'Accept': 'application/json' }});
+      if (longRes.ok) {
+        const long = (await longRes.json()) as FbExchangeResponse;
+        accessToken = long.access_token;
+        tokenType = long.token_type || tokenType;
+        expiresIn = typeof long.expires_in === 'number' ? long.expires_in : expiresIn;
+        rawTokenPayload = { short, long };
+      } else {
+        const longErr = await longRes.text().catch(() => '');
+        rawTokenPayload = { short, longError: { status: longRes.status, body: longErr } };
+      }
+    } catch (e) {
+      rawTokenPayload = { short, longError: { message: e instanceof Error ? e.message : String(e) } };
+    }
 
     // Step 2: Get user pages and find linked Instagram business account
-    const pagesRes = await fetch(`https://graph.facebook.com/v18.0/me/accounts?fields=name,instagram_business_account&access_token=${encodeURIComponent(short.access_token)}`);
+    const pagesRes = await fetch(`https://graph.facebook.com/v18.0/me/accounts?fields=name,instagram_business_account&access_token=${encodeURIComponent(accessToken)}`);
     if (!pagesRes.ok) {
       const errText = await pagesRes.text().catch(() => '');
       console.error('[IG] pages_fetch_failed', pagesRes.status, errText);
@@ -1122,12 +1185,10 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
 
     // Step 3: Fetch IG username for display
     const igId = withIg.instagram_business_account!.id;
-    const igRes = await fetch(`https://graph.facebook.com/v18.0/${encodeURIComponent(igId)}?fields=username&access_token=${encodeURIComponent(short.access_token)}`);
+    const igRes = await fetch(`https://graph.facebook.com/v18.0/${encodeURIComponent(igId)}?fields=username&access_token=${encodeURIComponent(accessToken)}`);
     const ig = igRes.ok ? ((await igRes.json()) as { username?: string }) : {};
 
     // Persist connection via Hyperdrive SQL when available (falls back to no-op on DB)
-    const cookieHeader = request.headers.get('Cookie') || '';
-    const sid = getCookie(cookieHeader, 'sid');
     const sql = getSql(env);
     if (sql && sid) {
       try {
@@ -1139,6 +1200,42 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
         });
       } catch (e) {
         console.error('[DB] sqlUpsertSocial (instagram) failed', e);
+      }
+    }
+
+    // Persist OAuth token to our backend so the server can later import Instagram content into SocialLibraries.
+    {
+      const backendOrigin = getBackendOrigin(env, request);
+      const obtainedAt = new Date().toISOString();
+      const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+      try {
+        // ensure user exists (best-effort)
+        await fetch(`${backendOrigin}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: sid, email: '', name: 'User', imageUrl: null }),
+        });
+      } catch { void 0; }
+      try {
+        await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/instagram_oauth`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            value: {
+              accessToken,
+              tokenType,
+              expiresIn,
+              obtainedAt,
+              expiresAt,
+              pageId: withIg.id,
+              igBusinessId: igId,
+              username: ig.username || null,
+              raw: rawTokenPayload,
+            },
+          }),
+        });
+      } catch (e) {
+        console.error('[IG] failed to persist instagram_oauth to backend', e);
       }
     }
 
