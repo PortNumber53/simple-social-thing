@@ -29,6 +29,56 @@ function getString(value: unknown): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
+function getNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function extractCreditsNumber(value: unknown): number | null {
+  const obj = asRecord(value);
+  if (!obj) return null;
+  const dataObj = asRecord(obj['data']);
+  if (!dataObj) return null;
+
+  const preferredKeys = [
+    'availableCredits',
+    'available_credits',
+    'remainingCredits',
+    'remaining_credits',
+    'remaining',
+    'remain',
+    'credit',
+    'credits',
+    'balance',
+    'totalCredits',
+    'total_credits',
+  ];
+
+  for (const k of preferredKeys) {
+    if (k in dataObj) {
+      const n = getNumber(dataObj[k]);
+      if (n !== null) return n;
+    }
+  }
+
+  for (const [k, v] of Object.entries(dataObj)) {
+    if (!/credit|balance|remain|available/i.test(k)) continue;
+    const n = getNumber(v);
+    if (n !== null) return n;
+  }
+
+  for (const v of Object.values(dataObj)) {
+    const n = getNumber(v);
+    if (n !== null) return n;
+  }
+
+  return null;
+}
+
 function getSql(env: Env): SqlClient {
   try {
     // Prefer Hyperdrive binding in prod; in local, if it resolves to hyperdrive.local (Miniflare),
@@ -505,8 +555,9 @@ async function handleSunoCredits(request: Request, env: Env): Promise<Response> 
 		if (!res.ok) {
 			return new Response(JSON.stringify({ ok: false, error: 'suno_credits_failed', status: res.status, details: data }), { status: 502, headers });
 		}
+		const availableCredits = extractCreditsNumber(data);
 		headers.set('Content-Type', 'application/json');
-		return new Response(JSON.stringify({ ok: true, credits: data }), { status: 200, headers });
+		return new Response(JSON.stringify({ ok: true, credits: data, availableCredits }), { status: 200, headers });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		return new Response(JSON.stringify({ ok: false, error: 'suno_unreachable', details: { message } }), { status: 502, headers });
