@@ -65,6 +65,7 @@ func (i *Importer) Start(ctx context.Context) {
 	defer ticker.Stop()
 
 	l.Printf("[IGImporter] started interval=%s", i.Interval.String())
+	i.logSchemaInfo(ctx, l)
 	// run immediately once
 	i.runOnce(ctx, l)
 
@@ -86,8 +87,8 @@ func (i *Importer) runOnce(ctx context.Context, l *log.Logger) {
 		l.Printf("[IGImporter] loadTokens error: %v", err)
 		return
 	}
+	l.Printf("[IGImporter] tokens found=%d", len(records))
 	if len(records) == 0 {
-		l.Printf("[IGImporter] no instagram_oauth tokens found")
 		return
 	}
 
@@ -99,13 +100,15 @@ func (i *Importer) runOnce(ctx context.Context, l *log.Logger) {
 			return
 		default:
 		}
-		n, err := i.importForUser(ctx, rec.UserID, rec.Token)
+		l.Printf("[IGImporter] importing userId=%s igBusinessId=%s expiresAt=%s", rec.UserID, rec.Token.IGBusinessID, rec.Token.ExpiresAt)
+		n, err := i.importForUser(ctx, rec.UserID, rec.Token, l)
 		if err != nil {
 			l.Printf("[IGImporter] import error userId=%s err=%v", rec.UserID, err)
 			continue
 		}
 		usersOK++
 		totalItems += n
+		l.Printf("[IGImporter] imported userId=%s items=%d", rec.UserID, n)
 	}
 
 	l.Printf("[IGImporter] done users=%d items=%d dur=%s", usersOK, totalItems, time.Since(start))
@@ -141,10 +144,11 @@ func (i *Importer) loadTokens(ctx context.Context) ([]tokenRow, error) {
 		var tok oauthRecord
 		if err := json.Unmarshal(raw, &tok); err != nil {
 			// Older/unexpected shapes: ignore but log
-			log.Printf("[IGImporter] invalid oauth json userId=%s err=%v raw=%s", userID, err, string(raw))
+			log.Printf("[IGImporter] invalid oauth json userId=%s err=%v raw=%s", userID, err, truncate(string(raw), 600))
 			continue
 		}
 		if tok.AccessToken == "" || tok.IGBusinessID == "" {
+			log.Printf("[IGImporter] skip userId=%s reason=missing_token_fields accessToken=%t igBusinessId=%t", userID, tok.AccessToken != "", tok.IGBusinessID != "")
 			continue
 		}
 		out = append(out, tokenRow{UserID: userID, Token: tok})
@@ -152,14 +156,16 @@ func (i *Importer) loadTokens(ctx context.Context) ([]tokenRow, error) {
 	return out, nil
 }
 
-func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRecord) (int, error) {
+func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRecord, l *log.Logger) (int, error) {
 	media, rawPayload, err := i.fetchRecentMedia(ctx, tok.IGBusinessID, tok.AccessToken)
 	if err != nil {
 		return 0, err
 	}
 	if len(media) == 0 {
+		l.Printf("[IGImporter] no media userId=%s", userID)
 		return 0, nil
 	}
+	l.Printf("[IGImporter] media fetched userId=%s count=%d", userID, len(media))
 
 	n := 0
 	for _, m := range media {
@@ -199,6 +205,7 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 			  updated_at = NOW()
 		`, id, userID, contentType, title, m.Permalink, postedAt, m.LikeCount, string(raw), externalID)
 		if err != nil {
+			l.Printf("[IGImporter] upsert failed userId=%s mediaId=%s err=%v", userID, externalID, err)
 			return n, err
 		}
 		n++
@@ -234,6 +241,23 @@ func (i *Importer) fetchRecentMedia(ctx context.Context, igBusinessID string, ac
 		return nil, body, err
 	}
 	return parsed.Data, body, nil
+}
+
+func (i *Importer) logSchemaInfo(ctx context.Context, l *log.Logger) {
+	// Best-effort: confirm the unique constraint exists so ON CONFLICT works.
+	var exists bool
+	err := i.DB.QueryRowContext(ctx, `
+		SELECT EXISTS (
+		  SELECT 1
+		  FROM pg_constraint
+		  WHERE conname = 'uq_social_libraries_user_network_external'
+		)
+	`).Scan(&exists)
+	if err != nil {
+		l.Printf("[IGImporter] schema check failed err=%v", err)
+		return
+	}
+	l.Printf("[IGImporter] schema uq_social_libraries_user_network_external=%t", exists)
 }
 
 func mapMediaType(mt string) string {
