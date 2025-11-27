@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PortNumber53/simple-social-thing/backend/internal/handlers"
+	"github.com/PortNumber53/simple-social-thing/backend/internal/instagram"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -23,6 +25,10 @@ import (
 func main() {
 	// Load .env file if it exists
 	_ = godotenv.Load()
+
+	// Root context for background workers and graceful shutdown
+	rootCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Get database URL from environment
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -123,11 +129,30 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
+	// Background: Instagram importer (polls Graph API and upserts into SocialLibraries)
+	{
+		enabled := os.Getenv("INSTAGRAM_IMPORT_ENABLED")
+		if enabled == "" || enabled == "true" {
+			interval := 10 * time.Minute
+			if v := os.Getenv("INSTAGRAM_IMPORT_INTERVAL_SECONDS"); v != "" {
+				var secs int
+				if _, err := fmt.Sscanf(v, "%d", &secs); err == nil && secs > 0 {
+					interval = time.Duration(secs) * time.Second
+				}
+			}
+			imp := &instagram.Importer{DB: db, Interval: interval}
+			go imp.Start(rootCtx)
+		} else {
+			log.Printf("[IGImporter] disabled via INSTAGRAM_IMPORT_ENABLED=%q", enabled)
+		}
+	}
+
 	go func() {
 		<-stop
 		log.Println("Shutting down server...")
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+		cancel()
+		ctx, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel2()
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Printf("Server shutdown error: %v", err)
 		}
