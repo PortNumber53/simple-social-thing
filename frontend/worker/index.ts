@@ -79,6 +79,19 @@ function extractCreditsNumber(value: unknown): number | null {
   return null;
 }
 
+function logLarge(tag: string, text: string) {
+  // Cloudflare logs can truncate long messages; chunk so we can see the full payload.
+  const chunkSize = 3500;
+  if (text.length <= chunkSize) {
+    console.log(tag, text);
+    return;
+  }
+  console.log(tag, `(len=${text.length})`);
+  for (let i = 0; i < text.length; i += chunkSize) {
+    console.log(tag, text.slice(i, i + chunkSize));
+  }
+}
+
 function getSql(env: Env): SqlClient {
   try {
     // Prefer Hyperdrive binding in prod; in local, if it resolves to hyperdrive.local (Miniflare),
@@ -551,11 +564,22 @@ async function handleSunoCredits(request: Request, env: Env): Promise<Response> 
 				'Authorization': `Bearer ${sunoApiKey}`,
 			},
 		});
-		const data: unknown = await res.json().catch(() => null);
+		const rawText = await res.text().catch(() => '');
+		logLarge('[Suno][Credits][Response]', `status=${res.status} body=${rawText}`);
+
+		let data: unknown = null;
+		try {
+			data = rawText ? JSON.parse(rawText) : null;
+		} catch {
+			data = rawText;
+		}
+
 		if (!res.ok) {
 			return new Response(JSON.stringify({ ok: false, error: 'suno_credits_failed', status: res.status, details: data }), { status: 502, headers });
 		}
+
 		const availableCredits = extractCreditsNumber(data);
+		console.log('[Suno][Credits][Parsed]', JSON.stringify({ availableCredits }).slice(0, 500));
 		headers.set('Content-Type', 'application/json');
 		return new Response(JSON.stringify({ ok: true, credits: data, availableCredits }), { status: 200, headers });
 	} catch (err) {
