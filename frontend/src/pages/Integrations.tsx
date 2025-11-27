@@ -6,13 +6,15 @@ type SunoApiKeyResponse = { ok?: boolean; value?: { apiKey?: unknown } };
 export const Integrations: React.FC = () => {
   const [igStatus, setIgStatus] = useState<string | null>(null);
   const [igAccount, setIgAccount] = useState<{ id: string; username: string | null } | null>(null);
+  const [ttStatus, setTtStatus] = useState<string | null>(null);
+  const [ttAccount, setTtAccount] = useState<{ id: string; displayName: string | null } | null>(null);
   const [sunoApiKey, setSunoApiKey] = useState<string>('');
   const [sunoStatus, setSunoStatus] = useState<string | null>(null);
-  const [tiktokStatus, setTiktokStatus] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ig = params.get('instagram');
+    const tt = params.get('tiktok');
     if (ig) {
       try {
         const data = JSON.parse(decodeURIComponent(ig));
@@ -31,6 +33,23 @@ export const Integrations: React.FC = () => {
         // Clean the URL
         window.history.replaceState({}, document.title, '/integrations');
       }
+    } else if (tt) {
+      try {
+        const data = JSON.parse(decodeURIComponent(tt));
+        if (data.success) {
+          setTtStatus('TikTok connected successfully.');
+          if (data.account && data.account.id) {
+            setTtAccount({ id: data.account.id, displayName: data.account.displayName ?? null });
+            try { localStorage.setItem('tt_conn', JSON.stringify({ id: data.account.id, displayName: data.account.displayName ?? null })); } catch { void 0; }
+          }
+        } else {
+          setTtStatus(`TikTok connection failed: ${data.error || 'Unknown error'}`);
+        }
+      } catch {
+        setTtStatus('TikTok connection status could not be parsed.');
+      } finally {
+        window.history.replaceState({}, document.title, '/integrations');
+      }
     } else {
       // Load existing connection from localStorage if present
       try {
@@ -39,6 +58,15 @@ export const Integrations: React.FC = () => {
           const parsed = JSON.parse(raw);
           if (parsed && parsed.id) {
             setIgAccount({ id: String(parsed.id), username: parsed.username ?? null });
+          }
+        }
+      } catch { void 0; }
+      try {
+        const raw = localStorage.getItem('tt_conn');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.id) {
+            setTtAccount({ id: String(parsed.id), displayName: parsed.displayName ?? null });
           }
         }
       } catch { void 0; }
@@ -65,8 +93,7 @@ export const Integrations: React.FC = () => {
   };
 
   const startTikTokAuth = () => {
-    // Placeholder until TikTok Login Kit OAuth flow is implemented.
-    setTiktokStatus('TikTok integration is coming soon. (Login Kit / Share Kit / Content Posting API / Webhooks)');
+    window.location.href = `/api/integrations/tiktok/auth`;
   };
 
 
@@ -107,6 +134,15 @@ export const Integrations: React.FC = () => {
       await fetch(`/api/integrations/instagram/disconnect`, { method: 'POST', credentials: 'include' });
     } catch { void 0; }
   };
+
+  const disconnectTikTok = async () => {
+    try { localStorage.removeItem('tt_conn'); } catch { void 0; }
+    setTtAccount(null);
+    setTtStatus('TikTok disconnected.');
+    try {
+      await fetch(`/api/integrations/tiktok/disconnect`, { method: 'POST', credentials: 'include' });
+    } catch { void 0; }
+  };
   return (
     <Layout>
         <div className="max-w-5xl mx-auto space-y-8">
@@ -121,6 +157,13 @@ export const Integrations: React.FC = () => {
           <div className="max-w-xl mx-auto">
             <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
               {igStatus}
+            </div>
+          </div>
+        )}
+        {ttStatus && (
+          <div className="max-w-xl mx-auto">
+            <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
+              {ttStatus}
             </div>
           </div>
         )}
@@ -164,9 +207,15 @@ export const Integrations: React.FC = () => {
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">TikTok</h2>
-                <span className="inline-flex items-center px-2 py-1 rounded-md bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 text-xs">
-                  Coming soon
-                </span>
+                {ttAccount ? (
+                  <span className="inline-flex items-center px-2 py-1 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-xs">
+                    Connected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-2 py-1 rounded-md bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 text-xs">
+                    Login Kit
+                  </span>
+                )}
               </div>
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
                 We’ll integrate TikTok so you can authenticate users, share content, publish posts, and receive webhooks.
@@ -181,9 +230,18 @@ export const Integrations: React.FC = () => {
                 </ul>
               </div>
               <div className="mt-4 flex flex-wrap gap-3 items-center">
-                <button onClick={startTikTokAuth} className="btn btn-primary" disabled>
-                  Connect TikTok
-                </button>
+                {ttAccount ? (
+                  <>
+                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm">
+                      Connected{ttAccount.displayName ? ` as ${ttAccount.displayName}` : ''}
+                    </span>
+                    <button onClick={disconnectTikTok} className="btn btn-ghost">Disconnect</button>
+                  </>
+                ) : (
+                  <button onClick={startTikTokAuth} className="btn btn-primary">
+                    Connect TikTok
+                  </button>
+                )}
                 <a
                   href="https://developers.tiktok.com/"
                   target="_blank"
@@ -192,9 +250,6 @@ export const Integrations: React.FC = () => {
                 >
                   TikTok developer docs
                 </a>
-                {tiktokStatus && (
-                  <span className="text-sm text-slate-600 dark:text-slate-400">{tiktokStatus}</span>
-                )}
               </div>
             </div>
           </div>
