@@ -21,6 +21,10 @@ export const ContentMusic: React.FC = () => {
     const [model, setModel] = useState<string>('V4');
 	const [tracks, setTracks] = useState<SunoTrack[]>([]);
 	const [tracksLoading, setTracksLoading] = useState<boolean>(false);
+	const [creditsLoading, setCreditsLoading] = useState<boolean>(false);
+	const [creditsText, setCreditsText] = useState<string | null>(null);
+	const [syncLoading, setSyncLoading] = useState<boolean>(false);
+	const [syncText, setSyncText] = useState<string | null>(null);
 
 	const hasPending = useMemo(() => tracks.some((t) => (t.status || '').toLowerCase() === 'pending'), [tracks]);
 
@@ -36,6 +40,60 @@ export const ContentMusic: React.FC = () => {
 			}
 		} finally {
 			setTracksLoading(false);
+		}
+	};
+
+	const checkCredits = async () => {
+		setCreditsLoading(true);
+		setCreditsText(null);
+		try {
+			const res = await fetch(`/api/integrations/suno/credits`, { credentials: 'include' });
+			const data: unknown = await res.json().catch(() => null);
+			if (!res.ok) {
+				const err = data && typeof data === 'object' && 'error' in data ? String((data as { error?: unknown }).error) : res.statusText;
+				setCreditsText(`Failed to fetch credits: ${err}`);
+				return;
+			}
+			// Suno returns { code, msg, data } - show a compact summary.
+			const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+			const credits = obj && obj.credits && typeof obj.credits === 'object' ? (obj.credits as Record<string, unknown>) : null;
+			const code = credits && typeof credits.code !== 'undefined' ? String(credits.code) : '';
+			const msg = credits && typeof credits.msg === 'string' ? credits.msg : '';
+			const innerData = credits ? credits.data : null;
+			let balance = '';
+			if (innerData && typeof innerData === 'object') {
+				const d = innerData as Record<string, unknown>;
+				if (typeof d.credit !== 'undefined') balance = `credit=${String(d.credit)}`;
+				else if (typeof d.credits !== 'undefined') balance = `credits=${String(d.credits)}`;
+				else if (typeof d.balance !== 'undefined') balance = `balance=${String(d.balance)}`;
+			}
+			setCreditsText(`Suno credits: ${[balance, msg ? `msg=${msg}` : '', code ? `code=${code}` : ''].filter(Boolean).join(' ') || 'ok'}`);
+		} catch (e: unknown) {
+			const msg = e instanceof Error ? e.message : String(e);
+			setCreditsText(`Failed to fetch credits: ${msg}`);
+		} finally {
+			setCreditsLoading(false);
+		}
+	};
+
+	const syncFromSuno = async () => {
+		setSyncLoading(true);
+		setSyncText(null);
+		try {
+			const res = await fetch(`/api/integrations/suno/sync`, { method: 'POST', credentials: 'include' });
+			const data: any = await res.json().catch(() => null);
+			if (!res.ok || !data?.ok) {
+				const err = data?.error ? String(data.error) : res.statusText;
+				setSyncText(`Sync failed: ${err}`);
+				return;
+			}
+			setSyncText(`Synced: checked ${data.checked}, updated ${data.updated}.`);
+			void loadTracks();
+		} catch (e: unknown) {
+			const msg = e instanceof Error ? e.message : String(e);
+			setSyncText(`Sync failed: ${msg}`);
+		} finally {
+			setSyncLoading(false);
 		}
 	};
 
@@ -134,10 +192,24 @@ export const ContentMusic: React.FC = () => {
 				<div className="bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-6">
 					<div className="flex items-center justify-between gap-3">
 						<h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Generated songs</h2>
-						<button onClick={loadTracks} className="btn btn-secondary">
-							{tracksLoading ? 'Refreshing…' : 'Refresh'}
-						</button>
+						<div className="flex items-center gap-2">
+							<button onClick={checkCredits} className="btn btn-secondary">
+								{creditsLoading ? 'Checking…' : 'Check credits'}
+							</button>
+							<button onClick={syncFromSuno} className="btn btn-secondary">
+								{syncLoading ? 'Syncing…' : 'Sync from Suno'}
+							</button>
+							<button onClick={loadTracks} className="btn btn-secondary">
+								{tracksLoading ? 'Refreshing…' : 'Refresh'}
+							</button>
+						</div>
 					</div>
+					{(creditsText || syncText) && (
+						<div className="mt-3 space-y-1">
+							{creditsText && <p className="text-xs text-slate-600 dark:text-slate-300">{creditsText}</p>}
+							{syncText && <p className="text-xs text-slate-600 dark:text-slate-300">{syncText}</p>}
+						</div>
+					)}
 					<div className="mt-4 overflow-x-auto">
 						<table className="min-w-full text-sm">
 							<thead>
