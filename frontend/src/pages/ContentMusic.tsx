@@ -11,12 +11,9 @@ export const ContentMusic: React.FC = () => {
 	useEffect(() => {
 		const loadKey = async () => {
 			try {
-				const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-				// In local dev, prefer same-origin so Vite can proxy `/api/*` to the Wrangler worker.
-				const workerOrigin = isLocalhost
-					? window.location.origin
-					: (import.meta.env.VITE_WORKER_ORIGIN || window.location.origin);
-				const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, { credentials: 'include' });
+				// Always use same-origin API paths. In dev, Vite proxies `/api/*` to the Wrangler worker.
+				// In prod, the Worker serves the SPA and handles `/api/*` on the same origin.
+				const res = await fetch(`/api/integrations/suno/api-key`, { credentials: 'include' });
 				const data: unknown = await res.json().catch(() => null);
 				if (data && typeof data === 'object' && 'ok' in data) {
 					const ok = (data as { ok?: unknown }).ok === true;
@@ -35,12 +32,7 @@ export const ContentMusic: React.FC = () => {
 	const saveKey = async () => {
 		setStatus('Saving key...');
 		try {
-			const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-			// In local dev, prefer same-origin so Vite can proxy `/api/*` to the Wrangler worker.
-			const workerOrigin = isLocalhost
-				? window.location.origin
-				: (import.meta.env.VITE_WORKER_ORIGIN || window.location.origin);
-			const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, {
+			const res = await fetch(`/api/integrations/suno/api-key`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ apiKey }),
@@ -61,12 +53,7 @@ export const ContentMusic: React.FC = () => {
 		setStatus('Generating with Suno...');
 		setFilePath(null);
 		try {
-			const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-			// In local dev, prefer same-origin so Vite can proxy `/api/*` to the Wrangler worker.
-			const workerOrigin = isLocalhost
-				? window.location.origin
-				: (import.meta.env.VITE_WORKER_ORIGIN || window.location.origin);
-			const res = await fetch(`${workerOrigin}/api/integrations/suno/generate`, {
+			const res = await fetch(`/api/integrations/suno/generate`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				credentials: 'include',
