@@ -10,6 +10,13 @@ GOOGLE_CLIENT_SECRET=your_google_client_secret_here
 INSTAGRAM_APP_ID=your_instagram_app_id_here
 INSTAGRAM_APP_SECRET=your_instagram_app_secret_here
 
+# --- TikTok OAuth (Worker-side) ---
+# Callback URL must be exact and registered in TikTok developer console:
+# - Local dev:  http://localhost:18912/api/integrations/tiktok/callback
+# - Production: https://<your-domain>/api/integrations/tiktok/callback
+TIKTOK_CLIENT_KEY=your_tiktok_client_key_here
+TIKTOK_CLIENT_SECRET=your_tiktok_client_secret_here
+
 # --- Suno integration (Worker-side) ---
 # Suno API keys are stored per-user in the database (`UserSettings`) via the Integrations UI.
 # No Suno secrets should be placed in `.dev.vars` / Wrangler secrets.

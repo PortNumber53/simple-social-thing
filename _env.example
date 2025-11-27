@@ -17,6 +17,10 @@ ENVIRONMENT=dev
 # (otherwise worker uses same-origin or VITE_WORKER_ORIGIN)
 BACKEND_ORIGIN=http://localhost:18911
 
+# --- TikTok integration ---
+# TikTok OAuth secrets are Worker-side (Wrangler secrets / `.dev.vars`).
+# No TikTok secrets should be placed in this root `.env`.
+
 # --- Suno integration ---
 # Suno API keys are stored per-user in the database (`UserSettings`) via the Integrations UI.
 # No Suno secrets should be placed in this root `.env`.
