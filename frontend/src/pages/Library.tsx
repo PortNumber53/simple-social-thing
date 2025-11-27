@@ -21,38 +21,59 @@ export const Library: React.FC = () => {
   const [to, setTo] = useState<string>('');
   const [q, setQ] = useState<string>('');
 
-  const [items, setItems] = useState<LibraryItem[]>([]);
+  const [allItems, setAllItems] = useState<LibraryItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'gallery'>('list');
   const [syncing, setSyncing] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
-  const queryString = useMemo(() => {
-    const params = new URLSearchParams();
-    if (network) params.set('network', network);
-    if (contentType) params.set('type', contentType);
-    if (from) params.set('from', from);
-    if (to) params.set('to', to);
-    if (q) params.set('q', q);
-    params.set('limit', '100');
-    return params.toString();
-  }, [network, contentType, from, to, q]);
+  const normalizeText = (s: string) => s.trim().toLowerCase();
 
-  const load = async () => {
+  const filteredItems = useMemo(() => {
+    const networkFilter = normalizeText(network);
+    const typeFilter = normalizeText(contentType);
+    const qFilter = normalizeText(q);
+
+    const fromTs = from ? new Date(`${from}T00:00:00.000Z`).getTime() : null;
+    // End of day inclusive. Use UTC to avoid user locale shifting.
+    const toTs = to ? new Date(`${to}T23:59:59.999Z`).getTime() : null;
+
+    return allItems.filter((it) => {
+      if (networkFilter && normalizeText(it.network) !== networkFilter) return false;
+      if (typeFilter && normalizeText(it.contentType) !== typeFilter) return false;
+
+      if (fromTs !== null || toTs !== null) {
+        const t = it.postedAt ? new Date(it.postedAt).getTime() : null;
+        // If we have a date range filter but the item has no postedAt, exclude it.
+        if (t === null || Number.isNaN(t)) return false;
+        if (fromTs !== null && t < fromTs) return false;
+        if (toTs !== null && t > toTs) return false;
+      }
+
+      if (qFilter) {
+        const hay = normalizeText(`${it.title ?? ''} ${it.permalinkUrl ?? ''}`);
+        if (!hay.includes(qFilter)) return false;
+      }
+      return true;
+    });
+  }, [allItems, network, contentType, from, to, q]);
+
+  const loadAll = async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/library/items?${queryString}`, { credentials: 'include' });
+      // Fetch a reasonable batch once, then filter client-side for “real-time” UX.
+      const res = await fetch(`/api/library/items?limit=200`, { credentials: 'include' });
       const data: unknown = await res.json().catch(() => null);
       if (!res.ok) {
         setError('Failed to load library.');
         return;
       }
       if (Array.isArray(data)) {
-        setItems(data as LibraryItem[]);
+        setAllItems(data as LibraryItem[]);
       } else {
-        setItems([]);
+        setAllItems([]);
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -80,7 +101,7 @@ export const Library: React.FC = () => {
       } else {
         setSyncStatus('Synced.');
       }
-      await load();
+      await loadAll();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setSyncStatus(`Sync failed: ${msg}`);
@@ -90,7 +111,7 @@ export const Library: React.FC = () => {
   };
 
   useEffect(() => {
-    void load();
+    void loadAll();
     try {
       const stored = window.localStorage.getItem('libraryViewMode');
       if (stored === 'list' || stored === 'gallery') setViewMode(stored);
@@ -175,9 +196,6 @@ export const Library: React.FC = () => {
 
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <div className="flex items-center gap-2">
-              <button onClick={load} className="btn btn-primary">
-                {loading ? 'Loading…' : 'Apply filters'}
-              </button>
               <button onClick={syncNow} className="btn btn-secondary" type="button" disabled={syncing}>
                 {syncing ? 'Refreshing…' : 'Refresh'}
               </button>
@@ -194,7 +212,8 @@ export const Library: React.FC = () => {
               >
                 Reset
               </button>
-              {syncStatus && <span className="text-sm text-slate-600 dark:text-slate-300">{syncStatus}</span>}
+              {loading && <span className="text-sm text-slate-600 dark:text-slate-300">Loading…</span>}
+              {syncStatus && !loading && <span className="text-sm text-slate-600 dark:text-slate-300">{syncStatus}</span>}
               {error && <span className="text-sm text-red-600 dark:text-red-300">{error}</span>}
             </div>
 
@@ -249,14 +268,14 @@ export const Library: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {items.length === 0 ? (
+                {filteredItems.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-10 px-4 text-slate-500 dark:text-slate-400">
                       No library items yet. (Ingestion from networks will populate this table.)
                     </td>
                   </tr>
                 ) : (
-                  items.map((it) => {
+                  filteredItems.map((it) => {
                     const posted = it.postedAt ? new Date(it.postedAt).toLocaleString() : '';
                     return (
                       <tr key={it.id} className="border-b border-slate-200/40 dark:border-slate-700/30">
@@ -283,12 +302,12 @@ export const Library: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {items.length === 0 ? (
+            {filteredItems.length === 0 ? (
               <div className="card p-8 text-slate-500 dark:text-slate-400">
                 No library items yet. (Ingestion from networks will populate this gallery.)
               </div>
             ) : (
-              items.map((it) => {
+              filteredItems.map((it) => {
                 const thumb = (it.thumbnailUrl || it.mediaUrl || '').trim();
                 const posted = it.postedAt ? new Date(it.postedAt).toLocaleDateString() : '';
                 const CardWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) =>
