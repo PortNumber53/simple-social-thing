@@ -54,20 +54,26 @@ export const ContentMusic: React.FC = () => {
 				setCreditsText(`Failed to fetch credits: ${err}`);
 				return;
 			}
-			// Suno returns { code, msg, data } - show a compact summary.
+			// Worker returns: { ok: true, credits: { code, msg, data }, availableCredits?: number|null }
 			const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
-			const credits = obj && obj.credits && typeof obj.credits === 'object' ? (obj.credits as Record<string, unknown>) : null;
-			const code = credits && typeof credits.code !== 'undefined' ? String(credits.code) : '';
-			const msg = credits && typeof credits.msg === 'string' ? credits.msg : '';
-			const innerData = credits ? credits.data : null;
-			let balance = '';
-			if (innerData && typeof innerData === 'object') {
-				const d = innerData as Record<string, unknown>;
-				if (typeof d.credit !== 'undefined') balance = `credit=${String(d.credit)}`;
-				else if (typeof d.credits !== 'undefined') balance = `credits=${String(d.credits)}`;
-				else if (typeof d.balance !== 'undefined') balance = `balance=${String(d.balance)}`;
+			const creditsContainer = obj && obj.credits && typeof obj.credits === 'object' ? (obj.credits as Record<string, unknown>) : null;
+			const availableCredits = obj && typeof obj.availableCredits !== 'undefined' ? obj.availableCredits : null;
+			const code = creditsContainer && typeof creditsContainer.code !== 'undefined' ? String(creditsContainer.code) : '';
+			const msg = creditsContainer && typeof creditsContainer.msg === 'string' ? creditsContainer.msg : '';
+			const innerData = creditsContainer ? creditsContainer.data : null;
+
+			let balancePart = '';
+			if (typeof availableCredits === 'number') balancePart = `available=${availableCredits}`;
+			else if (typeof availableCredits === 'string' && availableCredits.trim() !== '') balancePart = `available=${availableCredits}`;
+
+			let rawPart = '';
+			if (!balancePart && innerData && typeof innerData === 'object') {
+				try {
+					rawPart = `data=${JSON.stringify(innerData).slice(0, 220)}`;
+				} catch { void 0; }
 			}
-			setCreditsText(`Suno credits: ${[balance, msg ? `msg=${msg}` : '', code ? `code=${code}` : ''].filter(Boolean).join(' ') || 'ok'}`);
+
+			setCreditsText(`Suno credits: ${[balancePart, rawPart, msg ? `msg=${msg}` : '', code ? `code=${code}` : ''].filter(Boolean).join(' ') || 'ok'}`);
 		} catch (e: unknown) {
 			const msg = e instanceof Error ? e.message : String(e);
 			setCreditsText(`Failed to fetch credits: ${msg}`);
