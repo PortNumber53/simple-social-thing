@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/PortNumber53/simple-social-thing/backend/internal/instagram"
 	"github.com/PortNumber53/simple-social-thing/backend/internal/models"
+	"github.com/PortNumber53/simple-social-thing/backend/internal/socialimport"
+	"github.com/PortNumber53/simple-social-thing/backend/internal/socialimport/providers"
 	"github.com/gorilla/mux"
 )
 
@@ -549,8 +551,11 @@ func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 
 	type providerResult struct {
-		Fetched  int `json:"fetched"`
-		Upserted int `json:"upserted"`
+		Fetched  int    `json:"fetched"`
+		Upserted int    `json:"upserted"`
+		Skipped  bool   `json:"skipped,omitempty"`
+		Reason   string `json:"reason,omitempty"`
+		Error    string `json:"error,omitempty"`
 	}
 	resp := struct {
 		OK         bool                      `json:"ok"`
@@ -559,25 +564,48 @@ func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 		Providers  map[string]providerResult `json:"providers"`
 	}{OK: true, UserID: userID, Providers: map[string]providerResult{}}
 
-	// Instagram
-	{
-		fetched, upserted, err := instagram.SyncUser(ctx, h.db, userID, log.Default())
-		if err != nil {
-			log.Printf("[LibrarySync] instagram error userId=%s err=%v", userID, err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadGateway)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":       false,
-				"error":    "instagram_sync_failed",
-				"userId":   userID,
-				"details":  err.Error(),
-				"fetched":  fetched,
-				"upserted": upserted,
-			})
-			return
+	// Which providers to sync? Default: all known providers (stubs no-op).
+	// Optional: ?providers=instagram,facebook,tiktok
+	provQuery := r.URL.Query().Get("providers")
+	want := map[string]bool{}
+	if provQuery != "" {
+		for _, p := range strings.Split(provQuery, ",") {
+			pp := strings.TrimSpace(strings.ToLower(p))
+			if pp != "" {
+				want[pp] = true
+			}
 		}
-		resp.Providers["instagram"] = providerResult{Fetched: fetched, Upserted: upserted}
-		log.Printf("[LibrarySync] instagram done userId=%s fetched=%d upserted=%d", userID, fetched, upserted)
+	}
+	all := []socialimport.Provider{
+		providers.InstagramProvider{},
+		providers.FacebookProvider{},
+		providers.TikTokProvider{},
+		providers.YouTubeProvider{},
+		providers.XProvider{},
+		providers.PinterestProvider{},
+		providers.ThreadsProvider{},
+	}
+	selected := make([]socialimport.Provider, 0, len(all))
+	if len(want) == 0 {
+		selected = all
+	} else {
+		for _, p := range all {
+			if want[p.Name()] {
+				selected = append(selected, p)
+			}
+		}
+	}
+
+	runner := &socialimport.Runner{DB: h.db, Logger: log.Default()}
+	results := runner.SyncAll(ctx, userID, selected)
+	for _, rr := range results {
+		resp.Providers[rr.Provider] = providerResult{
+			Fetched:  rr.Fetched,
+			Upserted: rr.Upserted,
+			Skipped:  rr.Skipped,
+			Reason:   rr.Reason,
+			Error:    rr.Error,
+		}
 	}
 
 	resp.DurationMs = time.Since(start).Milliseconds()

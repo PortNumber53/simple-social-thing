@@ -2,12 +2,23 @@ import React, { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 
 type SunoApiKeyResponse = { ok?: boolean; value?: { apiKey?: unknown } };
+type ProviderStatusResponse = {
+  connected?: boolean;
+  account?: Record<string, unknown>;
+};
+type IntegrationsStatusResponse = {
+  instagram?: ProviderStatusResponse;
+  tiktok?: ProviderStatusResponse;
+  facebook?: ProviderStatusResponse;
+};
 
 export const Integrations: React.FC = () => {
   const [igStatus, setIgStatus] = useState<string | null>(null);
   const [igAccount, setIgAccount] = useState<{ id: string; username: string | null } | null>(null);
   const [ttStatus, setTtStatus] = useState<string | null>(null);
   const [ttAccount, setTtAccount] = useState<{ id: string; displayName: string | null } | null>(null);
+  const [fbStatus, setFbStatus] = useState<string | null>(null);
+  const [fbAccount, setFbAccount] = useState<{ id: string; name: string | null } | null>(null);
   const [sunoApiKey, setSunoApiKey] = useState<string>('');
   const [sunoStatus, setSunoStatus] = useState<string | null>(null);
 
@@ -15,6 +26,7 @@ export const Integrations: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     const ig = params.get('instagram');
     const tt = params.get('tiktok');
+    const fb = params.get('facebook');
     if (ig) {
       try {
         const data = JSON.parse(decodeURIComponent(ig));
@@ -50,6 +62,23 @@ export const Integrations: React.FC = () => {
       } finally {
         window.history.replaceState({}, document.title, '/integrations');
       }
+    } else if (fb) {
+      try {
+        const data = JSON.parse(decodeURIComponent(fb));
+        if (data.success) {
+          setFbStatus('Facebook connected successfully.');
+          if (data.account && data.account.id) {
+            setFbAccount({ id: String(data.account.id), name: data.account.name ?? null });
+            try { localStorage.setItem('fb_conn', JSON.stringify({ id: String(data.account.id), name: data.account.name ?? null })); } catch { void 0; }
+          }
+        } else {
+          setFbStatus(`Facebook connection failed: ${data.error || 'Unknown error'}`);
+        }
+      } catch {
+        setFbStatus('Facebook connection status could not be parsed.');
+      } finally {
+        window.history.replaceState({}, document.title, '/integrations');
+      }
     } else {
       // Load existing connection from localStorage if present
       try {
@@ -70,7 +99,48 @@ export const Integrations: React.FC = () => {
           }
         }
       } catch { void 0; }
+      try {
+        const raw = localStorage.getItem('fb_conn');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.id) {
+            setFbAccount({ id: String(parsed.id), name: parsed.name ?? null });
+          }
+        }
+      } catch { void 0; }
     }
+  }, []);
+
+  useEffect(() => {
+    // Prefer live status from worker so UI stays correct across devices.
+    const loadStatus = async () => {
+      try {
+        const res = await fetch('/api/integrations/status', { credentials: 'include' });
+        const data: unknown = await res.json().catch(() => null);
+        if (!res.ok || !data || typeof data !== 'object') return;
+        const obj = data as IntegrationsStatusResponse;
+
+        if (obj.instagram?.connected) {
+          const a = obj.instagram.account || {};
+          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+          const username = typeof a.username === 'string' ? a.username : null;
+          if (id) setIgAccount({ id, username });
+        }
+        if (obj.tiktok?.connected) {
+          const a = obj.tiktok.account || {};
+          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+          const displayName = typeof a.displayName === 'string' ? a.displayName : null;
+          if (id) setTtAccount({ id, displayName });
+        }
+        if (obj.facebook?.connected) {
+          const a = obj.facebook.account || {};
+          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+          const name = typeof a.name === 'string' ? a.name : null;
+          if (id) setFbAccount({ id, name });
+        }
+      } catch { void 0; }
+    };
+    loadStatus();
   }, []);
 
   useEffect(() => {
@@ -94,6 +164,10 @@ export const Integrations: React.FC = () => {
 
   const startTikTokAuth = () => {
     window.location.href = `/api/integrations/tiktok/auth`;
+  };
+
+  const startFacebookAuth = () => {
+    window.location.href = `/api/integrations/facebook/auth`;
   };
 
 
@@ -143,6 +217,15 @@ export const Integrations: React.FC = () => {
       await fetch(`/api/integrations/tiktok/disconnect`, { method: 'POST', credentials: 'include' });
     } catch { void 0; }
   };
+
+  const disconnectFacebook = async () => {
+    try { localStorage.removeItem('fb_conn'); } catch { void 0; }
+    setFbAccount(null);
+    setFbStatus('Facebook disconnected.');
+    try {
+      await fetch(`/api/integrations/facebook/disconnect`, { method: 'POST', credentials: 'include' });
+    } catch { void 0; }
+  };
   return (
     <Layout>
         <div className="max-w-5xl mx-auto space-y-8">
@@ -164,6 +247,13 @@ export const Integrations: React.FC = () => {
           <div className="max-w-xl mx-auto">
             <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
               {ttStatus}
+            </div>
+          </div>
+        )}
+        {fbStatus && (
+          <div className="max-w-xl mx-auto">
+            <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
+              {fbStatus}
             </div>
           </div>
         )}
@@ -193,6 +283,33 @@ export const Integrations: React.FC = () => {
                   <button onClick={startInstagramAuth} className="btn btn-primary">Connect Instagram</button>
                 )}
                 <a href="/help/instagram" className="btn btn-secondary">Learn more</a>
+              </div>
+            </div>
+          </div>
+
+          <div className="card p-6 flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-400 flex items-center justify-center shadow-lg">
+              <span className="text-white text-lg font-bold">f</span>
+            </div>
+            <div className="flex-1">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Facebook</h2>
+              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
+                Connect Facebook pages to import posts into your Library.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3 items-center">
+                {fbAccount ? (
+                  <>
+                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm">
+                      Connected{fbAccount.name ? ` as ${fbAccount.name}` : ''}
+                    </span>
+                    <button onClick={disconnectFacebook} className="btn btn-ghost">Disconnect</button>
+                  </>
+                ) : (
+                  <button onClick={startFacebookAuth} className="btn btn-primary">Connect Facebook</button>
+                )}
+                <a href="https://developers.facebook.com/docs/facebook-login/" target="_blank" rel="noreferrer" className="btn btn-secondary">
+                  Learn more
+                </a>
               </div>
             </div>
           </div>
