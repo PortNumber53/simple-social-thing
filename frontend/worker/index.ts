@@ -1123,8 +1123,23 @@ async function fetchUserSunoKey(backendOrigin: string, userId: string): Promise<
 }
 
 function getBackendOrigin(env: Env, request: Request): string {
-	const normalize = (v: string): string => v.replace(/\/+$/g, '');
-	if (env.BACKEND_ORIGIN && env.BACKEND_ORIGIN.trim() !== '') return normalize(env.BACKEND_ORIGIN.trim());
+	const normalize = (raw: string): string => {
+		let v = (raw || '').trim().replace(/\/+$/g, '');
+		if (!v) return v;
+		// If the scheme is missing, infer it.
+		if (!/^https?:\/\//i.test(v)) {
+			// Common accidental config: BACKEND_ORIGIN=api-simple.truvis.co (no scheme)
+			// For localhost, default to http; otherwise default to request scheme (usually https).
+			if (/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(v)) {
+				v = `http://${v}`;
+			} else {
+				const proto = new URL(request.url).protocol || 'https:';
+				v = `${proto}//${v}`;
+			}
+		}
+		return v;
+	};
+	if (env.BACKEND_ORIGIN && env.BACKEND_ORIGIN.trim() !== '') return normalize(env.BACKEND_ORIGIN);
 	const url = new URL(request.url);
 	const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
 	if (isLocal) {
