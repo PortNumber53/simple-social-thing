@@ -1794,9 +1794,20 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   headers.append('Set-Cookie', buildTempCookie('tt_state', state, 10 * 60, request.url));
   headers.append('Set-Cookie', buildTempCookie('tt_verifier', verifier, 10 * 60, request.url));
 
-  // Scopes: keep minimal for Login Kit reliability; request additional scopes once the app is approved for them.
+  // Scopes:
+  // - default: Login Kit minimal (`user.info.basic`)
+  // - optional: request extra scopes via query string (e.g. `?scope=video.list`)
   // Docs: https://developers.tiktok.com/doc/login-kit-manage-user-access-tokens
-  const scopes = ['user.info.basic'].join(',');
+  const requested = (url.searchParams.get('scope') || '')
+    .split(/[,\s]+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+  const allow = new Set(['user.info.basic', 'video.list']);
+  const finalScopes = new Set<string>(['user.info.basic']);
+  for (const s of requested) {
+    if (allow.has(s)) finalScopes.add(s);
+  }
+  const scopes = Array.from(finalScopes).join(',');
 
   const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
   authUrl.searchParams.set('client_key', clientKey);

@@ -60,7 +60,9 @@ func (p TikTokProvider) SyncUser(ctx context.Context, db *sql.DB, userID string,
 	}
 
 	// Guard: importing video list requires the `video.list` scope.
-	if !strings.Contains(tok.Scope, "video.list") {
+	// Token responses may use comma or space separated scope lists.
+	scopeNorm := strings.ReplaceAll(tok.Scope, " ", ",")
+	if !strings.Contains(scopeNorm, "video.list") {
 		l.Printf("[TTImport] skip userId=%s reason=missing_scope scope=%s", userID, tok.Scope)
 		return 0, 0, nil
 	}
