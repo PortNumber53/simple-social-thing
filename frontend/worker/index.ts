@@ -1775,7 +1775,19 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
   const obtainedAt = new Date().toISOString();
   const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
   try {
-    await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/tiktok_oauth`, {
+    // Ensure the user row exists in the Go backend DB (avoid FK failures for UserSettings).
+    // Safe because backend CreateUser is now "non-clobbering" for empty fields.
+    try {
+      await fetch(`${backendOrigin}/api/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: sid, email: '', name: displayName || 'TikTok User', imageUrl: null }),
+      });
+    } catch (e) {
+      console.warn('[TT] ensure user failed', e);
+    }
+
+    const settingsRes = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/tiktok_oauth`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1793,6 +1805,10 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
         },
       }),
     });
+    if (!settingsRes.ok) {
+      const errText = await settingsRes.text().catch(() => '');
+      console.error('[TT] persist tiktok_oauth failed', settingsRes.status, errText.slice(0, 1200));
+    }
   } catch (e) {
     console.error('[TT] failed to persist tiktok_oauth to backend', e);
   }

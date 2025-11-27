@@ -45,9 +45,10 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO public."Users" (id, email, name, "imageUrl", "createdAt")
 		VALUES ($1, $2, $3, $4, NOW())
 		ON CONFLICT (id) DO UPDATE SET
-			email = EXCLUDED.email,
-			name = EXCLUDED.name,
-			"imageUrl" = EXCLUDED."imageUrl"
+			-- Avoid clobbering existing values when callers don't know them (e.g. social-only OAuth callbacks)
+			email = COALESCE(NULLIF(EXCLUDED.email, ''), public."Users".email),
+			name = COALESCE(NULLIF(EXCLUDED.name, ''), public."Users".name),
+			"imageUrl" = COALESCE(EXCLUDED."imageUrl", public."Users"."imageUrl")
 		RETURNING id, email, name, "imageUrl", "createdAt"
 	`
 
