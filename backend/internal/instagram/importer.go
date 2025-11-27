@@ -40,6 +40,8 @@ type mediaItem struct {
 	Caption   string `json:"caption"`
 	MediaType string `json:"media_type"`
 	Permalink string `json:"permalink"`
+	MediaURL  string `json:"media_url"`
+	ThumbURL  string `json:"thumbnail_url"`
 	Timestamp string `json:"timestamp"`
 	LikeCount *int64 `json:"like_count"`
 	// views generally requires additional insights calls; we store likes and raw payload for now
@@ -181,6 +183,11 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 		contentType := mapMediaType(m.MediaType)
 		postedAt := parseIGTimestamp(m.Timestamp)
 		externalID := m.ID
+		mediaURL := strings.TrimSpace(m.MediaURL)
+		thumbURL := strings.TrimSpace(m.ThumbURL)
+		if thumbURL == "" {
+			thumbURL = mediaURL
+		}
 
 		// For raw payload, store the individual media item if possible; otherwise store whole list payload for debug.
 		raw := rawPayload
@@ -191,19 +198,21 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 		id := fmt.Sprintf("instagram:%s:%s", userID, externalID)
 		_, err := i.DB.ExecContext(ctx, `
 			INSERT INTO public."SocialLibraries"
-			  (id, user_id, network, content_type, title, permalink_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
+			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
 			VALUES
-			  ($1, $2, 'instagram', $3, NULLIF($4,''), NULLIF($5,''), $6, NULL, $7, $8::jsonb, $9, NOW(), NOW())
+			  ($1, $2, 'instagram', $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), $8, NULL, $9, $10::jsonb, $11, NOW(), NOW())
 			ON CONFLICT (user_id, network, external_id)
 			DO UPDATE SET
 			  content_type = EXCLUDED.content_type,
 			  title = EXCLUDED.title,
 			  permalink_url = EXCLUDED.permalink_url,
+			  media_url = EXCLUDED.media_url,
+			  thumbnail_url = EXCLUDED.thumbnail_url,
 			  posted_at = EXCLUDED.posted_at,
 			  likes = EXCLUDED.likes,
 			  raw_payload = EXCLUDED.raw_payload,
 			  updated_at = NOW()
-		`, id, userID, contentType, title, m.Permalink, postedAt, m.LikeCount, string(raw), externalID)
+		`, id, userID, contentType, title, m.Permalink, mediaURL, thumbURL, postedAt, m.LikeCount, string(raw), externalID)
 		if err != nil {
 			l.Printf("[IGImporter] upsert failed userId=%s mediaId=%s err=%v", userID, externalID, err)
 			return n, err
@@ -214,7 +223,7 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 }
 
 func (i *Importer) fetchRecentMedia(ctx context.Context, igBusinessID string, accessToken string) ([]mediaItem, []byte, error) {
-	u := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media?fields=id,caption,media_type,permalink,timestamp,like_count&limit=25&access_token=%s",
+	u := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media?fields=id,caption,media_type,permalink,timestamp,like_count,media_url,thumbnail_url&limit=25&access_token=%s",
 		igBusinessID,
 		accessToken,
 	)
