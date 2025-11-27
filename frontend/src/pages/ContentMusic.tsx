@@ -1,61 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Layout } from '../components/Layout';
 
 export const ContentMusic: React.FC = () => {
 	const [prompt, setPrompt] = useState<string>('Energetic pop track for social video');
 	const [status, setStatus] = useState<string | null>(null);
 	const [filePath, setFilePath] = useState<string | null>(null);
-	const [apiKey, setApiKey] = useState<string>('');
     const [model, setModel] = useState<string>('V4');
-
-	useEffect(() => {
-		const loadKey = async () => {
-			try {
-				// Always use same-origin API paths. In dev, Vite proxies `/api/*` to the Wrangler worker.
-				// In prod, the Worker serves the SPA and handles `/api/*` on the same origin.
-				const res = await fetch(`/api/integrations/suno/api-key`, { credentials: 'include' });
-				const data: unknown = await res.json().catch(() => null);
-				if (data && typeof data === 'object' && 'ok' in data) {
-					const ok = (data as { ok?: unknown }).ok === true;
-					const apiKeyVal = (data as { value?: { apiKey?: unknown } }).value?.apiKey;
-					if (ok && typeof apiKeyVal === 'string' && apiKeyVal.trim() !== '') {
-						setApiKey(apiKeyVal);
-					}
-				}
-			} catch {
-				setStatus('Could not load Suno API key.');
-			}
-		};
-		loadKey();
-	}, []);
-
-	const saveKey = async () => {
-		setStatus('Saving key...');
-		try {
-			const res = await fetch(`/api/integrations/suno/api-key`, {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ apiKey }),
-				credentials: 'include',
-			});
-			if (!res.ok) {
-				const data: unknown = await res.json().catch(() => null);
-				const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
-				const err = obj && typeof obj.error === 'string' ? obj.error : null;
-				const backendOrigin = obj && typeof obj.backendOrigin === 'string' ? obj.backendOrigin : null;
-				if (err === 'backend_unreachable') {
-					setStatus(`Backend unreachable (${backendOrigin || 'unknown'}). Is the backend running on 18911?`);
-				} else {
-					setStatus(`Failed to save key (${res.status})`);
-				}
-				return;
-			}
-			setStatus('Key saved');
-		} catch (e: unknown) {
-			const msg = e instanceof Error ? e.message : String(e);
-			setStatus(`Failed to save key: ${msg}`);
-		}
-	};
 
 	const generate = async () => {
 		setStatus('Generating with Suno...');
@@ -94,17 +44,8 @@ export const ContentMusic: React.FC = () => {
 					</p>
 				</header>
 				<div className="space-y-6 bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-6">
-					<div className="space-y-2">
-						<label className="text-sm font-medium text-slate-700 dark:text-slate-200">Suno API key</label>
-						<div className="flex gap-3 items-center">
-							<input
-								value={apiKey}
-								onChange={(e) => setApiKey(e.target.value)}
-								className="flex-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-								placeholder="sk-..."
-							/>
-							<button onClick={saveKey} className="btn btn-primary">Save</button>
-						</div>
+					<div className="text-sm text-slate-600 dark:text-slate-400">
+						Manage your Suno API key in <a className="underline hover:no-underline" href="/integrations">Integrations</a>.
 					</div>
 					<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 						<div className="space-y-2">
