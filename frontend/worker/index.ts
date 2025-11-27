@@ -253,6 +253,12 @@ export default {
       if (url.pathname === "/api/integrations/suno/generate") {
         return handleSunoGenerate(request, env);
       }
+      if (url.pathname === "/api/integrations/suno/credits") {
+        return handleSunoCredits(request, env);
+      }
+      if (url.pathname === "/api/integrations/suno/sync") {
+        return handleSunoSync(request, env);
+      }
       if (url.pathname === "/api/integrations/suno/tracks") {
         return handleSunoTracksList(request, env);
       }
@@ -451,6 +457,173 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 	}
 
 	return Response.json({ ok: true, suno: { audioUrl, sunoTrackId, taskId }, track: { id: ourTrackId } }, { headers });
+}
+
+async function handleSunoCredits(request: Request, env: Env): Promise<Response> {
+	const backendOrigin = getBackendOrigin(env, request);
+	const cookie = request.headers.get('Cookie') || '';
+	let sid = getCookie(cookie, 'sid');
+	const requestUrl = request.url;
+	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
+	const headers = buildCorsHeaders(request);
+
+	if (request.method === 'OPTIONS') {
+		headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
+		headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+		return new Response(null, { status: 204, headers });
+	}
+	if (request.method !== 'GET') return new Response(null, { status: 405, headers });
+
+	if (!sid && isLocal) {
+		sid = crypto.randomUUID();
+		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
+		// ensure user exists
+		try {
+			await fetch(`${backendOrigin}/api/users`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
+			});
+		} catch { void 0; }
+	}
+	if (!sid) {
+		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+	}
+
+	const perUserKey = await fetchUserSunoKey(backendOrigin, sid);
+	const sunoApiKey = perUserKey || env.SUNO_API_KEY;
+	if (!sunoApiKey) {
+		return new Response(JSON.stringify({ ok: false, error: 'missing_suno_api_key' }), { status: 400, headers });
+	}
+
+	try {
+		const res = await fetch('https://api.sunoapi.org/api/v1/generate/credit', {
+			headers: {
+				'Accept': 'application/json',
+				'Authorization': `Bearer ${sunoApiKey}`,
+			},
+		});
+		const data: unknown = await res.json().catch(() => null);
+		if (!res.ok) {
+			return new Response(JSON.stringify({ ok: false, error: 'suno_credits_failed', status: res.status, details: data }), { status: 502, headers });
+		}
+		headers.set('Content-Type', 'application/json');
+		return new Response(JSON.stringify({ ok: true, credits: data }), { status: 200, headers });
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		return new Response(JSON.stringify({ ok: false, error: 'suno_unreachable', details: { message } }), { status: 502, headers });
+	}
+}
+
+async function handleSunoSync(request: Request, env: Env): Promise<Response> {
+	const backendOrigin = getBackendOrigin(env, request);
+	const cookie = request.headers.get('Cookie') || '';
+	let sid = getCookie(cookie, 'sid');
+	const requestUrl = request.url;
+	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
+	const headers = buildCorsHeaders(request);
+
+	if (request.method === 'OPTIONS') {
+		headers.set('Access-Control-Allow-Methods', 'POST,OPTIONS');
+		headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+		return new Response(null, { status: 204, headers });
+	}
+	if (request.method !== 'POST') return new Response(null, { status: 405, headers });
+
+	if (!sid && isLocal) {
+		sid = crypto.randomUUID();
+		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
+		// ensure user exists
+		try {
+			await fetch(`${backendOrigin}/api/users`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
+			});
+		} catch { void 0; }
+	}
+	if (!sid) {
+		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+	}
+
+	const perUserKey = await fetchUserSunoKey(backendOrigin, sid);
+	const sunoApiKey = perUserKey || env.SUNO_API_KEY;
+	if (!sunoApiKey) {
+		return new Response(JSON.stringify({ ok: false, error: 'missing_suno_api_key' }), { status: 400, headers });
+	}
+
+	// Get our local view of tracks first (limit to keep requests bounded).
+	let tracks: unknown = null;
+	try {
+		const r = await fetch(`${backendOrigin}/api/suno/tracks/user/${encodeURIComponent(sid)}`, { headers: { 'Accept': 'application/json' } });
+		tracks = await r.json().catch(() => null);
+	} catch {
+		tracks = null;
+	}
+	if (!Array.isArray(tracks)) {
+		return new Response(JSON.stringify({ ok: false, error: 'tracks_unavailable' }), { status: 502, headers });
+	}
+
+	const pending = tracks
+		.map((t) => (t && typeof t === 'object' ? (t as Record<string, unknown>) : null))
+		.filter(Boolean)
+		.filter((t) => {
+			const st = typeof t!.status === 'string' ? t!.status.toLowerCase() : '';
+			return st !== 'completed' && st !== 'failed';
+		})
+		.slice(0, 20);
+
+	let checked = 0;
+	let updated = 0;
+	const updates: Array<{ id: string; taskId: string; status: string }> = [];
+
+	for (const t of pending) {
+		const id = typeof t!.id === 'string' ? t!.id : '';
+		const taskId = typeof t!.taskId === 'string' ? t!.taskId : '';
+		if (!id || !taskId) continue;
+		checked++;
+		try {
+			// Suno docs: "Get Music Generation Details" – use this endpoint to check status instead of waiting for callbacks.
+			// https://docs.sunoapi.org/suno-api/get-music-generation-details
+			const recRes = await fetch(`https://api.sunoapi.org/api/v1/generate/record-info?taskId=${encodeURIComponent(taskId)}`, {
+				headers: { 'Authorization': `Bearer ${sunoApiKey}`, 'Accept': 'application/json' },
+			});
+			const recData: unknown = await recRes.json().catch(() => null);
+			const recObj = asRecord(recData);
+			const dataObj = recObj ? asRecord(recObj['data']) : null;
+			const providerStatus = getString(dataObj?.['status']) ?? 'PENDING';
+
+			let localStatus = 'pending';
+			if (providerStatus === 'SUCCESS') localStatus = 'completed';
+			if (providerStatus.endsWith('_FAILED') || providerStatus === 'FAILED' || providerStatus === 'CALLBACK_EXCEPTION') localStatus = 'failed';
+
+			let audioUrl = '';
+			let sunoTrackId = '';
+			if (localStatus === 'completed') {
+				const respObj = dataObj ? asRecord(dataObj['response']) : null;
+				const sunoDataArr = respObj ? (respObj['sunoData'] as unknown) : null;
+				const first = Array.isArray(sunoDataArr) ? asRecord(sunoDataArr[0]) : null;
+				audioUrl = getString(first?.['audioUrl']) ?? '';
+				sunoTrackId = getString(first?.['id']) ?? '';
+			}
+
+			// Update backend row.
+			await fetch(`${backendOrigin}/api/suno/tracks/${encodeURIComponent(id)}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					status: localStatus,
+					audioUrl: audioUrl || undefined,
+					sunoTrackId: sunoTrackId || undefined,
+				}),
+			});
+			updated++;
+			updates.push({ id, taskId, status: localStatus });
+		} catch { void 0; }
+	}
+
+	headers.set('Content-Type', 'application/json');
+	return new Response(JSON.stringify({ ok: true, checked, updated, updates }), { status: 200, headers });
 }
 
 async function handleSunoCallback(request: Request, env: Env): Promise<Response> {
