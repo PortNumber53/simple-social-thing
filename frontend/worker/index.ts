@@ -453,14 +453,22 @@ async function handleSunoApiKey(request: Request, env: Env): Promise<Response> {
 		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
 	}
 	if (request.method === 'GET') {
-		const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`);
-		if (res.status === 404) {
-			return new Response(JSON.stringify({ ok: true, value: null }), { status: 200, headers });
+		try {
+			const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`);
+			if (res.status === 404) {
+				return new Response(JSON.stringify({ ok: true, value: null }), { status: 200, headers });
+			}
+			const data: unknown = await res.json().catch(() => null);
+			const obj = asRecord(data);
+			const value = obj ? obj['value'] : null;
+			return new Response(JSON.stringify({ ok: true, value: value ?? null }), { status: 200, headers });
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			return new Response(
+				JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }),
+				{ status: 502, headers }
+			);
 		}
-		const data: unknown = await res.json().catch(() => null);
-		const obj = asRecord(data);
-		const value = obj ? obj['value'] : null;
-		return new Response(JSON.stringify({ ok: true, value: value ?? null }), { status: 200, headers });
 	}
 	if (request.method === 'PUT') {
 		const bodyText = await request.text();
@@ -469,17 +477,25 @@ async function handleSunoApiKey(request: Request, env: Env): Promise<Response> {
 		try { parsed = JSON.parse(bodyText || '{}'); } catch { parsed = null; }
 		const parsedObj = asRecord(parsed);
 		const apiKey = getString(parsedObj?.['apiKey']);
-		const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`, {
-			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ value: { apiKey } }),
-		});
-		const data: unknown = await res.json().catch(() => null);
-		const dataObj = asRecord(data) ?? {};
-		if (!res.ok) {
-			return new Response(JSON.stringify({ ok: false, error: 'save_failed', backend: dataObj }), { status: 500, headers });
+		try {
+			const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/suno_api_key`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ value: { apiKey } }),
+			});
+			const data: unknown = await res.json().catch(() => null);
+			const dataObj = asRecord(data) ?? {};
+			if (!res.ok) {
+				return new Response(JSON.stringify({ ok: false, error: 'save_failed', backend: dataObj }), { status: 500, headers });
+			}
+			return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			return new Response(
+				JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }),
+				{ status: 502, headers }
+			);
 		}
-		return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
 	}
 	return new Response(null, { status: 405, headers });
 }
