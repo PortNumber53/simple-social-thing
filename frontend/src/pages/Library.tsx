@@ -165,22 +165,64 @@ export const Library: React.FC = () => {
 
             <div className="space-y-1">
               <label className="text-xs font-medium text-slate-600 dark:text-slate-300">From</label>
-              <input
-                type="date"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
-                className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
-              />
+              <div className="relative">
+                <input
+                  type="date"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setFrom('');
+                  }}
+                  className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 pr-10 text-sm"
+                />
+                {!!from && (
+                  <button
+                    type="button"
+                    aria-label="Clear from date"
+                    onClick={() => setFrom('')}
+                    className="absolute right-9 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
+                  >
+                    <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4" aria-hidden="true">
+                      <path
+                        fillRule="evenodd"
+                        d="M4.22 4.22a.75.75 0 011.06 0L10 8.94l4.72-4.72a.75.75 0 111.06 1.06L11.06 10l4.72 4.72a.75.75 0 11-1.06 1.06L10 11.06l-4.72 4.72a.75.75 0 11-1.06-1.06L8.94 10 4.22 5.28a.75.75 0 010-1.06z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="space-y-1">
               <label className="text-xs font-medium text-slate-600 dark:text-slate-300">To</label>
-              <input
-                type="date"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
-              />
+              <div className="relative">
+                <input
+                  type="date"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setTo('');
+                  }}
+                  className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 pr-10 text-sm"
+                />
+                {!!to && (
+                  <button
+                    type="button"
+                    aria-label="Clear to date"
+                    onClick={() => setTo('')}
+                    className="absolute right-9 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
+                  >
+                    <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4" aria-hidden="true">
+                      <path
+                        fillRule="evenodd"
+                        d="M4.22 4.22a.75.75 0 011.06 0L10 8.94l4.72-4.72a.75.75 0 111.06 1.06L11.06 10l4.72 4.72a.75.75 0 11-1.06 1.06L10 11.06l-4.72 4.72a.75.75 0 11-1.06-1.06L8.94 10 4.22 5.28a.75.75 0 010-1.06z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="space-y-1">
@@ -357,5 +399,3 @@ export const Library: React.FC = () => {
     </Layout>
   );
 };
-
-
