@@ -650,7 +650,7 @@ func (h *Handler) GetUserSetting(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[user_settings][GetKey] userId=%s key=%s", userID, settingKey)
 
 	// Read from consolidated JSONB document store.
-	query := `SELECT data -> $2 FROM public.user_settings WHERE user_id = $1`
+	query := `SELECT data -> ($2::text) FROM public.user_settings WHERE user_id = $1`
 	var raw []byte
 	err := h.db.QueryRow(query, userID, settingKey).Scan(&raw)
 	if err == sql.ErrNoRows || raw == nil {
@@ -694,9 +694,9 @@ func (h *Handler) UpsertUserSetting(w http.ResponseWriter, r *http.Request) {
 
 	query := `
 		INSERT INTO public.user_settings (user_id, data, updated_at)
-		VALUES ($1, jsonb_build_object($2, $3::jsonb), NOW())
+		VALUES ($1, jsonb_build_object(($2::text), $3::jsonb), NOW())
 		ON CONFLICT (user_id) DO UPDATE SET
-			data = jsonb_set(COALESCE(public.user_settings.data, '{}'::jsonb), ARRAY[$2], $3::jsonb, true),
+			data = jsonb_set(COALESCE(public.user_settings.data, '{}'::jsonb), ARRAY[($2::text)], $3::jsonb, true),
 			updated_at = NOW()
 	`
 	if _, err := h.db.Exec(query, userID, settingKey, string(valueBytes)); err != nil {
