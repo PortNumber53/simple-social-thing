@@ -1811,7 +1811,10 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   for (const s of requested) {
     if (allow.has(s)) finalScopes.add(s);
   }
-  const scopes = Array.from(finalScopes).join(',');
+  // TikTok follows OAuth2 semantics: multiple scopes are space-delimited.
+  // Using comma-delimited scopes can cause TikTok to treat the entire value as a single unknown scope,
+  // returning `error=invalid_scope`.
+  const scopes = Array.from(finalScopes).join(' ');
 
   headers.append('Set-Cookie', buildTempCookie('tt_scopes', scopes, 10 * 60, request.url));
   const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
