@@ -11,12 +11,8 @@ INSTAGRAM_APP_ID=your_instagram_app_id_here
 INSTAGRAM_APP_SECRET=your_instagram_app_secret_here
 
 # --- Suno integration (Worker-side) ---
-SUNO_API_KEY=your_suno_api_key_here
-# Suno API callback URL (where Suno reports generation status updates).
-# Recommended format (prod): https://<deployed_hostname>/callback/suno/music/
-# Example (prod): https://simple.truvis.co/callback/suno/music/
-# Example (local): http://localhost:18912/callback/suno/music/
-SUNO_CALLBACK_URL=https://simple.truvis.co/callback/suno/music/
+# Suno API keys are stored per-user in the database (`UserSettings`) via the Integrations UI.
+# No Suno secrets should be placed in `.dev.vars` / Wrangler secrets.
 
 # --- Backend origin override (optional) ---
 # Used by worker to call Go backend directly in local dev.

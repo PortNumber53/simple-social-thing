@@ -18,11 +18,7 @@ ENVIRONMENT=dev
 BACKEND_ORIGIN=http://localhost:18911
 
 # --- Suno integration ---
-# NOTE: Worker reads SUNO_API_KEY and SUNO_CALLBACK_URL from its own vars (.dev.vars / wrangler secrets),
-# but it can be convenient to keep a copy here for reference.
-SUNO_API_KEY=your_suno_api_key_here
-# Suno API callback URL to receive generation updates.
-# Recommended format: https://<deployed_hostname>/callback/suno/music/
-SUNO_CALLBACK_URL=https://simple.truvis.co/callback/suno/music/
+# Suno API keys are stored per-user in the database (`UserSettings`) via the Integrations UI.
+# No Suno secrets should be placed in this root `.env`.
 
 

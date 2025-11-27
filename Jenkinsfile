@@ -159,7 +159,6 @@ pipeline {
               string(credentialsId: 'prod-stripe-publishable-key-simple-social-thing', variable: 'STRIPE_PUBLISHABLE_KEY'),
               string(credentialsId: 'prod-stripe-webhook-secret-simple-social-thing', variable: 'STRIPE_WEBHOOK_SECRET'),
               string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
-              string(credentialsId: 'prod-suno-api-key-simple-social-thing', variable: 'SUNO_API_KEY'),
               string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'BACKEND_ORIGIN'),
               string(credentialsId: 'prod-xata-api-key-simple-social-thing', variable: 'XATA_API_KEY'),
               string(credentialsId: 'prod-xata-database-url-simple-social-thing', variable: 'XATA_DATABASE_URL')

@@ -7,8 +7,6 @@ interface Env {
   ASSETS?: Fetcher;
   INSTAGRAM_APP_ID?: string;
   INSTAGRAM_APP_SECRET?: string;
-  SUNO_API_KEY?: string;
-  SUNO_CALLBACK_URL?: string;
   BACKEND_ORIGIN?: string;
   DATABASE_URL?: string;
   // Hyperdrive binding is available on env.HYPERDRIVE in CF
@@ -332,8 +330,11 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 	}
 
 	const perUserKey = sid ? await fetchUserSunoKey(backendOrigin, sid) : null;
-	const sunoApiKey = perUserKey || env.SUNO_API_KEY;
-	const useMock = env.USE_MOCK_AUTH === 'true' || !sunoApiKey;
+	const useMock = env.USE_MOCK_AUTH === 'true';
+	if (!useMock && !perUserKey) {
+		return new Response(JSON.stringify({ ok: false, error: 'missing_suno_api_key' }), { status: 400, headers });
+	}
+	const sunoApiKey = perUserKey || '';
 
 	let audioUrl = '';
 	let sunoTrackId = '';
@@ -347,10 +348,7 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 		// Suno API (3rd-party) supports async callbacks + polling.
 		// Docs: https://docs.sunoapi.org/suno-api/generate-music
 		const origin = new URL(request.url).origin;
-		const callBackUrl =
-			(env.SUNO_CALLBACK_URL && env.SUNO_CALLBACK_URL.trim() !== '')
-				? env.SUNO_CALLBACK_URL.trim()
-				: new URL('/callback/suno/music/', origin).toString();
+		const callBackUrl = new URL('/callback/suno/music/', origin).toString();
 
 		const sunoRes = await fetch('https://api.sunoapi.org/api/v1/generate', {
 			method: 'POST',
@@ -491,7 +489,7 @@ async function handleSunoCredits(request: Request, env: Env): Promise<Response> 
 	}
 
 	const perUserKey = await fetchUserSunoKey(backendOrigin, sid);
-	const sunoApiKey = perUserKey || env.SUNO_API_KEY;
+	const sunoApiKey = perUserKey || '';
 	if (!sunoApiKey) {
 		return new Response(JSON.stringify({ ok: false, error: 'missing_suno_api_key' }), { status: 400, headers });
 	}
@@ -547,7 +545,7 @@ async function handleSunoSync(request: Request, env: Env): Promise<Response> {
 	}
 
 	const perUserKey = await fetchUserSunoKey(backendOrigin, sid);
-	const sunoApiKey = perUserKey || env.SUNO_API_KEY;
+	const sunoApiKey = perUserKey || '';
 	if (!sunoApiKey) {
 		return new Response(JSON.stringify({ ok: false, error: 'missing_suno_api_key' }), { status: 400, headers });
 	}
