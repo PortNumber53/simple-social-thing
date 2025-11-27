@@ -1,11 +1,55 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Layout } from '../components/Layout';
+
+type SunoTrack = {
+	id: string;
+	prompt?: string | null;
+	taskId?: string | null;
+	model?: string | null;
+	sunoTrackId?: string | null;
+	audioUrl?: string | null;
+	filePath?: string | null;
+	status?: string | null;
+	createdAt?: string;
+	updatedAt?: string | null;
+};
 
 export const ContentMusic: React.FC = () => {
 	const [prompt, setPrompt] = useState<string>('Energetic pop track for social video');
 	const [status, setStatus] = useState<string | null>(null);
 	const [filePath, setFilePath] = useState<string | null>(null);
     const [model, setModel] = useState<string>('V4');
+	const [tracks, setTracks] = useState<SunoTrack[]>([]);
+	const [tracksLoading, setTracksLoading] = useState<boolean>(false);
+
+	const hasPending = useMemo(() => tracks.some((t) => (t.status || '').toLowerCase() === 'pending'), [tracks]);
+
+	const loadTracks = async () => {
+		setTracksLoading(true);
+		try {
+			const res = await fetch(`/api/integrations/suno/tracks`, { credentials: 'include' });
+			const data: unknown = await res.json().catch(() => null);
+			if (Array.isArray(data)) {
+				setTracks(data as SunoTrack[]);
+			} else {
+				// ignore non-array errors
+			}
+		} finally {
+			setTracksLoading(false);
+		}
+	};
+
+	useEffect(() => {
+		void loadTracks();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
+
+	useEffect(() => {
+		if (!hasPending) return;
+		const id = window.setInterval(() => void loadTracks(), 5000);
+		return () => window.clearInterval(id);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [hasPending]);
 
 	const generate = async () => {
 		setStatus('Generating with Suno...');
@@ -24,10 +68,16 @@ export const ContentMusic: React.FC = () => {
 				setStatus(`Suno failed: ${data?.error || res.statusText}${status}${detail}`);
 				return;
 			}
-			setStatus('Track created and stored.');
-			if (data?.stored?.filePath) {
-				setFilePath(data.stored.filePath);
+			const taskId = data?.suno?.taskId ? String(data.suno.taskId) : null;
+			const audioUrl = data?.suno?.audioUrl ? String(data.suno.audioUrl) : null;
+			if (audioUrl) {
+				setStatus('Track generated.');
+			} else if (taskId) {
+				setStatus(`Generation started (task ${taskId}). It will appear in the table when complete.`);
+			} else {
+				setStatus('Generation started. It will appear in the table when complete.');
 			}
+			void loadTracks();
 		} catch (e: unknown) {
 			const msg = e instanceof Error ? e.message : String(e);
 			setStatus(`Suno failed: ${msg}`);
@@ -78,6 +128,76 @@ export const ContentMusic: React.FC = () => {
 					</div>
 					{filePath && (
 						<p className="text-xs text-slate-500 break-all">Stored at: {filePath}</p>
+					)}
+				</div>
+
+				<div className="bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-6">
+					<div className="flex items-center justify-between gap-3">
+						<h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Generated songs</h2>
+						<button onClick={loadTracks} className="btn btn-secondary">
+							{tracksLoading ? 'Refreshing…' : 'Refresh'}
+						</button>
+					</div>
+					<div className="mt-4 overflow-x-auto">
+						<table className="min-w-full text-sm">
+							<thead>
+								<tr className="text-left text-slate-600 dark:text-slate-300 border-b border-slate-200/60 dark:border-slate-700/40">
+									<th className="py-2 pr-4 font-medium">Created</th>
+									<th className="py-2 pr-4 font-medium">Status</th>
+									<th className="py-2 pr-4 font-medium">Model</th>
+									<th className="py-2 pr-4 font-medium">Prompt</th>
+									<th className="py-2 pr-0 font-medium">Audio</th>
+								</tr>
+							</thead>
+							<tbody>
+								{tracks.length === 0 ? (
+									<tr>
+										<td colSpan={5} className="py-6 text-slate-500 dark:text-slate-400">
+											No songs yet. Generate one above and it will appear here once Suno completes.
+										</td>
+									</tr>
+								) : (
+									tracks.map((t) => {
+										const created = t.createdAt ? new Date(t.createdAt).toLocaleString() : '';
+										const st = (t.status || '').toLowerCase();
+										const badge =
+											st === 'completed'
+												? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300'
+												: st === 'failed'
+													? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300'
+													: 'bg-slate-100 text-slate-800 dark:bg-slate-800/40 dark:text-slate-200';
+										return (
+											<tr key={t.id} className="border-b border-slate-200/40 dark:border-slate-700/30">
+												<td className="py-3 pr-4 whitespace-nowrap text-slate-700 dark:text-slate-200">{created}</td>
+												<td className="py-3 pr-4">
+													<span className={`inline-flex px-2 py-1 rounded-md text-xs font-medium ${badge}`}>
+														{t.status || 'pending'}
+													</span>
+												</td>
+												<td className="py-3 pr-4 text-slate-700 dark:text-slate-200 whitespace-nowrap">{t.model || '-'}</td>
+												<td className="py-3 pr-4 text-slate-700 dark:text-slate-200 max-w-[28rem] truncate" title={t.prompt || ''}>
+													{t.prompt || ''}
+												</td>
+												<td className="py-3 pr-0">
+													{t.audioUrl ? (
+														<a className="underline hover:no-underline" href={t.audioUrl} target="_blank" rel="noreferrer">
+															Open
+														</a>
+													) : (
+														<span className="text-slate-500 dark:text-slate-400">—</span>
+													)}
+												</td>
+											</tr>
+										);
+									})
+								)}
+							</tbody>
+						</table>
+					</div>
+					{hasPending && (
+						<p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+							Auto-refreshing while generation is pending…
+						</p>
 					)}
 				</div>
 			</div>
