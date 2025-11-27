@@ -20,6 +20,7 @@ export const Integrations: React.FC = () => {
   const [igAccount, setIgAccount] = useState<{ id: string; username: string | null } | null>(null);
   const [ttStatus, setTtStatus] = useState<string | null>(null);
   const [ttAccount, setTtAccount] = useState<{ id: string; displayName: string | null } | null>(null);
+  const [ttScopes, setTtScopes] = useState<{ scope: string | null; requestedScopes: string | null; hasVideoList: boolean } | null>(null);
   const [fbStatus, setFbStatus] = useState<string | null>(null);
   const [fbAccount, setFbAccount] = useState<{ id: string; name: string | null } | null>(null);
   const [ytStatus, setYtStatus] = useState<string | null>(null);
@@ -250,6 +251,26 @@ export const Integrations: React.FC = () => {
     };
     loadStatus();
   }, []);
+
+  useEffect(() => {
+    // Fetch TikTok granted scopes (without exposing tokens) so we can surface "video import enabled" state.
+    const loadTikTokScopes = async () => {
+      try {
+        const res = await fetch('/api/integrations/tiktok/scopes', { credentials: 'include' });
+        const data: unknown = await res.json().catch(() => null);
+        if (!res.ok || !data || typeof data !== 'object') return;
+        const obj = data as Record<string, unknown>;
+        const ok = obj.ok === true;
+        if (!ok) return;
+        setTtScopes({
+          scope: typeof obj.scope === 'string' ? obj.scope : null,
+          requestedScopes: typeof obj.requestedScopes === 'string' ? obj.requestedScopes : null,
+          hasVideoList: obj.hasVideoList === true,
+        });
+      } catch { void 0; }
+    };
+    if (ttAccount) loadTikTokScopes();
+  }, [ttAccount]);
 
   useEffect(() => {
     // Load user-specific Suno API key via worker (requires sid cookie)
@@ -604,6 +625,11 @@ export const Integrations: React.FC = () => {
                     <button onClick={enableTikTokVideoImport} className="btn btn-secondary" type="button">
                       Enable video import
                     </button>
+                    {ttScopes && (
+                      <span className={`text-xs ${ttScopes.hasVideoList ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'}`}>
+                        {ttScopes.hasVideoList ? 'Video import enabled' : 'Video import NOT enabled (needs video.list)'}
+                      </span>
+                    )}
                   </>
                 ) : (
                   <button onClick={startTikTokAuth} className="btn btn-primary">
