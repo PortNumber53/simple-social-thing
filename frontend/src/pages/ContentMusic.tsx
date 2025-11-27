@@ -12,9 +12,10 @@ export const ContentMusic: React.FC = () => {
 		const loadKey = async () => {
 			try {
 				const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-				const workerOrigin = (isLocalhost && import.meta.env.VITE_WORKER_ORIGIN)
-					? import.meta.env.VITE_WORKER_ORIGIN
-					: window.location.origin;
+				// In local dev, prefer same-origin so Vite can proxy `/api/*` to the Wrangler worker.
+				const workerOrigin = isLocalhost
+					? window.location.origin
+					: (import.meta.env.VITE_WORKER_ORIGIN || window.location.origin);
 				const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, { credentials: 'include' });
 				const data: unknown = await res.json().catch(() => null);
 				if (data && typeof data === 'object' && 'ok' in data) {
@@ -35,9 +36,10 @@ export const ContentMusic: React.FC = () => {
 		setStatus('Saving key...');
 		try {
 			const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-			const workerOrigin = (isLocalhost && import.meta.env.VITE_WORKER_ORIGIN)
-				? import.meta.env.VITE_WORKER_ORIGIN
-				: window.location.origin;
+			// In local dev, prefer same-origin so Vite can proxy `/api/*` to the Wrangler worker.
+			const workerOrigin = isLocalhost
+				? window.location.origin
+				: (import.meta.env.VITE_WORKER_ORIGIN || window.location.origin);
 			const res = await fetch(`${workerOrigin}/api/integrations/suno/api-key`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
@@ -60,9 +62,10 @@ export const ContentMusic: React.FC = () => {
 		setFilePath(null);
 		try {
 			const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-			const workerOrigin = (isLocalhost && import.meta.env.VITE_WORKER_ORIGIN)
-				? import.meta.env.VITE_WORKER_ORIGIN
-				: window.location.origin;
+			// In local dev, prefer same-origin so Vite can proxy `/api/*` to the Wrangler worker.
+			const workerOrigin = isLocalhost
+				? window.location.origin
+				: (import.meta.env.VITE_WORKER_ORIGIN || window.location.origin);
 			const res = await fetch(`${workerOrigin}/api/integrations/suno/generate`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
