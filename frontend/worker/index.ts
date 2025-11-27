@@ -7,6 +7,8 @@ interface Env {
   ASSETS?: Fetcher;
   INSTAGRAM_APP_ID?: string;
   INSTAGRAM_APP_SECRET?: string;
+  TIKTOK_CLIENT_KEY?: string;
+  TIKTOK_CLIENT_SECRET?: string;
   BACKEND_ORIGIN?: string;
   DATABASE_URL?: string;
   // Hyperdrive binding is available on env.HYPERDRIVE in CF
@@ -296,21 +298,27 @@ export default {
       if (url.pathname === "/api/integrations/status") {
         const cookie = request.headers.get('Cookie') || '';
         const conn = parseInstagramCookie(cookie);
+        const ttConn = parseTikTokCookie(cookie);
         const sid = getCookie(cookie, 'sid');
         // Prefer Hyperdrive-backed status if we have a session id and SQL client
         if (sid) {
           const sql = getSql(env);
           if (sql) {
             try {
-              const row = await sqlQuerySocial(sql, sid, 'instagram');
-              if (row) {
-                return Response.json({ instagram: { connected: true, account: { id: row.providerId, username: row.name || null } } });
-              }
+              const igRow = await sqlQuerySocial(sql, sid, 'instagram');
+              const ttRow = await sqlQuerySocial(sql, sid, 'tiktok');
+              return Response.json({
+                instagram: igRow ? { connected: true, account: { id: igRow.providerId, username: igRow.name || null } } : (conn ? { connected: true, account: conn } : { connected: false }),
+                tiktok: ttRow ? { connected: true, account: { id: ttRow.providerId, displayName: ttRow.name || null } } : (ttConn ? { connected: true, account: ttConn } : { connected: false }),
+              });
             } catch { void 0; }
           }
         }
         // Fallback to cookie-only status
-        return Response.json({ instagram: conn ? { connected: true, account: conn } : { connected: false } });
+        return Response.json({
+          instagram: conn ? { connected: true, account: conn } : { connected: false },
+          tiktok: ttConn ? { connected: true, account: ttConn } : { connected: false },
+        });
       }
 
       // Instagram disconnect clears cookie
@@ -336,6 +344,41 @@ export default {
           } catch { void 0; }
         }
         return new Response(null, { status: 204, headers });
+      }
+      // TikTok disconnect clears cookie
+      if (url.pathname === "/api/integrations/tiktok/disconnect") {
+        const headers = new Headers({ 'Set-Cookie': buildTikTokCookie('', 0, request.url) });
+        const cookie = request.headers.get('Cookie') || '';
+        const sid = getCookie(cookie, 'sid');
+        const sql = getSql(env);
+        if (sid && sql) {
+          try {
+            await sqlDeleteSocial(sql, sid, 'tiktok');
+          } catch { void 0; }
+        }
+        if (sid) {
+          const backendOrigin = getBackendOrigin(env, request);
+          try {
+            await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/tiktok_oauth`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ value: null }),
+            });
+          } catch { void 0; }
+        }
+        // Clear temp oauth cookies too
+        headers.append('Set-Cookie', buildTempCookie('tt_state', '', 0, request.url));
+        headers.append('Set-Cookie', buildTempCookie('tt_verifier', '', 0, request.url));
+        return new Response(null, { status: 204, headers });
+      }
+
+      // TikTok OAuth start
+      if (url.pathname === "/api/integrations/tiktok/auth") {
+        return startTikTokOAuth(request, env);
+      }
+      // TikTok OAuth callback
+      if (url.pathname === "/api/integrations/tiktok/callback") {
+        return handleTikTokCallback(request, env);
       }
       // Instagram OAuth start
       if (url.pathname === "/api/integrations/instagram/auth") {
@@ -691,6 +734,9 @@ async function handleUserSettingsBundle(request: Request, env: Env): Promise<Res
 		}
 		if (data && 'instagram_oauth' in data) {
 			delete (data as Record<string, unknown>)['instagram_oauth'];
+		}
+		if (data && 'tiktok_oauth' in data) {
+			delete (data as Record<string, unknown>)['tiktok_oauth'];
 		}
 
 		headers.set('Content-Type', 'application/json');
@@ -1445,6 +1491,216 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
   }
 }
 
+async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/tiktok/callback', url.origin).toString();
+
+  if (!env.TIKTOK_CLIENT_KEY || !env.TIKTOK_CLIENT_SECRET) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'tiktok_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
+  }
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  let sid = getCookie(cookieHeader, 'sid');
+  const headers = new Headers();
+
+  // local dev helper: create sid if missing, so callback can persist tokens
+  if (!sid && isLocalhost) {
+    sid = crypto.randomUUID();
+    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, request.url));
+    const backendOrigin = getBackendOrigin(env, request);
+    try {
+      await fetch(`${backendOrigin}/api/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
+      });
+    } catch { void 0; }
+  }
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
+  }
+
+  const state = crypto.randomUUID();
+  const verifier = base64UrlRandom(32);
+  const challenge = await pkceChallengeS256(verifier);
+
+  headers.append('Set-Cookie', buildTempCookie('tt_state', state, 10 * 60, request.url));
+  headers.append('Set-Cookie', buildTempCookie('tt_verifier', verifier, 10 * 60, request.url));
+
+  // Scopes: start with Login Kit basics plus read video list; content posting scopes require app review.
+  const scopes = ['user.info.basic', 'video.list'].join(',');
+
+  const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
+  authUrl.searchParams.set('client_key', env.TIKTOK_CLIENT_KEY);
+  authUrl.searchParams.set('scope', scopes);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('code_challenge', challenge);
+  authUrl.searchParams.set('code_challenge_method', 'S256');
+
+  headers.set('Location', authUrl.toString());
+  return new Response(null, { status: 302, headers });
+}
+
+async function handleTikTokCallback(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/tiktok/callback', url.origin).toString();
+
+  const code = url.searchParams.get('code');
+  const error = url.searchParams.get('error');
+  const errorDescription = url.searchParams.get('error_description');
+
+  if (error) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error, errorDescription }));
+    return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
+  }
+  if (!code) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'missing_code' }));
+    return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
+  }
+
+  if (!env.TIKTOK_CLIENT_KEY || !env.TIKTOK_CLIENT_SECRET) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'tiktok_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
+  }
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  const stateCookie = getCookie(cookieHeader, 'tt_state');
+  const verifier = getCookie(cookieHeader, 'tt_verifier');
+  const state = url.searchParams.get('state');
+
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
+  }
+  if (!stateCookie || !state || stateCookie !== state || !verifier) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'invalid_state' }));
+    return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
+  }
+
+  // Exchange code for token
+  const tokenUrl = 'https://open.tiktokapis.com/v2/oauth/token/';
+  const tokenRes = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: new URLSearchParams({
+      client_key: env.TIKTOK_CLIENT_KEY,
+      client_secret: env.TIKTOK_CLIENT_SECRET,
+      code,
+      grant_type: 'authorization_code',
+      redirect_uri: redirectUri,
+      code_verifier: verifier,
+    }),
+  });
+
+  const tokenText = await tokenRes.text().catch(() => '');
+  let tokenJson: unknown = null;
+  try { tokenJson = tokenText ? JSON.parse(tokenText) : null; } catch { tokenJson = null; }
+  const tokenObj = asRecord(tokenJson);
+
+  if (!tokenRes.ok) {
+    console.error('[TT] token_exchange_failed', tokenRes.status, tokenText);
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'token_exchange_failed', status: tokenRes.status }));
+    return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
+  }
+
+  // TikTok v2 token response shape: { access_token, expires_in, open_id, refresh_token, refresh_expires_in, scope, token_type }
+  const accessToken = getString(tokenObj?.['access_token']) || '';
+  const openId = getString(tokenObj?.['open_id']) || '';
+  const scope = getString(tokenObj?.['scope']) || '';
+  const tokenType = getString(tokenObj?.['token_type']) || 'bearer';
+  const expiresIn = getNumber(tokenObj?.['expires_in']) || 0;
+  const refreshToken = getString(tokenObj?.['refresh_token']) || null;
+  const refreshExpiresIn = getNumber(tokenObj?.['refresh_expires_in']) || null;
+
+  if (!accessToken || !openId) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'invalid_token_response' }));
+    return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
+  }
+
+  // Fetch user display name (best-effort)
+  let displayName: string | null = null;
+  try {
+    const userInfoRes = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url', {
+      headers: { 'Authorization': `Bearer ${accessToken}`, 'Accept': 'application/json' },
+    });
+    const userText = await userInfoRes.text().catch(() => '');
+    if (userInfoRes.ok) {
+      const userJson: unknown = userText ? JSON.parse(userText) : null;
+      const uObj = asRecord(userJson);
+      const dataObj = uObj ? asRecord(uObj['data']) : null;
+      const userObj = dataObj ? asRecord(dataObj['user']) : null;
+      displayName = getString(userObj?.['display_name']);
+    } else {
+      console.warn('[TT] user_info_failed', userInfoRes.status, userText);
+    }
+  } catch (e) {
+    console.warn('[TT] user_info_error', e);
+  }
+
+  // Persist SocialConnections (Hyperdrive) if available
+  const sql = getSql(env);
+  if (sql) {
+    try {
+      await sqlUpsertSocial(sql, {
+        userId: sid,
+        provider: 'tiktok',
+        providerId: openId,
+        name: displayName,
+      });
+    } catch (e) {
+      console.error('[DB] sqlUpsertSocial (tiktok) failed', e);
+    }
+  }
+
+  // Persist OAuth token in backend UserSettings for later use (posting, library import, webhooks)
+  const backendOrigin = getBackendOrigin(env, request);
+  const obtainedAt = new Date().toISOString();
+  const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+  try {
+    await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/tiktok_oauth`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        value: {
+          accessToken,
+          tokenType,
+          openId,
+          scope,
+          expiresIn,
+          obtainedAt,
+          expiresAt,
+          refreshToken,
+          refreshExpiresIn,
+          raw: tokenObj ?? tokenJson,
+        },
+      }),
+    });
+  } catch (e) {
+    console.error('[TT] failed to persist tiktok_oauth to backend', e);
+  }
+
+  // Set minimal cookie so UI can show status even if DB status fetch fails
+  const headers = new Headers();
+  const cookieValue = JSON.stringify({ id: openId, displayName });
+  headers.append('Set-Cookie', buildTikTokCookie(cookieValue, 60 * 60 * 24 * 30, request.url));
+  // Clear temp cookies
+  headers.append('Set-Cookie', buildTempCookie('tt_state', '', 0, request.url));
+  headers.append('Set-Cookie', buildTempCookie('tt_verifier', '', 0, request.url));
+
+  const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'tiktok', account: { id: openId, displayName } }));
+  headers.set('Location', `${clientUrl}/integrations?tiktok=${data}`);
+  return new Response(null, { status: 302, headers });
+}
+
 // --- Cookie helpers for Instagram connection persistence ---
 function buildInstagramCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
   const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
@@ -1479,4 +1735,81 @@ function parseInstagramCookie(cookieHeader: string): { id: string; username: str
   } catch {
     return null;
   }
+}
+
+// --- Cookie helpers for TikTok connection persistence ---
+function buildTikTokCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
+  const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
+  const parts = [
+    `tt_conn=${encodeURIComponent(value)}`,
+    `Path=/`,
+    `HttpOnly`,
+    `SameSite=Lax`,
+  ];
+  if (maxAgeSeconds > 0) {
+    parts.push(`Max-Age=${maxAgeSeconds}`);
+  } else {
+    parts.push('Max-Age=0');
+  }
+  if (isHttps) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function parseTikTokCookie(cookieHeader: string): { id: string; displayName: string | null } | null {
+  const entries = cookieHeader
+    .split(/;\s*/)
+    .map(kv => {
+      const idx = kv.indexOf('=');
+      if (idx === -1) return [kv, ''];
+      return [kv.slice(0, idx), decodeURIComponent(kv.slice(idx + 1))] as [string, string];
+    });
+  const cookies = Object.fromEntries(entries);
+  const raw = cookies['tt_conn'];
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const obj = asRecord(parsed);
+    const id = getString(obj?.['id']);
+    const displayName = getString(obj?.['displayName']);
+    if (!id) return null;
+    return { id, displayName: displayName ?? null };
+  } catch {
+    return null;
+  }
+}
+
+function buildTempCookie(name: string, value: string, maxAgeSeconds: number, requestUrl?: string): string {
+  const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    `Path=/`,
+    `HttpOnly`,
+    `SameSite=Lax`,
+  ];
+  if (maxAgeSeconds > 0) {
+    parts.push(`Max-Age=${maxAgeSeconds}`);
+  } else {
+    parts.push('Max-Age=0');
+  }
+  if (isHttps) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function base64UrlRandom(byteLen: number): string {
+  const bytes = new Uint8Array(byteLen);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const b64 = btoa(binary);
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+async function pkceChallengeS256(verifier: string): Promise<string> {
+  const data = new TextEncoder().encode(verifier);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return base64UrlEncode(new Uint8Array(hash));
 }
