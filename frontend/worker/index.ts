@@ -2475,6 +2475,12 @@ async function handlePinterestCallback(request: Request, env: Env): Promise<Resp
     console.warn('[PIN] user_account_error', e);
   }
 
+  // Even if profile lookup fails, mark the integration as connected so UI can reflect it.
+  // We use a stable per-session id; imports rely on pinterest_oauth in UserSettings (not this id).
+  if (!accountId) {
+    accountId = `pinterest-${sid}`;
+  }
+
   const sql = getSql(env);
   if (sql && accountId) {
     try {
