@@ -263,6 +263,31 @@ export default {
       return Response.json({ ok: true, hasAssets, indexStatus });
     }
 
+    // Debug endpoint to help diagnose backend connectivity / origin configuration.
+    // Safe: does not expose secrets; only reports which backend origin is being used and whether /health is reachable.
+    if (url.pathname === "/__debug/backend") {
+      const backendOrigin = getBackendOrigin(env, request);
+      const requestOrigin = url.origin;
+      let healthStatus: number | null = null;
+      let healthBody: string | null = null;
+      try {
+        const r = await fetch(`${backendOrigin}/health`, { headers: { Accept: 'application/json' } });
+        healthStatus = r.status;
+        healthBody = (await r.text().catch(() => '')).slice(0, 800);
+      } catch (e) {
+        healthStatus = -1;
+        healthBody = e instanceof Error ? e.message : String(e);
+      }
+      return Response.json({
+        ok: true,
+        requestOrigin,
+        backendOrigin,
+        envHasBackendOrigin: !!env.BACKEND_ORIGIN,
+        healthStatus,
+        healthBody,
+      });
+    }
+
     // Suno callbacks (from https://docs.sunoapi.org/) - allow both with and without trailing slash.
     if (url.pathname === "/callback/suno/music" || url.pathname === "/callback/suno/music/") {
       return handleSunoCallback(request, env);
@@ -721,6 +746,7 @@ async function handleUserSettingsBundle(request: Request, env: Env): Promise<Res
 		});
 		const text = await res.text().catch(() => '');
 		if (!res.ok) {
+			console.error('[UserSettingsBundle] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800) });
 			return new Response(JSON.stringify({ ok: false, error: 'settings_fetch_failed', status: res.status }), { status: 502, headers });
 		}
 		let parsed: unknown = null;
@@ -743,6 +769,7 @@ async function handleUserSettingsBundle(request: Request, env: Env): Promise<Res
 		return new Response(JSON.stringify({ ok: true, data: data ?? {} }), { status: 200, headers });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
+		console.error('[UserSettingsBundle] backend unreachable', { backendOrigin, message });
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
 }
@@ -786,12 +813,14 @@ async function handleLibraryItems(request: Request, env: Env): Promise<Response>
 		});
 		const text = await res.text().catch(() => '');
 		if (!res.ok) {
+			console.error('[LibraryItems] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800) });
 			return new Response(JSON.stringify({ ok: false, error: 'list_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
 		}
 		headers.set('Content-Type', 'application/json');
 		return new Response(text || '[]', { status: 200, headers });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
+		console.error('[LibraryItems] backend unreachable', { backendOrigin, message });
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
 }
@@ -1094,11 +1123,19 @@ async function fetchUserSunoKey(backendOrigin: string, userId: string): Promise<
 }
 
 function getBackendOrigin(env: Env, request: Request): string {
-	if (env.BACKEND_ORIGIN) return env.BACKEND_ORIGIN;
+	const normalize = (v: string): string => v.replace(/\/+$/g, '');
+	if (env.BACKEND_ORIGIN && env.BACKEND_ORIGIN.trim() !== '') return normalize(env.BACKEND_ORIGIN.trim());
 	const url = new URL(request.url);
 	const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
 	if (isLocal) {
 		return 'http://localhost:18911';
+	}
+	// production heuristic: frontend is on `simple.<domain>` and backend lives on `api-simple.<domain>`
+	if (url.hostname === 'simple.truvis.co') {
+		return 'https://api-simple.truvis.co';
+	}
+	if (url.hostname.startsWith('simple.')) {
+		return `${url.protocol}//api-${url.hostname}`;
 	}
 	// fallback: same origin
 	return url.origin;
