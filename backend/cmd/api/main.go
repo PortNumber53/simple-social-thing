@@ -82,6 +82,7 @@ func main() {
 
 	// Social library (cached copies of user created content)
 	r.HandleFunc("/api/social-libraries/user/{userId}", h.ListSocialLibrariesForUser).Methods("GET")
+	r.HandleFunc("/api/social-libraries/sync/user/{userId}", h.SyncSocialLibrariesForUser).Methods("POST")
 
 	// Team endpoints
 	r.HandleFunc("/api/teams", h.CreateTeam).Methods("POST")

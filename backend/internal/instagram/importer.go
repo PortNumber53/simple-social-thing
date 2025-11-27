@@ -47,6 +47,56 @@ type mediaItem struct {
 	// views generally requires additional insights calls; we store likes and raw payload for now
 }
 
+// SyncUser imports the latest Instagram media for a single user and upserts rows into SocialLibraries.
+// It looks up the user's stored token in public."UserSettings" key='instagram_oauth'.
+func SyncUser(ctx context.Context, db *sql.DB, userID string, logger *log.Logger) (fetched int, upserted int, err error) {
+	if db == nil {
+		return 0, 0, fmt.Errorf("db is nil")
+	}
+	l := logger
+	if l == nil {
+		l = log.Default()
+	}
+	if userID == "" {
+		return 0, 0, fmt.Errorf("userID is required")
+	}
+
+	var raw []byte
+	q := `SELECT value FROM public."UserSettings" WHERE user_id = $1 AND key = 'instagram_oauth' AND value IS NOT NULL`
+	if err := db.QueryRowContext(ctx, q, userID).Scan(&raw); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, 0, nil
+		}
+		return 0, 0, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, 0, nil
+	}
+	var tok oauthRecord
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		l.Printf("[IGSync] invalid oauth json userId=%s err=%v raw=%s", userID, err, truncate(string(raw), 600))
+		return 0, 0, nil
+	}
+	if tok.AccessToken == "" || tok.IGBusinessID == "" {
+		l.Printf("[IGSync] missing token fields userId=%s accessToken=%t igBusinessId=%t", userID, tok.AccessToken != "", tok.IGBusinessID != "")
+		return 0, 0, nil
+	}
+
+	imp := &Importer{DB: db, Client: &http.Client{Timeout: 15 * time.Second}}
+	media, _, err := imp.fetchRecentMedia(ctx, tok.IGBusinessID, tok.AccessToken)
+	if err != nil {
+		return 0, 0, err
+	}
+	fetched = len(media)
+	if fetched == 0 {
+		return fetched, 0, nil
+	}
+
+	// Reuse the existing upsert logic; it logs upsert errors and counts successes.
+	upserted, err = imp.importForUser(ctx, userID, tok, l)
+	return fetched, upserted, err
+}
+
 // Start runs forever until ctx is cancelled.
 func (i *Importer) Start(ctx context.Context) {
 	if i.DB == nil {
