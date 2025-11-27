@@ -47,6 +47,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const fetchAndCacheUserSettings = async () => {
+    try {
+      const res = await fetch('/api/user-settings', { credentials: 'include' });
+      const data: unknown = await res.json().catch(() => null);
+      if (!res.ok || !data || typeof data !== 'object') return;
+      // Store only the sanitized `data` document.
+      if ('data' in (data as any)) {
+        localStorage.setItem('user_settings', JSON.stringify((data as any).data ?? {}));
+      }
+    } catch { void 0; }
+  };
+
   useEffect(() => {
     // Check for OAuth callback data in URL (for redirect flow)
     const run = async () => {
@@ -63,6 +75,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           setUser(userData.user);
           localStorage.setItem('user', JSON.stringify(userData.user));
           setError(null);
+
+          // Prime browser cache for user_settings to reduce post-login page load times.
+          await fetchAndCacheUserSettings();
 
           // Redirect to dashboard after successful authentication
           window.history.replaceState({}, document.title, '/dashboard');
@@ -93,16 +108,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     void run();
   }, []);
 
+  useEffect(() => {
+    // Refresh settings cache in background when the app boots with an already-authenticated user.
+    if (!user) return;
+    void fetchAndCacheUserSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const login = (userData: User) => {
     setUser(userData);
     setError(null);
     localStorage.setItem('user', JSON.stringify(userData));
+    void fetchAndCacheUserSettings();
   };
 
   const logout = () => {
     setUser(null);
     setError(null);
     localStorage.removeItem('user');
+    localStorage.removeItem('user_settings');
   };
 
   const value: AuthContextType = {

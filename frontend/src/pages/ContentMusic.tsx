@@ -25,6 +25,22 @@ export const ContentMusic: React.FC = () => {
 	const [creditsText, setCreditsText] = useState<string | null>(null);
 	const [syncLoading, setSyncLoading] = useState<boolean>(false);
 	const [syncText, setSyncText] = useState<string | null>(null);
+	const [cachedCredits, setCachedCredits] = useState<number | null>(() => {
+		try {
+			const raw = localStorage.getItem('user_settings');
+			if (!raw) return null;
+			const parsed = JSON.parse(raw) as any;
+			const sc = parsed?.suno_credits;
+			if (typeof sc === 'number') return sc;
+			if (sc && typeof sc === 'object') {
+				if (typeof sc.availableCredits === 'number') return sc.availableCredits;
+				if (typeof sc.available === 'number') return sc.available;
+			}
+			return null;
+		} catch {
+			return null;
+		}
+	});
 
 	const hasPending = useMemo(() => tracks.some((t) => (t.status || '').toLowerCase() === 'pending'), [tracks]);
 
@@ -63,8 +79,19 @@ export const ContentMusic: React.FC = () => {
 			const innerData = creditsContainer ? creditsContainer.data : null;
 
 			let balancePart = '';
-			if (typeof availableCredits === 'number') balancePart = `available=${availableCredits}`;
-			else if (typeof availableCredits === 'string' && availableCredits.trim() !== '') balancePart = `available=${availableCredits}`;
+			if (typeof availableCredits === 'number') {
+				balancePart = `available=${availableCredits}`;
+				setCachedCredits(availableCredits);
+				// Update browser cache (best effort) so initial renders can use it.
+				try {
+					const raw = localStorage.getItem('user_settings');
+					const obj = raw ? JSON.parse(raw) : {};
+					obj.suno_credits = { ...(obj.suno_credits || {}), availableCredits, fetchedAt: new Date().toISOString() };
+					localStorage.setItem('user_settings', JSON.stringify(obj));
+				} catch { void 0; }
+			} else if (typeof availableCredits === 'string' && availableCredits.trim() !== '') {
+				balancePart = `available=${availableCredits}`;
+			}
 
 			let rawPart = '';
 			if (!balancePart && innerData && typeof innerData === 'object') {
@@ -197,7 +224,14 @@ export const ContentMusic: React.FC = () => {
 
 				<div className="bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-6">
 					<div className="flex items-center justify-between gap-3">
-						<h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Generated songs</h2>
+						<div className="flex items-center gap-3">
+							<h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">Generated songs</h2>
+							{typeof cachedCredits === 'number' && (
+								<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-amber-100 text-amber-900 dark:bg-amber-900/20 dark:text-amber-200">
+									Credits: {cachedCredits}
+								</span>
+							)}
+						</div>
 						<div className="flex items-center gap-2">
 							<button onClick={checkCredits} className="btn btn-secondary">
 								{creditsLoading ? 'Checking…' : 'Check credits'}
