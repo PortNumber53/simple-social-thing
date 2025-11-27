@@ -39,7 +39,15 @@ export const ContentMusic: React.FC = () => {
 				credentials: 'include',
 			});
 			if (!res.ok) {
-				setStatus('Failed to save key');
+				const data: unknown = await res.json().catch(() => null);
+				const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+				const err = obj && typeof obj.error === 'string' ? obj.error : null;
+				const backendOrigin = obj && typeof obj.backendOrigin === 'string' ? obj.backendOrigin : null;
+				if (err === 'backend_unreachable') {
+					setStatus(`Backend unreachable (${backendOrigin || 'unknown'}). Is the backend running on 18911?`);
+				} else {
+					setStatus(`Failed to save key (${res.status})`);
+				}
 				return;
 			}
 			setStatus('Key saved');

@@ -74,7 +74,15 @@ export const Integrations: React.FC = () => {
         credentials: 'include',
       });
       if (!res.ok) {
-        setSunoStatus('Failed to save Suno API key.');
+        const data: unknown = await res.json().catch(() => null);
+        const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+        const err = obj && typeof obj.error === 'string' ? obj.error : null;
+        const backendOrigin = obj && typeof obj.backendOrigin === 'string' ? obj.backendOrigin : null;
+        if (err === 'backend_unreachable') {
+          setSunoStatus(`Backend unreachable (${backendOrigin || 'unknown'}). Is the backend running on 18911?`);
+        } else {
+          setSunoStatus(`Failed to save Suno API key (${res.status}).`);
+        }
         return;
       }
       setSunoStatus('Suno API key saved.');
