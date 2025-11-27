@@ -9,6 +9,8 @@ interface Env {
   INSTAGRAM_APP_SECRET?: string;
   TIKTOK_CLIENT_KEY?: string;
   TIKTOK_CLIENT_SECRET?: string;
+  PINTEREST_CLIENT_ID?: string;
+  PINTEREST_CLIENT_SECRET?: string;
   BACKEND_ORIGIN?: string;
   DATABASE_URL?: string;
   // Hyperdrive binding is available on env.HYPERDRIVE in CF
@@ -325,6 +327,9 @@ export default {
         const conn = parseInstagramCookie(cookie);
         const ttConn = parseTikTokCookie(cookie);
         const fbConn = parseFacebookCookie(cookie);
+        const ytConn = parseYouTubeCookie(cookie);
+        const pinConn = parsePinterestCookie(cookie);
+        const thConn = parseThreadsCookie(cookie);
         const sid = getCookie(cookie, 'sid');
         // Prefer Hyperdrive-backed status if we have a session id and SQL client
         if (sid) {
@@ -334,10 +339,16 @@ export default {
               const igRow = await sqlQuerySocial(sql, sid, 'instagram');
               const ttRow = await sqlQuerySocial(sql, sid, 'tiktok');
               const fbRow = await sqlQuerySocial(sql, sid, 'facebook');
+              const ytRow = await sqlQuerySocial(sql, sid, 'youtube');
+              const pinRow = await sqlQuerySocial(sql, sid, 'pinterest');
+              const thRow = await sqlQuerySocial(sql, sid, 'threads');
               return Response.json({
                 instagram: igRow ? { connected: true, account: { id: igRow.providerId, username: igRow.name || null } } : (conn ? { connected: true, account: conn } : { connected: false }),
                 tiktok: ttRow ? { connected: true, account: { id: ttRow.providerId, displayName: ttRow.name || null } } : (ttConn ? { connected: true, account: ttConn } : { connected: false }),
                 facebook: fbRow ? { connected: true, account: { id: fbRow.providerId, name: fbRow.name || null } } : (fbConn ? { connected: true, account: fbConn } : { connected: false }),
+                youtube: ytRow ? { connected: true, account: { id: ytRow.providerId, name: ytRow.name || null } } : (ytConn ? { connected: true, account: ytConn } : { connected: false }),
+                pinterest: pinRow ? { connected: true, account: { id: pinRow.providerId, name: pinRow.name || null } } : (pinConn ? { connected: true, account: pinConn } : { connected: false }),
+                threads: thRow ? { connected: true, account: { id: thRow.providerId, name: thRow.name || null } } : (thConn ? { connected: true, account: thConn } : { connected: false }),
               });
             } catch { void 0; }
           }
@@ -347,6 +358,9 @@ export default {
           instagram: conn ? { connected: true, account: conn } : { connected: false },
           tiktok: ttConn ? { connected: true, account: ttConn } : { connected: false },
           facebook: fbConn ? { connected: true, account: fbConn } : { connected: false },
+          youtube: ytConn ? { connected: true, account: ytConn } : { connected: false },
+          pinterest: pinConn ? { connected: true, account: pinConn } : { connected: false },
+          threads: thConn ? { connected: true, account: thConn } : { connected: false },
         });
       }
 
@@ -425,6 +439,76 @@ export default {
         return new Response(null, { status: 204, headers });
       }
 
+      // YouTube disconnect clears cookie
+      if (url.pathname === "/api/integrations/youtube/disconnect") {
+        const headers = new Headers({ 'Set-Cookie': buildYouTubeCookie('', 0, request.url) });
+        const cookie = request.headers.get('Cookie') || '';
+        const sid = getCookie(cookie, 'sid');
+        const sql = getSql(env);
+        if (sid && sql) {
+          try { await sqlDeleteSocial(sql, sid, 'youtube'); } catch { void 0; }
+        }
+        if (sid) {
+          const backendOrigin = getBackendOrigin(env, request);
+          try {
+            await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/youtube_oauth`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ value: null }),
+            });
+          } catch { void 0; }
+        }
+        headers.append('Set-Cookie', buildTempCookie('yt_state', '', 0, request.url));
+        headers.append('Set-Cookie', buildTempCookie('yt_verifier', '', 0, request.url));
+        return new Response(null, { status: 204, headers });
+      }
+
+      // Pinterest disconnect clears cookie
+      if (url.pathname === "/api/integrations/pinterest/disconnect") {
+        const headers = new Headers({ 'Set-Cookie': buildPinterestCookie('', 0, request.url) });
+        const cookie = request.headers.get('Cookie') || '';
+        const sid = getCookie(cookie, 'sid');
+        const sql = getSql(env);
+        if (sid && sql) {
+          try { await sqlDeleteSocial(sql, sid, 'pinterest'); } catch { void 0; }
+        }
+        if (sid) {
+          const backendOrigin = getBackendOrigin(env, request);
+          try {
+            await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/pinterest_oauth`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ value: null }),
+            });
+          } catch { void 0; }
+        }
+        headers.append('Set-Cookie', buildTempCookie('pin_state', '', 0, request.url));
+        return new Response(null, { status: 204, headers });
+      }
+
+      // Threads disconnect clears cookie
+      if (url.pathname === "/api/integrations/threads/disconnect") {
+        const headers = new Headers({ 'Set-Cookie': buildThreadsCookie('', 0, request.url) });
+        const cookie = request.headers.get('Cookie') || '';
+        const sid = getCookie(cookie, 'sid');
+        const sql = getSql(env);
+        if (sid && sql) {
+          try { await sqlDeleteSocial(sql, sid, 'threads'); } catch { void 0; }
+        }
+        if (sid) {
+          const backendOrigin = getBackendOrigin(env, request);
+          try {
+            await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/threads_oauth`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ value: null }),
+            });
+          } catch { void 0; }
+        }
+        headers.append('Set-Cookie', buildTempCookie('th_state', '', 0, request.url));
+        return new Response(null, { status: 204, headers });
+      }
+
       // Facebook OAuth start
       if (url.pathname === "/api/integrations/facebook/auth") {
         return startFacebookOAuth(request, env);
@@ -432,6 +516,30 @@ export default {
       // Facebook OAuth callback
       if (url.pathname === "/api/integrations/facebook/callback") {
         return handleFacebookCallback(request, env);
+      }
+
+      // YouTube OAuth start/callback
+      if (url.pathname === "/api/integrations/youtube/auth") {
+        return startYouTubeOAuth(request, env);
+      }
+      if (url.pathname === "/api/integrations/youtube/callback") {
+        return handleYouTubeCallback(request, env);
+      }
+
+      // Pinterest OAuth start/callback
+      if (url.pathname === "/api/integrations/pinterest/auth") {
+        return startPinterestOAuth(request, env);
+      }
+      if (url.pathname === "/api/integrations/pinterest/callback") {
+        return handlePinterestCallback(request, env);
+      }
+
+      // Threads OAuth start/callback
+      if (url.pathname === "/api/integrations/threads/auth") {
+        return startThreadsOAuth(request, env);
+      }
+      if (url.pathname === "/api/integrations/threads/callback") {
+        return handleThreadsCallback(request, env);
       }
 
       // TikTok OAuth start
@@ -806,6 +914,15 @@ async function handleUserSettingsBundle(request: Request, env: Env): Promise<Res
 		}
 		if (data && 'facebook_oauth' in data) {
 			delete (data as Record<string, unknown>)['facebook_oauth'];
+		}
+		if (data && 'youtube_oauth' in data) {
+			delete (data as Record<string, unknown>)['youtube_oauth'];
+		}
+		if (data && 'pinterest_oauth' in data) {
+			delete (data as Record<string, unknown>)['pinterest_oauth'];
+		}
+		if (data && 'threads_oauth' in data) {
+			delete (data as Record<string, unknown>)['threads_oauth'];
 		}
 
 		headers.set('Content-Type', 'application/json');
@@ -2050,6 +2167,493 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
   return new Response(null, { status: 302, headers });
 }
 
+async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/youtube/callback', url.origin).toString();
+
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'google_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?youtube=${data}`, 302);
+  }
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  let sid = getCookie(cookieHeader, 'sid');
+  const headers = new Headers();
+  if (!sid && isLocalhost) {
+    sid = crypto.randomUUID();
+    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, request.url));
+    const backendOrigin = getBackendOrigin(env, request);
+    try {
+      await fetch(`${backendOrigin}/api/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
+      });
+    } catch { void 0; }
+  }
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    return Response.redirect(`${clientUrl}/integrations?youtube=${data}`, 302);
+  }
+
+  const state = crypto.randomUUID();
+  const verifier = base64UrlRandom(32);
+  const challenge = await pkceChallengeS256(verifier);
+  headers.append('Set-Cookie', buildTempCookie('yt_state', state, 10 * 60, request.url));
+  headers.append('Set-Cookie', buildTempCookie('yt_verifier', verifier, 10 * 60, request.url));
+
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('access_type', 'offline');
+  authUrl.searchParams.set('prompt', 'consent');
+  authUrl.searchParams.set('include_granted_scopes', 'true');
+  authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/youtube.readonly');
+  authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('code_challenge', challenge);
+  authUrl.searchParams.set('code_challenge_method', 'S256');
+
+  headers.set('Location', authUrl.toString());
+  return new Response(null, { status: 302, headers });
+}
+
+async function handleYouTubeCallback(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/youtube/callback', url.origin).toString();
+
+  const code = url.searchParams.get('code');
+  const error = url.searchParams.get('error');
+  const errorDescription = url.searchParams.get('error_description');
+  if (error) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error, errorDescription }));
+    return Response.redirect(`${clientUrl}/integrations?youtube=${data}`, 302);
+  }
+  if (!code) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'missing_code' }));
+    return Response.redirect(`${clientUrl}/integrations?youtube=${data}`, 302);
+  }
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'google_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?youtube=${data}`, 302);
+  }
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  const stateCookie = getCookie(cookieHeader, 'yt_state');
+  const verifier = getCookie(cookieHeader, 'yt_verifier');
+  const state = url.searchParams.get('state');
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    return Response.redirect(`${clientUrl}/integrations?youtube=${data}`, 302);
+  }
+  if (!stateCookie || !state || stateCookie !== state || !verifier) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'invalid_state' }));
+    return Response.redirect(`${clientUrl}/integrations?youtube=${data}`, 302);
+  }
+
+  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      code,
+      grant_type: 'authorization_code',
+      redirect_uri: redirectUri,
+      code_verifier: verifier,
+    }),
+  });
+  const tokenText = await tokenRes.text().catch(() => '');
+  if (!tokenRes.ok) {
+    console.error('[YT] token_exchange_failed', tokenRes.status, tokenText);
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'token_exchange_failed', status: tokenRes.status }));
+    return Response.redirect(`${clientUrl}/integrations?youtube=${data}`, 302);
+  }
+  const tokenJson: any = tokenText ? JSON.parse(tokenText) : null;
+  const accessToken = typeof tokenJson?.access_token === 'string' ? tokenJson.access_token : '';
+  const refreshToken = typeof tokenJson?.refresh_token === 'string' ? tokenJson.refresh_token : null;
+  const tokenType = typeof tokenJson?.token_type === 'string' ? tokenJson.token_type : 'bearer';
+  const expiresIn = getNumber(tokenJson?.expires_in) || 0;
+  const scope = typeof tokenJson?.scope === 'string' ? tokenJson.scope : '';
+  if (!accessToken) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'invalid_token_response' }));
+    return Response.redirect(`${clientUrl}/integrations?youtube=${data}`, 302);
+  }
+
+  // Best-effort: fetch channel info to display.
+  let channelId: string | null = null;
+  let channelTitle: string | null = null;
+  try {
+    const chRes = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+    });
+    const chTxt = await chRes.text().catch(() => '');
+    if (chRes.ok) {
+      const chJson: any = chTxt ? JSON.parse(chTxt) : null;
+      const items: any[] = Array.isArray(chJson?.items) ? chJson.items : [];
+      if (items[0]?.id) channelId = String(items[0].id);
+      if (items[0]?.snippet?.title) channelTitle = String(items[0].snippet.title);
+    } else {
+      console.warn('[YT] channel_fetch_failed', chRes.status, chTxt);
+    }
+  } catch (e) {
+    console.warn('[YT] channel_fetch_error', e);
+  }
+
+  // Persist SocialConnections (Hyperdrive) if available
+  const sql = getSql(env);
+  if (sql && channelId) {
+    try {
+      await sqlUpsertSocial(sql, { userId: sid, provider: 'youtube', providerId: channelId, name: channelTitle });
+    } catch (e) {
+      console.error('[DB] sqlUpsertSocial (youtube) failed', e);
+    }
+  }
+
+  const backendOrigin = getBackendOrigin(env, request);
+  const obtainedAt = new Date().toISOString();
+  const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+  try {
+    await fetch(`${backendOrigin}/api/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: sid, email: '', name: channelTitle || 'YouTube User', imageUrl: null }),
+    });
+  } catch { void 0; }
+  try {
+    const settingsRes = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/youtube_oauth`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: { accessToken, refreshToken, tokenType, scope, obtainedAt, expiresAt, raw: tokenJson } }),
+    });
+    if (!settingsRes.ok) {
+      const errText = await settingsRes.text().catch(() => '');
+      console.error('[YT] persist youtube_oauth failed', settingsRes.status, errText.slice(0, 1200));
+    }
+  } catch (e) {
+    console.error('[YT] failed to persist youtube_oauth', e);
+  }
+
+  const headers = new Headers();
+  headers.append('Set-Cookie', buildYouTubeCookie(JSON.stringify({ id: channelId, name: channelTitle }), 60 * 60 * 24 * 30, request.url));
+  headers.append('Set-Cookie', buildTempCookie('yt_state', '', 0, request.url));
+  headers.append('Set-Cookie', buildTempCookie('yt_verifier', '', 0, request.url));
+  const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'youtube', account: { id: channelId, name: channelTitle } }));
+  headers.set('Location', `${clientUrl}/integrations?youtube=${data}`);
+  return new Response(null, { status: 302, headers });
+}
+
+async function startPinterestOAuth(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/pinterest/callback', url.origin).toString();
+
+  const clientId = (env.PINTEREST_CLIENT_ID || '').trim();
+  const clientSecret = (env.PINTEREST_CLIENT_SECRET || '').trim();
+  if (!clientId || !clientSecret) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'pinterest_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?pinterest=${data}`, 302);
+  }
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    return Response.redirect(`${clientUrl}/integrations?pinterest=${data}`, 302);
+  }
+
+  const state = crypto.randomUUID();
+  const headers = new Headers();
+  headers.append('Set-Cookie', buildTempCookie('pin_state', state, 10 * 60, request.url));
+
+  const authUrl = new URL('https://www.pinterest.com/oauth/');
+  authUrl.searchParams.set('client_id', clientId);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('scope', 'pins:read,user_accounts:read');
+
+  headers.set('Location', authUrl.toString());
+  return new Response(null, { status: 302, headers });
+}
+
+async function handlePinterestCallback(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/pinterest/callback', url.origin).toString();
+
+  const code = url.searchParams.get('code');
+  const error = url.searchParams.get('error');
+  if (error) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error }));
+    return Response.redirect(`${clientUrl}/integrations?pinterest=${data}`, 302);
+  }
+  if (!code) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'missing_code' }));
+    return Response.redirect(`${clientUrl}/integrations?pinterest=${data}`, 302);
+  }
+  const clientId = (env.PINTEREST_CLIENT_ID || '').trim();
+  const clientSecret = (env.PINTEREST_CLIENT_SECRET || '').trim();
+  if (!clientId || !clientSecret) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'pinterest_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?pinterest=${data}`, 302);
+  }
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  const stateCookie = getCookie(cookieHeader, 'pin_state');
+  const state = url.searchParams.get('state');
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    return Response.redirect(`${clientUrl}/integrations?pinterest=${data}`, 302);
+  }
+  if (!stateCookie || !state || stateCookie !== state) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'invalid_state' }));
+    return Response.redirect(`${clientUrl}/integrations?pinterest=${data}`, 302);
+  }
+
+  const basic = btoa(`${clientId}:${clientSecret}`);
+  const tokenRes = await fetch('https://api.pinterest.com/v5/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json', Authorization: `Basic ${basic}` },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: redirectUri,
+    }),
+  });
+  const tokenText = await tokenRes.text().catch(() => '');
+  if (!tokenRes.ok) {
+    console.error('[PIN] token_exchange_failed', tokenRes.status, tokenText);
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'token_exchange_failed', status: tokenRes.status }));
+    return Response.redirect(`${clientUrl}/integrations?pinterest=${data}`, 302);
+  }
+  const tokenJson: any = tokenText ? JSON.parse(tokenText) : null;
+  const accessToken = typeof tokenJson?.access_token === 'string' ? tokenJson.access_token : '';
+  const tokenType = typeof tokenJson?.token_type === 'string' ? tokenJson.token_type : 'bearer';
+  const expiresIn = getNumber(tokenJson?.expires_in) || 0;
+  const scope = typeof tokenJson?.scope === 'string' ? tokenJson.scope : '';
+  if (!accessToken) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'invalid_token_response' }));
+    return Response.redirect(`${clientUrl}/integrations?pinterest=${data}`, 302);
+  }
+
+  // Best-effort user profile
+  let accountId: string | null = null;
+  let accountName: string | null = null;
+  try {
+    const meRes = await fetch('https://api.pinterest.com/v5/user_account', {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+    });
+    const meText = await meRes.text().catch(() => '');
+    if (meRes.ok) {
+      const meJson: any = meText ? JSON.parse(meText) : null;
+      accountId = typeof meJson?.id === 'string' ? meJson.id : (meJson?.id ? String(meJson.id) : null);
+      accountName = typeof meJson?.username === 'string' ? meJson.username : null;
+    } else {
+      console.warn('[PIN] user_account_failed', meRes.status, meText);
+    }
+  } catch (e) {
+    console.warn('[PIN] user_account_error', e);
+  }
+
+  const sql = getSql(env);
+  if (sql && accountId) {
+    try {
+      await sqlUpsertSocial(sql, { userId: sid, provider: 'pinterest', providerId: accountId, name: accountName });
+    } catch (e) {
+      console.error('[DB] sqlUpsertSocial (pinterest) failed', e);
+    }
+  }
+
+  const backendOrigin = getBackendOrigin(env, request);
+  const obtainedAt = new Date().toISOString();
+  const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+  try {
+    await fetch(`${backendOrigin}/api/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: sid, email: '', name: accountName || 'Pinterest User', imageUrl: null }),
+    });
+  } catch { void 0; }
+  try {
+    const settingsRes = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/pinterest_oauth`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: { accessToken, tokenType, scope, obtainedAt, expiresAt, raw: tokenJson } }),
+    });
+    if (!settingsRes.ok) {
+      const errText = await settingsRes.text().catch(() => '');
+      console.error('[PIN] persist pinterest_oauth failed', settingsRes.status, errText.slice(0, 1200));
+    }
+  } catch (e) {
+    console.error('[PIN] failed to persist pinterest_oauth', e);
+  }
+
+  const headers = new Headers();
+  headers.append('Set-Cookie', buildPinterestCookie(JSON.stringify({ id: accountId, name: accountName }), 60 * 60 * 24 * 30, request.url));
+  headers.append('Set-Cookie', buildTempCookie('pin_state', '', 0, request.url));
+  const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'pinterest', account: { id: accountId, name: accountName } }));
+  headers.set('Location', `${clientUrl}/integrations?pinterest=${data}`);
+  return new Response(null, { status: 302, headers });
+}
+
+async function startThreadsOAuth(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/threads/callback', url.origin).toString();
+
+  if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'threads_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
+  }
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
+  }
+
+  const state = crypto.randomUUID();
+  const headers = new Headers();
+  headers.append('Set-Cookie', buildTempCookie('th_state', state, 10 * 60, request.url));
+
+  const scopes = ['threads_basic'].join(',');
+  const authUrl = new URL('https://www.facebook.com/v18.0/dialog/oauth');
+  authUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('scope', scopes);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('state', state);
+
+  headers.set('Location', authUrl.toString());
+  return new Response(null, { status: 302, headers });
+}
+
+async function handleThreadsCallback(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/threads/callback', url.origin).toString();
+
+  const code = url.searchParams.get('code');
+  const error = url.searchParams.get('error');
+  const errorDescription = url.searchParams.get('error_description');
+  if (error) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error, errorDescription }));
+    return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
+  }
+  if (!code) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'missing_code' }));
+    return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
+  }
+  if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'threads_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
+  }
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  const stateCookie = getCookie(cookieHeader, 'th_state');
+  const state = url.searchParams.get('state');
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
+  }
+  if (!stateCookie || !state || stateCookie !== state) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'invalid_state' }));
+    return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
+  }
+
+  const tokenUrl = new URL('https://graph.facebook.com/v18.0/oauth/access_token');
+  tokenUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
+  tokenUrl.searchParams.set('client_secret', env.INSTAGRAM_APP_SECRET);
+  tokenUrl.searchParams.set('redirect_uri', redirectUri);
+  tokenUrl.searchParams.set('code', code);
+
+  const tokenRes = await fetch(tokenUrl.toString(), { headers: { Accept: 'application/json' } });
+  const tokenText = await tokenRes.text().catch(() => '');
+  if (!tokenRes.ok) {
+    console.error('[TH] token_exchange_failed', tokenRes.status, tokenText);
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'token_exchange_failed', status: tokenRes.status }));
+    return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
+  }
+  const tokenJson: any = tokenText ? JSON.parse(tokenText) : null;
+  const accessToken = typeof tokenJson?.access_token === 'string' ? tokenJson.access_token : '';
+  const tokenType = typeof tokenJson?.token_type === 'string' ? tokenJson.token_type : 'bearer';
+  const expiresIn = getNumber(tokenJson?.expires_in) || 0;
+  if (!accessToken) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'invalid_token_response' }));
+    return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
+  }
+
+  // Best-effort: discover threads user id. This may need adjustment depending on Meta configuration.
+  let threadsUserId: string | null = null;
+  let name: string | null = null;
+  try {
+    const meRes = await fetch(`https://graph.facebook.com/v18.0/me?fields=id,name&access_token=${encodeURIComponent(accessToken)}`);
+    const meText = await meRes.text().catch(() => '');
+    if (meRes.ok) {
+      const meJson: any = meText ? JSON.parse(meText) : null;
+      threadsUserId = meJson?.id ? String(meJson.id) : null;
+      name = typeof meJson?.name === 'string' ? meJson.name : null;
+    } else {
+      console.warn('[TH] me_failed', meRes.status, meText);
+    }
+  } catch (e) {
+    console.warn('[TH] me_error', e);
+  }
+
+  const sql = getSql(env);
+  if (sql && threadsUserId) {
+    try {
+      await sqlUpsertSocial(sql, { userId: sid, provider: 'threads', providerId: threadsUserId, name });
+    } catch (e) {
+      console.error('[DB] sqlUpsertSocial (threads) failed', e);
+    }
+  }
+
+  const backendOrigin = getBackendOrigin(env, request);
+  const obtainedAt = new Date().toISOString();
+  const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+  try {
+    await fetch(`${backendOrigin}/api/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: sid, email: '', name: name || 'Threads User', imageUrl: null }),
+    });
+  } catch { void 0; }
+  try {
+    const settingsRes = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/threads_oauth`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: { accessToken, tokenType, threadsUserId, obtainedAt, expiresAt, raw: tokenJson } }),
+    });
+    if (!settingsRes.ok) {
+      const errText = await settingsRes.text().catch(() => '');
+      console.error('[TH] persist threads_oauth failed', settingsRes.status, errText.slice(0, 1200));
+    }
+  } catch (e) {
+    console.error('[TH] failed to persist threads_oauth', e);
+  }
+
+  const headers = new Headers();
+  headers.append('Set-Cookie', buildThreadsCookie(JSON.stringify({ id: threadsUserId, name }), 60 * 60 * 24 * 30, request.url));
+  headers.append('Set-Cookie', buildTempCookie('th_state', '', 0, request.url));
+  const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'threads', account: { id: threadsUserId, name } }));
+  headers.set('Location', `${clientUrl}/integrations?threads=${data}`);
+  return new Response(null, { status: 302, headers });
+}
+
 // --- Cookie helpers for Instagram connection persistence ---
 function buildInstagramCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
   const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
@@ -2151,6 +2755,117 @@ function parseFacebookCookie(cookieHeader: string): { id: string; name: string |
     });
   const cookies = Object.fromEntries(entries);
   const raw = cookies['fb_conn'];
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const obj = asRecord(parsed);
+    const id = getString(obj?.['id']);
+    const name = getString(obj?.['name']);
+    if (!id) return null;
+    return { id, name: name ?? null };
+  } catch {
+    return null;
+  }
+}
+
+// --- Cookie helpers for YouTube connection persistence ---
+function buildYouTubeCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
+  const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
+  const parts = [
+    `yt_conn=${encodeURIComponent(value)}`,
+    `Path=/`,
+    `HttpOnly`,
+    `SameSite=Lax`,
+  ];
+  parts.push(`Max-Age=${maxAgeSeconds > 0 ? maxAgeSeconds : 0}`);
+  if (isHttps) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function parseYouTubeCookie(cookieHeader: string): { id: string; name: string | null } | null {
+  const entries = cookieHeader
+    .split(/;\s*/)
+    .map(kv => {
+      const idx = kv.indexOf('=');
+      if (idx === -1) return [kv, ''];
+      return [kv.slice(0, idx), decodeURIComponent(kv.slice(idx + 1))] as [string, string];
+    });
+  const cookies = Object.fromEntries(entries);
+  const raw = cookies['yt_conn'];
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const obj = asRecord(parsed);
+    const id = getString(obj?.['id']);
+    const name = getString(obj?.['name']);
+    if (!id) return null;
+    return { id, name: name ?? null };
+  } catch {
+    return null;
+  }
+}
+
+// --- Cookie helpers for Pinterest connection persistence ---
+function buildPinterestCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
+  const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
+  const parts = [
+    `pin_conn=${encodeURIComponent(value)}`,
+    `Path=/`,
+    `HttpOnly`,
+    `SameSite=Lax`,
+  ];
+  parts.push(`Max-Age=${maxAgeSeconds > 0 ? maxAgeSeconds : 0}`);
+  if (isHttps) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function parsePinterestCookie(cookieHeader: string): { id: string; name: string | null } | null {
+  const entries = cookieHeader
+    .split(/;\s*/)
+    .map(kv => {
+      const idx = kv.indexOf('=');
+      if (idx === -1) return [kv, ''];
+      return [kv.slice(0, idx), decodeURIComponent(kv.slice(idx + 1))] as [string, string];
+    });
+  const cookies = Object.fromEntries(entries);
+  const raw = cookies['pin_conn'];
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const obj = asRecord(parsed);
+    const id = getString(obj?.['id']);
+    const name = getString(obj?.['name']);
+    if (!id) return null;
+    return { id, name: name ?? null };
+  } catch {
+    return null;
+  }
+}
+
+// --- Cookie helpers for Threads connection persistence ---
+function buildThreadsCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
+  const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
+  const parts = [
+    `th_conn=${encodeURIComponent(value)}`,
+    `Path=/`,
+    `HttpOnly`,
+    `SameSite=Lax`,
+  ];
+  parts.push(`Max-Age=${maxAgeSeconds > 0 ? maxAgeSeconds : 0}`);
+  if (isHttps) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function parseThreadsCookie(cookieHeader: string): { id: string; name: string | null } | null {
+  const entries = cookieHeader
+    .split(/;\s*/)
+    .map(kv => {
+      const idx = kv.indexOf('=');
+      if (idx === -1) return [kv, ''];
+      return [kv.slice(0, idx), decodeURIComponent(kv.slice(idx + 1))] as [string, string];
+    });
+  const cookies = Object.fromEntries(entries);
+  const raw = cookies['th_conn'];
   if (!raw) return null;
   try {
     const parsed: unknown = JSON.parse(raw);

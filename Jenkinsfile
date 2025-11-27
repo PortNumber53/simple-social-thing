@@ -156,6 +156,8 @@ pipeline {
               string(credentialsId: 'prod-instagram-app-secret-simple-social-thing', variable: 'INSTAGRAM_APP_SECRET'),
               string(credentialsId: 'prod-tiktok-client-key-simple-social-thing', variable: 'TIKTOK_CLIENT_KEY'),
               string(credentialsId: 'prod-tiktok-client-secret-simple-social-thing', variable: 'TIKTOK_CLIENT_SECRET'),
+              string(credentialsId: 'prod-pinterest-client-id-simple-social-thing', variable: 'PINTEREST_CLIENT_ID'),
+              string(credentialsId: 'prod-pinterest-client-secret-simple-social-thing', variable: 'PINTEREST_CLIENT_SECRET'),
               string(credentialsId: 'prod-jwt-secret-simple-social-thing', variable: 'JWT_SECRET'),
               string(credentialsId: 'prod-stripe-secret-key-simple-social-thing', variable: 'STRIPE_SECRET_KEY'),
               string(credentialsId: 'prod-stripe-publishable-key-simple-social-thing', variable: 'STRIPE_PUBLISHABLE_KEY'),
