@@ -290,6 +290,21 @@ type sunoTrackRow struct {
 	UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
 }
 
+type socialLibraryRow struct {
+	ID           string          `json:"id"`
+	UserID       string          `json:"userId"`
+	Network      string          `json:"network"`
+	ContentType  string          `json:"contentType"`
+	Title        *string         `json:"title,omitempty"`
+	PermalinkURL *string         `json:"permalinkUrl,omitempty"`
+	PostedAt     *time.Time      `json:"postedAt,omitempty"`
+	Views        *int64          `json:"views,omitempty"`
+	Likes        *int64          `json:"likes,omitempty"`
+	RawPayload   json.RawMessage `json:"rawPayload"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
+}
+
 func (h *Handler) ListSunoTracksForUser(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["userId"]
@@ -332,6 +347,174 @@ func (h *Handler) ListSunoTracksForUser(w http.ResponseWriter, r *http.Request) 
 			log.Printf("[Suno][ListTracks] scan error userId=%s err=%v", userID, err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		out = append(out, row)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func (h *Handler) ListSocialLibrariesForUser(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := vars["userId"]
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	network := r.URL.Query().Get("network")
+	contentType := r.URL.Query().Get("type")
+	q := r.URL.Query().Get("q")
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+
+	parseDate := func(s string) (*time.Time, error) {
+		if s == "" {
+			return nil, nil
+		}
+		if len(s) == 10 {
+			t, err := time.Parse("2006-01-02", s)
+			if err != nil {
+				return nil, err
+			}
+			return &t, nil
+		}
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return nil, err
+		}
+		return &t, nil
+	}
+	from, err := parseDate(fromStr)
+	if err != nil {
+		http.Error(w, "invalid from date", http.StatusBadRequest)
+		return
+	}
+	to, err := parseDate(toStr)
+	if err != nil {
+		http.Error(w, "invalid to date", http.StatusBadRequest)
+		return
+	}
+	// If "to" is date-only, treat as end-of-day inclusive.
+	if to != nil && len(toStr) == 10 {
+		t2 := to.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+		to = &t2
+	}
+
+	limit := 50
+	if limitStr != "" {
+		if n, err := fmt.Sscanf(limitStr, "%d", &limit); n == 0 || err != nil {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := 0
+	if offsetStr != "" {
+		if n, err := fmt.Sscanf(offsetStr, "%d", &offset); n == 0 || err != nil {
+			http.Error(w, "invalid offset", http.StatusBadRequest)
+			return
+		}
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	base := `
+		SELECT id, user_id, network, content_type, title, permalink_url,
+		       posted_at, views, likes, raw_payload, created_at, updated_at
+		FROM public."SocialLibraries"
+		WHERE user_id = $1
+	`
+	args := []interface{}{userID}
+	argN := 2
+
+	if network != "" {
+		base += fmt.Sprintf(" AND network = $%d", argN)
+		args = append(args, network)
+		argN++
+	}
+	if contentType != "" {
+		base += fmt.Sprintf(" AND content_type = $%d", argN)
+		args = append(args, contentType)
+		argN++
+	}
+	if from != nil {
+		base += fmt.Sprintf(" AND posted_at >= $%d", argN)
+		args = append(args, *from)
+		argN++
+	}
+	if to != nil {
+		base += fmt.Sprintf(" AND posted_at <= $%d", argN)
+		args = append(args, *to)
+		argN++
+	}
+	if q != "" {
+		base += fmt.Sprintf(" AND (title ILIKE $%d OR permalink_url ILIKE $%d)", argN, argN)
+		args = append(args, "%"+q+"%")
+		argN++
+	}
+
+	base += fmt.Sprintf(" ORDER BY posted_at DESC NULLS LAST, created_at DESC LIMIT $%d OFFSET $%d", argN, argN+1)
+	args = append(args, limit, offset)
+
+	rows, err := h.db.Query(base, args...)
+	if err != nil {
+		log.Printf("[Library][List] query error userId=%s err=%v", userID, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	out := make([]socialLibraryRow, 0)
+	for rows.Next() {
+		var row socialLibraryRow
+		var postedAt sql.NullTime
+		var views sql.NullInt64
+		var likes sql.NullInt64
+		var raw []byte
+		if err := rows.Scan(
+			&row.ID,
+			&row.UserID,
+			&row.Network,
+			&row.ContentType,
+			&row.Title,
+			&row.PermalinkURL,
+			&postedAt,
+			&views,
+			&likes,
+			&raw,
+			&row.CreatedAt,
+			&row.UpdatedAt,
+		); err != nil {
+			log.Printf("[Library][List] scan error userId=%s err=%v", userID, err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if postedAt.Valid {
+			t := postedAt.Time
+			row.PostedAt = &t
+		}
+		if views.Valid {
+			v := views.Int64
+			row.Views = &v
+		}
+		if likes.Valid {
+			l := likes.Int64
+			row.Likes = &l
+		}
+		if raw == nil {
+			row.RawPayload = json.RawMessage(`{}`)
+		} else {
+			row.RawPayload = json.RawMessage(raw)
 		}
 		out = append(out, row)
 	}

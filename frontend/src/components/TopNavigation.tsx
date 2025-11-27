@@ -52,6 +52,9 @@ export const TopNavigation: React.FC = () => {
                 <a href="/dashboard" className={`${navItemBase} ${navItemColors}`}>
                   Dashboard
                 </a>
+                <a href="/library" className={`${navItemBase} ${navItemColors}`}>
+                  Library
+                </a>
                 <div className="relative group">
                   <button className={`${navItemBase} ${navItemColors} gap-1`}>
                     Content
