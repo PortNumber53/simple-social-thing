@@ -12,7 +12,8 @@ import (
 	"time"
 
 	"github.com/PortNumber53/simple-social-thing/backend/internal/handlers"
-	"github.com/PortNumber53/simple-social-thing/backend/internal/instagram"
+	"github.com/PortNumber53/simple-social-thing/backend/internal/socialimport"
+	"github.com/PortNumber53/simple-social-thing/backend/internal/socialimport/providers"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -130,21 +131,26 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-	// Background: Instagram importer (polls Graph API and upserts into SocialLibraries)
+	// Background: per-provider social import workers (each with independent rate limiting/quota handling).
+	// Disabled by default; enable explicitly in prod after configuring tokens + quotas.
 	{
-		enabled := os.Getenv("INSTAGRAM_IMPORT_ENABLED")
-		if enabled == "" || enabled == "true" {
-			interval := 10 * time.Minute
-			if v := os.Getenv("INSTAGRAM_IMPORT_INTERVAL_SECONDS"); v != "" {
-				var secs int
-				if _, err := fmt.Sscanf(v, "%d", &secs); err == nil && secs > 0 {
-					interval = time.Duration(secs) * time.Second
+		enabled := os.Getenv("SOCIAL_IMPORT_WORKERS_ENABLED")
+		if enabled == "true" {
+			parseInterval := func(envKey string, def time.Duration) time.Duration {
+				if v := os.Getenv(envKey); v != "" {
+					var secs int
+					if _, err := fmt.Sscanf(v, "%d", &secs); err == nil && secs > 0 {
+						return time.Duration(secs) * time.Second
+					}
 				}
+				return def
 			}
-			imp := &instagram.Importer{DB: db, Interval: interval}
-			go imp.Start(rootCtx)
+			runner := &socialimport.Runner{DB: db, Logger: log.Default()}
+			go runner.StartProviderWorker(rootCtx, providers.InstagramProvider{}, parseInterval("SOCIAL_IMPORT_INSTAGRAM_INTERVAL_SECONDS", 15*time.Minute))
+			go runner.StartProviderWorker(rootCtx, providers.FacebookProvider{}, parseInterval("SOCIAL_IMPORT_FACEBOOK_INTERVAL_SECONDS", 30*time.Minute))
+			go runner.StartProviderWorker(rootCtx, providers.TikTokProvider{}, parseInterval("SOCIAL_IMPORT_TIKTOK_INTERVAL_SECONDS", 30*time.Minute))
 		} else {
-			log.Printf("[IGImporter] disabled via INSTAGRAM_IMPORT_ENABLED=%q", enabled)
+			log.Printf("[SocialWorker] disabled (set SOCIAL_IMPORT_WORKERS_ENABLED=true to enable)")
 		}
 	}
 

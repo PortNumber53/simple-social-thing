@@ -324,6 +324,7 @@ export default {
         const cookie = request.headers.get('Cookie') || '';
         const conn = parseInstagramCookie(cookie);
         const ttConn = parseTikTokCookie(cookie);
+        const fbConn = parseFacebookCookie(cookie);
         const sid = getCookie(cookie, 'sid');
         // Prefer Hyperdrive-backed status if we have a session id and SQL client
         if (sid) {
@@ -332,9 +333,11 @@ export default {
             try {
               const igRow = await sqlQuerySocial(sql, sid, 'instagram');
               const ttRow = await sqlQuerySocial(sql, sid, 'tiktok');
+              const fbRow = await sqlQuerySocial(sql, sid, 'facebook');
               return Response.json({
                 instagram: igRow ? { connected: true, account: { id: igRow.providerId, username: igRow.name || null } } : (conn ? { connected: true, account: conn } : { connected: false }),
                 tiktok: ttRow ? { connected: true, account: { id: ttRow.providerId, displayName: ttRow.name || null } } : (ttConn ? { connected: true, account: ttConn } : { connected: false }),
+                facebook: fbRow ? { connected: true, account: { id: fbRow.providerId, name: fbRow.name || null } } : (fbConn ? { connected: true, account: fbConn } : { connected: false }),
               });
             } catch { void 0; }
           }
@@ -343,6 +346,7 @@ export default {
         return Response.json({
           instagram: conn ? { connected: true, account: conn } : { connected: false },
           tiktok: ttConn ? { connected: true, account: ttConn } : { connected: false },
+          facebook: fbConn ? { connected: true, account: fbConn } : { connected: false },
         });
       }
 
@@ -395,6 +399,39 @@ export default {
         headers.append('Set-Cookie', buildTempCookie('tt_state', '', 0, request.url));
         headers.append('Set-Cookie', buildTempCookie('tt_verifier', '', 0, request.url));
         return new Response(null, { status: 204, headers });
+      }
+
+      // Facebook disconnect clears cookie
+      if (url.pathname === "/api/integrations/facebook/disconnect") {
+        const headers = new Headers({ 'Set-Cookie': buildFacebookCookie('', 0, request.url) });
+        const cookie = request.headers.get('Cookie') || '';
+        const sid = getCookie(cookie, 'sid');
+        const sql = getSql(env);
+        if (sid && sql) {
+          try {
+            await sqlDeleteSocial(sql, sid, 'facebook');
+          } catch { void 0; }
+        }
+        if (sid) {
+          const backendOrigin = getBackendOrigin(env, request);
+          try {
+            await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/facebook_oauth`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ value: null }),
+            });
+          } catch { void 0; }
+        }
+        return new Response(null, { status: 204, headers });
+      }
+
+      // Facebook OAuth start
+      if (url.pathname === "/api/integrations/facebook/auth") {
+        return startFacebookOAuth(request, env);
+      }
+      // Facebook OAuth callback
+      if (url.pathname === "/api/integrations/facebook/callback") {
+        return handleFacebookCallback(request, env);
       }
 
       // TikTok OAuth start
@@ -766,6 +803,9 @@ async function handleUserSettingsBundle(request: Request, env: Env): Promise<Res
 		}
 		if (data && 'tiktok_oauth' in data) {
 			delete (data as Record<string, unknown>)['tiktok_oauth'];
+		}
+		if (data && 'facebook_oauth' in data) {
+			delete (data as Record<string, unknown>)['facebook_oauth'];
 		}
 
 		headers.set('Content-Type', 'application/json');
@@ -1826,6 +1866,190 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
   return new Response(null, { status: 302, headers });
 }
 
+async function startFacebookOAuth(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/facebook/callback', url.origin).toString();
+
+  // Reuse Meta app credentials (same app for Instagram/Facebook).
+  if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'facebook_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
+  }
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  let sid = getCookie(cookieHeader, 'sid');
+  const headers = new Headers();
+
+  // local dev helper: create sid if missing, so callback can persist tokens
+  if (!sid && isLocalhost) {
+    sid = crypto.randomUUID();
+    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, request.url));
+    const backendOrigin = getBackendOrigin(env, request);
+    try {
+      await fetch(`${backendOrigin}/api/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
+      });
+    } catch { void 0; }
+  }
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
+  }
+
+  const state = crypto.randomUUID();
+  headers.append('Set-Cookie', buildTempCookie('fb_state', state, 10 * 60, request.url));
+
+  // Scopes needed for reading Page posts.
+  const scopes = [
+    'pages_show_list',
+    'pages_read_engagement',
+    'pages_read_user_content',
+  ].join(',');
+
+  const authUrl = new URL('https://www.facebook.com/v18.0/dialog/oauth');
+  authUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
+  authUrl.searchParams.set('redirect_uri', redirectUri);
+  authUrl.searchParams.set('scope', scopes);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('state', state);
+
+  headers.set('Location', authUrl.toString());
+  return new Response(null, { status: 302, headers });
+}
+
+async function handleFacebookCallback(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/facebook/callback', url.origin).toString();
+
+  const code = url.searchParams.get('code');
+  const error = url.searchParams.get('error');
+  const errorDescription = url.searchParams.get('error_description');
+  if (error) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error, errorDescription }));
+    return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
+  }
+  if (!code) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'missing_code' }));
+    return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
+  }
+  if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'facebook_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
+  }
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  const stateCookie = getCookie(cookieHeader, 'fb_state');
+  const state = url.searchParams.get('state');
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
+  }
+  if (!stateCookie || !state || stateCookie !== state) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'invalid_state' }));
+    return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
+  }
+
+  // Exchange code for short-lived token
+  const tokenUrl = new URL('https://graph.facebook.com/v18.0/oauth/access_token');
+  tokenUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
+  tokenUrl.searchParams.set('client_secret', env.INSTAGRAM_APP_SECRET);
+  tokenUrl.searchParams.set('redirect_uri', redirectUri);
+  tokenUrl.searchParams.set('code', code);
+
+  const tokenRes = await fetch(tokenUrl.toString(), { headers: { Accept: 'application/json' } });
+  const tokenText = await tokenRes.text().catch(() => '');
+  if (!tokenRes.ok) {
+    console.error('[FB] token_exchange_failed', tokenRes.status, tokenText);
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'token_exchange_failed', status: tokenRes.status }));
+    return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
+  }
+  const short: any = tokenText ? JSON.parse(tokenText) : null;
+  const shortToken = typeof short?.access_token === 'string' ? short.access_token : '';
+  if (!shortToken) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'invalid_token_response' }));
+    return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
+  }
+
+  // Exchange for long-lived user token (best-effort)
+  let userToken = shortToken;
+  try {
+    const longUrl = new URL('https://graph.facebook.com/v18.0/oauth/access_token');
+    longUrl.searchParams.set('grant_type', 'fb_exchange_token');
+    longUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
+    longUrl.searchParams.set('client_secret', env.INSTAGRAM_APP_SECRET);
+    longUrl.searchParams.set('fb_exchange_token', shortToken);
+    const longRes = await fetch(longUrl.toString(), { headers: { Accept: 'application/json' } });
+    if (longRes.ok) {
+      const longJson: any = await longRes.json().catch(() => null);
+      if (typeof longJson?.access_token === 'string') userToken = longJson.access_token;
+    }
+  } catch { void 0; }
+
+  // Get pages and pick the first page; use page access token for page posts API.
+  const pagesRes = await fetch(`https://graph.facebook.com/v18.0/me/accounts?fields=id,name,access_token&access_token=${encodeURIComponent(userToken)}`);
+  const pagesText = await pagesRes.text().catch(() => '');
+  if (!pagesRes.ok) {
+    console.error('[FB] pages_fetch_failed', pagesRes.status, pagesText);
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'pages_fetch_failed', status: pagesRes.status }));
+    return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
+  }
+  const pagesJson: any = pagesText ? JSON.parse(pagesText) : null;
+  const pagesArr: any[] = Array.isArray(pagesJson?.data) ? pagesJson.data : [];
+  const first = pagesArr[0] || null;
+  const pageId = typeof first?.id === 'string' ? first.id : '';
+  const pageName = typeof first?.name === 'string' ? first.name : null;
+  const pageToken = typeof first?.access_token === 'string' ? first.access_token : '';
+  if (!pageId || !pageToken) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'no_pages_found' }));
+    return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
+  }
+
+  // Persist SocialConnections (Hyperdrive) if available
+  const sql = getSql(env);
+  if (sql) {
+    try {
+      await sqlUpsertSocial(sql, { userId: sid, provider: 'facebook', providerId: pageId, name: pageName });
+    } catch (e) { console.error('[DB] sqlUpsertSocial (facebook) failed', e); }
+  }
+
+  // Persist OAuth token into backend UserSettings for importer
+  const backendOrigin = getBackendOrigin(env, request);
+  try {
+    await fetch(`${backendOrigin}/api/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: sid, email: '', name: pageName || 'Facebook User', imageUrl: null }),
+    });
+  } catch { void 0; }
+  try {
+    const settingsRes = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/facebook_oauth`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: { accessToken: pageToken, pageId, pageName } }),
+    });
+    if (!settingsRes.ok) {
+      const errText = await settingsRes.text().catch(() => '');
+      console.error('[FB] persist facebook_oauth failed', settingsRes.status, errText.slice(0, 1200));
+    }
+  } catch (e) {
+    console.error('[FB] failed to persist facebook_oauth', e);
+  }
+
+  const headers = new Headers();
+  headers.append('Set-Cookie', buildFacebookCookie(JSON.stringify({ id: pageId, name: pageName }), 60 * 60 * 24 * 30, request.url));
+  headers.append('Set-Cookie', buildTempCookie('fb_state', '', 0, request.url));
+  const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'facebook', account: { id: pageId, name: pageName } }));
+  headers.set('Location', `${clientUrl}/integrations?facebook=${data}`);
+  return new Response(null, { status: 302, headers });
+}
+
 // --- Cookie helpers for Instagram connection persistence ---
 function buildInstagramCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
   const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
@@ -1898,6 +2122,43 @@ function parseTikTokCookie(cookieHeader: string): { id: string; displayName: str
     const displayName = getString(obj?.['displayName']);
     if (!id) return null;
     return { id, displayName: displayName ?? null };
+  } catch {
+    return null;
+  }
+}
+
+// --- Cookie helpers for Facebook connection persistence ---
+function buildFacebookCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
+  const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
+  const parts = [
+    `fb_conn=${encodeURIComponent(value)}`,
+    `Path=/`,
+    `HttpOnly`,
+    `SameSite=Lax`,
+  ];
+  parts.push(`Max-Age=${maxAgeSeconds > 0 ? maxAgeSeconds : 0}`);
+  if (isHttps) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function parseFacebookCookie(cookieHeader: string): { id: string; name: string | null } | null {
+  const entries = cookieHeader
+    .split(/;\s*/)
+    .map(kv => {
+      const idx = kv.indexOf('=');
+      if (idx === -1) return [kv, ''];
+      return [kv.slice(0, idx), decodeURIComponent(kv.slice(idx + 1))] as [string, string];
+    });
+  const cookies = Object.fromEntries(entries);
+  const raw = cookies['fb_conn'];
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    const obj = asRecord(parsed);
+    const id = getString(obj?.['id']);
+    const name = getString(obj?.['name']);
+    if (!id) return null;
+    return { id, name: name ?? null };
   } catch {
     return null;
   }
