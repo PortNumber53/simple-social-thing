@@ -2377,7 +2377,18 @@ async function startPinterestOAuth(request: Request, env: Env): Promise<Response
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('state', state);
-  authUrl.searchParams.set('scope', 'pins:read,user_accounts:read');
+  // Pinterest scopes (requested per product requirements)
+  authUrl.searchParams.set('scope', [
+    'boards:read',
+    'boards:read_secret',
+    'boards:write',
+    'boards:write_secret',
+    'pins:read',
+    'pins:read_secret',
+    'pins:write',
+    'pins:write_secret',
+    'user_accounts',
+  ].join(','));
 
   headers.set('Location', authUrl.toString());
   return new Response(null, { status: 302, headers });
