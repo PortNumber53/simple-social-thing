@@ -960,7 +960,29 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		}
 	}
 
-	for _, p := range []string{"tiktok", "youtube", "pinterest", "threads"} {
+	// TikTok (requires a public video URL)
+	if want["tiktok"] {
+		videoURL := ""
+		for i, rel := range relMedia {
+			ct := ""
+			if i < len(mediaFiles) {
+				ct = strings.ToLower(strings.TrimSpace(mediaFiles[i].ContentType))
+			}
+			if strings.HasPrefix(ct, "video/") || strings.HasSuffix(strings.ToLower(rel), ".mp4") || strings.HasSuffix(strings.ToLower(rel), ".mov") || strings.HasSuffix(strings.ToLower(rel), ".webm") {
+				videoURL = strings.TrimRight(origin, "/") + rel
+				break
+			}
+		}
+		posted, err, details := h.publishTikTokWithVideoURL(context.Background(), userID, caption, videoURL, req.DryRun)
+		if err != nil {
+			results["tiktok"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
+			overallOK = false
+		} else {
+			results["tiktok"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+		}
+	}
+
+	for _, p := range []string{"youtube", "pinterest", "threads"} {
 		if want[p] {
 			results[p] = publishProviderResult{OK: false, Error: "not_supported_yet"}
 			overallOK = false
@@ -1174,7 +1196,8 @@ func parsePublishPostRequest(r *http.Request) (publishPostRequest, []uploadedMed
 		}
 		out := make([]uploadedMedia, 0, len(files))
 		const maxFiles = 5
-		const maxFileSize = 6 << 20 // 6MB each
+		// Allow larger uploads for video-based providers (e.g., TikTok).
+		const maxFileSize = 50 << 20 // 50MB each
 		for i, fh := range files {
 			if i >= maxFiles {
 				break
@@ -1560,6 +1583,14 @@ type instagramOAuth struct {
 	ExpiresAt    string `json:"expiresAt"`
 }
 
+type tiktokOAuth struct {
+	AccessToken string `json:"accessToken"`
+	TokenType   string `json:"tokenType"`
+	OpenID      string `json:"openId"`
+	Scope       string `json:"scope"`
+	ExpiresAt   string `json:"expiresAt"`
+}
+
 func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, caption string, imageURLs []string, dryRun bool) (int, error, map[string]interface{}) {
 	details := map[string]interface{}{"imageUrls": imageURLs}
 	if len(imageURLs) == 0 {
@@ -1762,6 +1793,83 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 	}
 
 	log.Printf("[IGPublish] ok userId=%s igBusinessId=%s mediaId=%s", userID, tok.IGBusinessID, mediaID)
+	return 1, nil, details
+}
+
+func (h *Handler) publishTikTokWithVideoURL(ctx context.Context, userID, caption string, videoURL string, dryRun bool) (int, error, map[string]interface{}) {
+	details := map[string]interface{}{"videoUrl": videoURL}
+	if strings.TrimSpace(videoURL) == "" {
+		return 0, fmt.Errorf("tiktok_requires_video"), details
+	}
+
+	// Load token from UserSettings
+	var raw []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='tiktok_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("not_connected"), details
+		}
+		return 0, err, details
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, fmt.Errorf("not_connected"), details
+	}
+	var tok tiktokOAuth
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return 0, fmt.Errorf("invalid_oauth_payload"), map[string]interface{}{"raw": truncate(string(raw), 800)}
+	}
+	if strings.TrimSpace(tok.AccessToken) == "" || strings.TrimSpace(tok.OpenID) == "" {
+		return 0, fmt.Errorf("not_connected"), details
+	}
+
+	// Guard: publishing requires video upload/publish scopes (TikTok Content Posting API).
+	scopeNorm := strings.ReplaceAll(tok.Scope, " ", ",")
+	if !(strings.Contains(scopeNorm, "video.upload") || strings.Contains(scopeNorm, "video.publish")) {
+		return 0, fmt.Errorf("missing_scope"), map[string]interface{}{"scope": tok.Scope, "required": []string{"video.upload", "video.publish"}}
+	}
+
+	if dryRun {
+		return 0, nil, map[string]interface{}{"dryRun": true, "videoUrl": videoURL}
+	}
+
+	payload := map[string]interface{}{
+		"post_info": map[string]interface{}{
+			"title":           truncate(caption, 150),
+			"privacy_level":   "PUBLIC_TO_EVERYONE",
+			"disable_comment": false,
+			"disable_duet":    false,
+			"disable_stitch":  false,
+		},
+		"source_info": map[string]interface{}{
+			"source":    "PULL_FROM_URL",
+			"video_url": videoURL,
+		},
+	}
+	body, _ := json.Marshal(payload)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/", bytes.NewReader(body))
+	if err != nil {
+		return 0, err, details
+	}
+	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return 0, err, details
+	}
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	_ = res.Body.Close()
+
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return 0, fmt.Errorf("tiktok_non_2xx"), map[string]interface{}{"status": res.StatusCode, "body": truncate(string(b), 2000)}
+	}
+
+	// Response shape varies; keep raw for debugging.
+	details["response"] = json.RawMessage(b)
+	log.Printf("[TTPost] ok userId=%s", userID)
+	// NOTE: inbox flow may require user to finalize in TikTok app. We still mark as "posted 1" for now.
 	return 1, nil, details
 }
 

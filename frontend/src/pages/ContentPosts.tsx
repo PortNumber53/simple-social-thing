@@ -31,7 +31,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 const PUBLISH_SUPPORTED: Record<string, boolean> = {
   facebook: true,
   instagram: true,
-  tiktok: false,
+  tiktok: true,
   youtube: false,
   pinterest: false,
   threads: false,
@@ -143,6 +143,13 @@ export const ContentPosts: React.FC = () => {
     if (selectedProviders.includes('instagram') && media.length === 0) {
       setStatus('Instagram publishing requires at least one image.');
       return;
+    }
+    if (selectedProviders.includes('tiktok')) {
+      const hasVideo = media.some((m) => (m.file?.type || '').startsWith('video/'));
+      if (!hasVideo) {
+        setStatus('TikTok publishing requires a video file (mp4/mov/webm).');
+        return;
+      }
     }
     setIsSubmitting(true);
 		setStatus(`Publishing to ${selectedProviders.length} network(s)...`);
@@ -404,7 +411,7 @@ export const ContentPosts: React.FC = () => {
 					</div>
 					<div className="space-y-3">
 						<label className="text-sm font-medium text-slate-700 dark:text-slate-200">Media (images)</label>
-						<input type="file" accept="image/*" multiple onChange={(e) => onFiles(e.target.files)} />
+						<input type="file" accept="image/*,video/*" multiple onChange={(e) => onFiles(e.target.files)} />
 						{media.length > 0 && (
 							<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
 								{media.map((m) => (
