@@ -2138,6 +2138,8 @@ async function startFacebookOAuth(request: Request, env: Env): Promise<Response>
     'pages_show_list',
     'pages_read_engagement',
     'pages_read_user_content',
+    // Required to publish content as a Page via /{page-id}/feed
+    'pages_manage_posts',
   ].join(',');
 
   const authUrl = new URL('https://www.facebook.com/v18.0/dialog/oauth');

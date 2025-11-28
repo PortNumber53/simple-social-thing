@@ -41,6 +41,7 @@ export const ContentPosts: React.FC = () => {
   const [results, setResults] = useState<PublishResponse | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectAll, setSelectAll] = useState(true);
+  const [showDetails, setShowDetails] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const load = async () => {
@@ -88,6 +89,7 @@ export const ContentPosts: React.FC = () => {
 
 	const submit = async () => {
     setResults(null);
+    setShowDetails({});
     if (!caption.trim()) {
       setStatus('Please write a caption.');
       return;
@@ -107,10 +109,14 @@ export const ContentPosts: React.FC = () => {
       });
       const data: PublishResponse = await res.json().catch(() => ({}));
       setResults(data);
-      if (!res.ok || data.ok === false) {
+      const resultMap = data?.results && typeof data.results === 'object' ? data.results : null;
+      const anyFail = !!resultMap && Object.values(resultMap).some((r) => !r?.ok);
+      if (!res.ok) {
         setStatus(`Publish failed: ${data.error || 'Unknown error'}`);
+      } else if (anyFail) {
+        setStatus('Publish completed with errors. Expand Results for details.');
       } else {
-        setStatus('Publish request completed.');
+        setStatus('Publish completed successfully.');
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -212,15 +218,39 @@ export const ContentPosts: React.FC = () => {
               <div className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">Results</div>
               <div className="space-y-1 text-sm">
                 {Object.entries(results.results).map(([provider, r]) => (
-                  <div key={provider} className="flex items-start justify-between gap-3">
-                    <div className="text-slate-700 dark:text-slate-200">{PROVIDER_LABELS[provider] || provider}</div>
-                    <div className="text-right text-slate-600 dark:text-slate-300">
-                      {r.ok ? (
-                        <span>ok{typeof r.posted === 'number' ? ` (posted ${r.posted})` : ''}</span>
-                      ) : (
-                        <span className="text-rose-600 dark:text-rose-400">{r.error || 'error'}</span>
-                      )}
+                  <div key={provider} className="space-y-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="text-slate-700 dark:text-slate-200">{PROVIDER_LABELS[provider] || provider}</div>
+                      <div className="text-right text-slate-600 dark:text-slate-300">
+                        {r.ok ? (
+                          <span>ok{typeof r.posted === 'number' ? ` (posted ${r.posted})` : ''}</span>
+                        ) : (
+                          <span className="text-rose-600 dark:text-rose-400">{r.error || 'error'}</span>
+                        )}
+                      </div>
                     </div>
+                    {!r.ok && r.details && (
+                      <div>
+                        <button
+                          type="button"
+                          className="text-xs underline text-slate-600 dark:text-slate-300"
+                          onClick={() => setShowDetails((prev) => ({ ...prev, [provider]: !prev[provider] }))}
+                        >
+                          {showDetails[provider] ? 'Hide details' : 'Show details'}
+                        </button>
+                        {showDetails[provider] && (
+                          <div className="mt-2 rounded-md bg-slate-50 dark:bg-slate-900/30 border border-slate-200 dark:border-slate-700 p-3">
+                            {provider === 'facebook' ? (
+                              <FacebookPublishDetails details={r.details} />
+                            ) : (
+                              <pre className="text-xs whitespace-pre-wrap break-words text-slate-700 dark:text-slate-200">
+                                {JSON.stringify(r.details, null, 2)}
+                              </pre>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -231,3 +261,45 @@ export const ContentPosts: React.FC = () => {
 		</Layout>
 	);
 };
+
+function FacebookPublishDetails({ details }: { details: unknown }) {
+  try {
+    const obj = details as any;
+    const pages = Array.isArray(obj?.pages) ? obj.pages : [];
+    if (!pages.length) {
+      return (
+        <pre className="text-xs whitespace-pre-wrap break-words text-slate-700 dark:text-slate-200">
+          {JSON.stringify(details, null, 2)}
+        </pre>
+      );
+    }
+    return (
+      <div className="space-y-2">
+        <div className="text-xs text-slate-600 dark:text-slate-300">Per-page results:</div>
+        <div className="space-y-1">
+          {pages.map((p: any, idx: number) => (
+            <div key={`${p?.pageId || idx}`} className="flex items-start justify-between gap-3 text-xs">
+              <div className="font-mono text-slate-700 dark:text-slate-200">{String(p?.pageId || '')}</div>
+              <div className="text-right">
+                {p?.posted ? (
+                  <span className="text-emerald-700 dark:text-emerald-300">posted</span>
+                ) : (
+                  <span className="text-rose-700 dark:text-rose-300">
+                    {String(p?.error || 'error')}
+                    {p?.statusCode ? ` (HTTP ${p.statusCode})` : ''}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  } catch {
+    return (
+      <pre className="text-xs whitespace-pre-wrap break-words text-slate-700 dark:text-slate-200">
+        {JSON.stringify(details, null, 2)}
+      </pre>
+    );
+  }
+}

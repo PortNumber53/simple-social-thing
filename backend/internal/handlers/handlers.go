@@ -681,12 +681,14 @@ func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Reques
 	log.Printf("[Publish] start userId=%s providers=%v", userID, req.Providers)
 
 	results := map[string]publishProviderResult{}
+	overallOK := true
 
 	// Facebook: Post to all saved pages in facebook_oauth using page access tokens.
 	if want["facebook"] {
 		posted, err, details := h.publishFacebookPages(r.Context(), userID, caption, req.DryRun)
 		if err != nil {
 			results["facebook"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
+			overallOK = false
 		} else {
 			results["facebook"] = publishProviderResult{OK: true, Posted: posted, Details: details}
 		}
@@ -696,11 +698,12 @@ func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Reques
 	for _, p := range []string{"instagram", "tiktok", "youtube", "pinterest", "threads"} {
 		if want[p] {
 			results[p] = publishProviderResult{OK: false, Error: "not_supported_yet"}
+			overallOK = false
 		}
 	}
 
 	resp := map[string]interface{}{
-		"ok":         true,
+		"ok":         overallOK,
 		"userId":     userID,
 		"durationMs": time.Since(start).Milliseconds(),
 		"results":    results,
@@ -766,10 +769,12 @@ func (h *Handler) publishFacebookPages(ctx context.Context, userID string, capti
 	}
 
 	type pageResult struct {
-		PageID string `json:"pageId"`
-		Posted bool   `json:"posted"`
-		PostID string `json:"postId,omitempty"`
-		Error  string `json:"error,omitempty"`
+		PageID     string `json:"pageId"`
+		Posted     bool   `json:"posted"`
+		PostID     string `json:"postId,omitempty"`
+		StatusCode int    `json:"statusCode,omitempty"`
+		Error      string `json:"error,omitempty"`
+		Body       string `json:"body,omitempty"`
 	}
 	pageResults := make([]pageResult, 0, len(pages))
 
@@ -795,19 +800,39 @@ func (h *Handler) publishFacebookPages(ctx context.Context, userID string, capti
 		res, err := client.Do(req)
 		if err != nil {
 			pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: false, Error: err.Error()})
+			log.Printf("[FBPublish] failed userId=%s pageId=%s err=%v", userID, page.ID, err)
 			continue
 		}
 		body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 		_ = res.Body.Close()
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
-			pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: false, Error: truncate(string(body), 800)})
+			bodyStr := truncate(string(body), 1200)
+			// Best-effort: extract Facebook error message
+			errMsg := bodyStr
+			var fb map[string]interface{}
+			if json.Unmarshal(body, &fb) == nil {
+				if eObj, ok := fb["error"].(map[string]interface{}); ok {
+					if m, ok := eObj["message"].(string); ok && m != "" {
+						errMsg = m
+					}
+				}
+			}
+			pageResults = append(pageResults, pageResult{
+				PageID:     page.ID,
+				Posted:     false,
+				StatusCode: res.StatusCode,
+				Error:      truncate(errMsg, 400),
+				Body:       bodyStr,
+			})
+			log.Printf("[FBPublish] non_2xx userId=%s pageId=%s status=%d body=%s", userID, page.ID, res.StatusCode, truncate(bodyStr, 600))
 			continue
 		}
 		var obj map[string]interface{}
 		_ = json.Unmarshal(body, &obj)
 		postID, _ := obj["id"].(string)
-		pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: true, PostID: postID})
+		pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: true, PostID: postID, StatusCode: res.StatusCode})
 		postedCount++
+		log.Printf("[FBPublish] ok userId=%s pageId=%s postId=%s", userID, page.ID, postID)
 
 		// Store this in SocialLibraries as "created content"
 		if postID != "" {
