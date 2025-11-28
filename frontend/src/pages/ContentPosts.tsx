@@ -26,6 +26,15 @@ const PROVIDER_LABELS: Record<string, string> = {
   threads: 'Threads',
 };
 
+const PUBLISH_SUPPORTED: Record<string, boolean> = {
+  facebook: true,
+  instagram: false,
+  tiktok: false,
+  youtube: false,
+  pinterest: false,
+  threads: false,
+};
+
 export const ContentPosts: React.FC = () => {
   const { connectedProviders, facebookPages } = useIntegrations();
 	const [caption, setCaption] = useState<string>('');
@@ -91,7 +100,8 @@ export const ContentPosts: React.FC = () => {
   }, [selected.facebook, fbTotalCount, fbSelected, postableFacebookPageIds]);
 
   const selectedProviders = useMemo(() => {
-    return Object.keys(selected).filter((k) => selected[k]);
+    // Only include providers that the backend currently supports for publishing.
+    return Object.keys(selected).filter((k) => selected[k] && PUBLISH_SUPPORTED[k] === true);
   }, [selected]);
 
   useEffect(() => {
@@ -217,7 +227,10 @@ export const ContentPosts: React.FC = () => {
                     const v = e.target.checked;
                     setSelectAll(v);
                     const next: Record<string, boolean> = { ...selected };
-                    for (const p of connectedProviders) next[p] = v;
+                    for (const p of connectedProviders) {
+                      // Only allow selecting publish-supported providers when toggling "all"
+                      next[p] = v && PUBLISH_SUPPORTED[p] === true;
+                    }
                     setSelected(next);
                     if (connectedProviders.includes('facebook')) {
                       // When selecting all providers, also select all postable Facebook pages.
@@ -257,13 +270,23 @@ export const ContentPosts: React.FC = () => {
                       )}
                     </label>
                   ) : (
-                    <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm">
+                    <label
+                      key={p}
+                      className={`flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm ${
+                        PUBLISH_SUPPORTED[p] !== true ? 'opacity-60' : ''
+                      }`}
+                      title={PUBLISH_SUPPORTED[p] === true ? '' : 'Publishing not supported yet'}
+                    >
                       <input
                         type="checkbox"
-                        checked={!!selected[p]}
+                        disabled={PUBLISH_SUPPORTED[p] !== true}
+                        checked={!!selected[p] && PUBLISH_SUPPORTED[p] === true}
                         onChange={(e) => setSelected((prev) => ({ ...prev, [p]: e.target.checked }))}
                       />
                       <span className="text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p] || p}</span>
+                      {PUBLISH_SUPPORTED[p] !== true && (
+                        <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">coming soon</span>
+                      )}
                     </label>
                   )
                 ))}
