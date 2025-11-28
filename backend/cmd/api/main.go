@@ -130,8 +130,11 @@ func main() {
 	srv := &http.Server{
 		Handler:      handler,
 		Addr:         ":" + port,
-		WriteTimeout: 15 * time.Second,
-		ReadTimeout:  15 * time.Second,
+		// Publishing (Facebook pages fan-out + Instagram container creation/publish) can legitimately take > 15s.
+		// If these are too low, nginx will see "upstream prematurely closed connection" and return 502.
+		WriteTimeout: 120 * time.Second,
+		ReadTimeout:  120 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	// Handle graceful shutdown on SIGINT/SIGTERM
