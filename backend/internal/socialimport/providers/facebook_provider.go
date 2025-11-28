@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/PortNumber53/simple-social-thing/backend/internal/socialimport"
 	"golang.org/x/time/rate"
@@ -57,6 +58,19 @@ type fbPost struct {
 			} `json:"media"`
 		} `json:"data"`
 	} `json:"attachments"`
+}
+
+func sanitizeText(s string) string {
+	if s == "" {
+		return s
+	}
+	// Postgres rejects NUL bytes in text/jsonb.
+	s = strings.ReplaceAll(s, "\x00", "")
+	if !utf8.ValidString(s) {
+		// Replace invalid UTF-8 sequences with U+FFFD replacement character.
+		s = strings.ToValidUTF8(s, "�")
+	}
+	return s
 }
 
 func (p FacebookProvider) SyncUser(ctx context.Context, db *sql.DB, userID string, client *http.Client, limiter *rate.Limiter, logger *log.Logger) (int, int, error) {
@@ -153,14 +167,14 @@ func (p FacebookProvider) SyncUser(ctx context.Context, db *sql.DB, userID strin
 			if post.ID == "" {
 				continue
 			}
-			title := normalizeTitle(post.Message)
-			permalink := strings.TrimSpace(post.Permalink)
+			title := sanitizeText(normalizeTitle(post.Message))
+			permalink := sanitizeText(strings.TrimSpace(post.Permalink))
 			var thumb string
 			var mediaURL string
 			if len(post.Attachments.Data) > 0 {
 				a := post.Attachments.Data[0]
-				mediaURL = strings.TrimSpace(a.URL)
-				thumb = strings.TrimSpace(a.Media.Image.Src)
+				mediaURL = sanitizeText(strings.TrimSpace(a.URL))
+				thumb = sanitizeText(strings.TrimSpace(a.Media.Image.Src))
 				if thumb == "" {
 					thumb = mediaURL
 				}
@@ -175,6 +189,7 @@ func (p FacebookProvider) SyncUser(ctx context.Context, db *sql.DB, userID strin
 			}
 
 			rawItem, _ := json.Marshal(post)
+			rawStr := sanitizeText(string(rawItem))
 			rowID := fmt.Sprintf("facebook:%s:%s", userID, post.ID)
 			_, err := db.ExecContext(ctx, `
 				INSERT INTO public."SocialLibraries"
@@ -190,7 +205,7 @@ func (p FacebookProvider) SyncUser(ctx context.Context, db *sql.DB, userID strin
 				  posted_at = EXCLUDED.posted_at,
 				  raw_payload = EXCLUDED.raw_payload,
 				  updated_at = NOW()
-			`, rowID, userID, title, permalink, mediaURL, thumb, postedAt, string(rawItem), post.ID)
+			`, rowID, userID, title, permalink, mediaURL, thumb, postedAt, rawStr, post.ID)
 			if err != nil {
 				l.Printf("[FBImport] upsert failed userId=%s pageId=%s postId=%s err=%v", userID, page.ID, post.ID, err)
 				continue
