@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -984,18 +985,40 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 
 	// YouTube (requires a video upload; currently supports small uploads due to request size limits)
 	if want["youtube"] {
+		received := make([]map[string]interface{}, 0, len(mediaFiles))
+		for i := range mediaFiles {
+			received = append(received, map[string]interface{}{
+				"filename":    mediaFiles[i].Filename,
+				"contentType": mediaFiles[i].ContentType,
+				"size":        len(mediaFiles[i].Bytes),
+			})
+		}
 		var video uploadedMedia
 		found := false
 		for i := range mediaFiles {
 			ct := strings.ToLower(strings.TrimSpace(mediaFiles[i].ContentType))
-			if strings.HasPrefix(ct, "video/") {
+			if semi := strings.Index(ct, ";"); semi >= 0 {
+				ct = strings.TrimSpace(ct[:semi])
+			}
+			fn := strings.ToLower(strings.TrimSpace(mediaFiles[i].Filename))
+			if strings.HasPrefix(ct, "video/") ||
+				strings.HasSuffix(fn, ".mp4") ||
+				strings.HasSuffix(fn, ".mov") ||
+				strings.HasSuffix(fn, ".webm") ||
+				strings.HasSuffix(fn, ".m4v") ||
+				strings.HasSuffix(fn, ".avi") ||
+				strings.HasSuffix(fn, ".mkv") {
 				video = mediaFiles[i]
 				found = true
 				break
 			}
 		}
 		if !found {
-			results["youtube"] = publishProviderResult{OK: false, Error: "youtube_requires_video"}
+			results["youtube"] = publishProviderResult{
+				OK:      false,
+				Error:   "youtube_requires_video",
+				Details: map[string]interface{}{"received": received},
+			}
 			overallOK = false
 		} else {
 			posted, err, details := h.publishYouTubeWithVideoBytes(context.Background(), userID, caption, video, req.DryRun)
@@ -1150,6 +1173,15 @@ func loadUploadedMediaFromRelPaths(relPaths []string) ([]uploadedMedia, error) {
 		}
 		fn := filepath.Base(path)
 		ct := http.DetectContentType(b)
+		// `DetectContentType` often falls back to octet-stream for formats like `.mov`.
+		// Prefer MIME type derived from file extension when available.
+		if strings.HasPrefix(strings.ToLower(ct), "application/octet-stream") {
+			if ext := strings.ToLower(filepath.Ext(fn)); ext != "" {
+				if byExt := mime.TypeByExtension(ext); byExt != "" {
+					ct = byExt
+				}
+			}
+		}
 		out = append(out, uploadedMedia{Filename: fn, ContentType: ct, Bytes: b})
 	}
 	return out, nil
