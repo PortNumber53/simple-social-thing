@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -24,6 +25,7 @@ import (
 	"github.com/PortNumber53/simple-social-thing/backend/internal/socialimport"
 	"github.com/PortNumber53/simple-social-thing/backend/internal/socialimport/providers"
 	"github.com/gorilla/mux"
+	"github.com/lib/pq"
 )
 
 type Handler struct {
@@ -636,6 +638,21 @@ type publishProviderResult struct {
 	Details map[string]interface{} `json:"details,omitempty"`
 }
 
+type publishJob struct {
+	ID         string
+	UserID     string
+	Status     string
+	Providers  []string
+	Caption    *string
+	Request    json.RawMessage
+	Result     json.RawMessage
+	Error      *string
+	CreatedAt  time.Time
+	StartedAt  *time.Time
+	FinishedAt *time.Time
+	UpdatedAt  time.Time
+}
+
 // PublishSocialPostForUser publishes a caption-only post to one or more connected networks.
 // For now, only Facebook Page posts are implemented; other providers return not_supported.
 func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Request) {
@@ -730,6 +747,252 @@ func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Reques
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// EnqueuePublishJobForUser enqueues a publishing job and returns immediately.
+// The background job will execute the publishing fan-out and persist results back to Postgres.
+func (h *Handler) EnqueuePublishJobForUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	vars := mux.Vars(r)
+	userID := vars["userId"]
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	reqObj, mediaFiles, err := parsePublishPostRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	caption := strings.TrimSpace(reqObj.Caption)
+	if caption == "" {
+		http.Error(w, "caption is required", http.StatusBadRequest)
+		return
+	}
+	caption = strings.ReplaceAll(caption, "\x00", "")
+	if !utf8.ValidString(caption) {
+		caption = strings.ToValidUTF8(caption, "�")
+	}
+
+	// Store uploaded media immediately so the background job can reference it.
+	relMedia, saveDetails, err := saveUploadedMedia(userID, mediaFiles)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Create job row
+	jobID := fmt.Sprintf("pub_%s", randHex(12))
+	now := time.Now()
+
+	// Request snapshot stored for auditing/debugging
+	reqSnapshot := map[string]interface{}{
+		"caption":         caption,
+		"providers":       reqObj.Providers,
+		"facebookPageIds": reqObj.FacebookPageIDs,
+		"dryRun":          reqObj.DryRun,
+		"media":           relMedia,
+		"publicOrigin":    publicOrigin(r),
+	}
+	reqJSON, _ := json.Marshal(reqSnapshot)
+
+	_, err = h.db.ExecContext(r.Context(), `
+		INSERT INTO public."PublishJobs"
+		  (id, user_id, status, providers, caption, request_json, created_at, updated_at)
+		VALUES
+		  ($1, $2, 'queued', $3, $4, $5::jsonb, $6, $6)
+	`, jobID, userID, pq.Array(reqObj.Providers), caption, string(reqJSON), now)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Fire and forget: run in background (uses DB for status, so any instance can serve status reads).
+	go h.runPublishJob(jobID, userID, caption, reqObj, relMedia, publicOrigin(r))
+
+	resp := map[string]interface{}{
+		"ok":     true,
+		"jobId":  jobID,
+		"status": "queued",
+		"saved":  saveDetails["saved"],
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// GetPublishJob returns the current job status + result (if finished).
+func (h *Handler) GetPublishJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	jobID := mux.Vars(r)["jobId"]
+	if strings.TrimSpace(jobID) == "" {
+		http.Error(w, "jobId is required", http.StatusBadRequest)
+		return
+	}
+
+	var (
+		userID     string
+		status     string
+		providers  []string
+		caption    sql.NullString
+		reqJSON    []byte
+		resJSON    []byte
+		errText    sql.NullString
+		createdAt  time.Time
+		startedAt  sql.NullTime
+		finishedAt sql.NullTime
+		updatedAt  time.Time
+	)
+
+	row := h.db.QueryRowContext(r.Context(), `
+		SELECT user_id, status, COALESCE(providers, ARRAY[]::text[]), COALESCE(caption,''), COALESCE(request_json, '{}'::jsonb), COALESCE(result_json, '{}'::jsonb),
+		       COALESCE(error,''), created_at, started_at, finished_at, updated_at
+		  FROM public."PublishJobs"
+		 WHERE id = $1
+	`, jobID)
+	if err := row.Scan(&userID, &status, pq.Array(&providers), &caption, &reqJSON, &resJSON, &errText, &createdAt, &startedAt, &finishedAt, &updatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "not_found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"ok":         true,
+		"jobId":      jobID,
+		"userId":     userID,
+		"status":     status,
+		"providers":  providers,
+		"createdAt":  createdAt,
+		"startedAt":  nullTimePtr(startedAt),
+		"finishedAt": nullTimePtr(finishedAt),
+		"updatedAt":  updatedAt,
+	}
+	if errText.Valid && errText.String != "" {
+		resp["error"] = errText.String
+	}
+	resp["result"] = json.RawMessage(resJSON)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRequest, relMedia []string, origin string) {
+	start := time.Now()
+	defer func() {
+		if rec := recover(); rec != nil {
+			msg := fmt.Sprintf("panic: %v", rec)
+			log.Printf("[PublishJob] panic jobId=%s userId=%s err=%s\n%s", jobID, userID, msg, string(debug.Stack()))
+			_, _ = h.db.Exec(`
+				UPDATE public."PublishJobs"
+				   SET status='failed', error=$2, finished_at=NOW(), updated_at=NOW()
+				 WHERE id=$1
+			`, jobID, msg)
+		}
+	}()
+
+	_, _ = h.db.Exec(`
+		UPDATE public."PublishJobs"
+		   SET status='running', started_at=NOW(), updated_at=NOW()
+		 WHERE id=$1
+	`, jobID)
+
+	want := map[string]bool{}
+	if len(req.Providers) > 0 {
+		for _, p := range req.Providers {
+			pp := strings.TrimSpace(strings.ToLower(p))
+			if pp != "" {
+				want[pp] = true
+			}
+		}
+	} else {
+		want["facebook"] = true
+		want["instagram"] = true
+		want["tiktok"] = true
+		want["youtube"] = true
+		want["pinterest"] = true
+		want["threads"] = true
+	}
+
+	results := map[string]publishProviderResult{}
+	overallOK := true
+
+	var mediaFiles []uploadedMedia
+	if len(relMedia) > 0 {
+		mf, err := loadUploadedMediaFromRelPaths(relMedia)
+		if err != nil {
+			overallOK = false
+			results["media"] = publishProviderResult{OK: false, Error: "failed_to_load_media", Details: map[string]interface{}{"error": err.Error()}}
+		} else {
+			mediaFiles = mf
+		}
+	}
+
+	// Facebook
+	if want["facebook"] {
+		posted, err, details := h.publishFacebookPages(context.Background(), userID, caption, req.FacebookPageIDs, mediaFiles, req.DryRun)
+		if err != nil {
+			results["facebook"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
+			overallOK = false
+		} else {
+			results["facebook"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+		}
+	}
+
+	// Instagram (requires public image URLs)
+	if want["instagram"] {
+		imageURLs := make([]string, 0, len(relMedia))
+		for _, u := range relMedia {
+			imageURLs = append(imageURLs, strings.TrimRight(origin, "/")+u)
+		}
+		posted, err, details := h.publishInstagramWithImageURLs(context.Background(), userID, caption, imageURLs, req.DryRun)
+		if err != nil {
+			results["instagram"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
+			overallOK = false
+		} else {
+			results["instagram"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+		}
+	}
+
+	for _, p := range []string{"tiktok", "youtube", "pinterest", "threads"} {
+		if want[p] {
+			results[p] = publishProviderResult{OK: false, Error: "not_supported_yet"}
+			overallOK = false
+		}
+	}
+
+	resp := map[string]interface{}{
+		"ok":         overallOK,
+		"jobId":      jobID,
+		"userId":     userID,
+		"durationMs": time.Since(start).Milliseconds(),
+		"results":    results,
+	}
+	resJSON, _ := json.Marshal(resp)
+
+	finalStatus := "completed"
+	var errText interface{} = nil
+	if !overallOK {
+		finalStatus = "failed"
+		// keep a short summary in error column
+		errText = "one_or_more_providers_failed"
+	}
+
+	_, _ = h.db.Exec(`
+		UPDATE public."PublishJobs"
+		   SET status=$2, result_json=$3::jsonb, error=COALESCE($4, error), finished_at=NOW(), updated_at=NOW()
+		 WHERE id=$1
+	`, jobID, finalStatus, string(resJSON), errText)
+
+	log.Printf("[PublishJob] done jobId=%s userId=%s status=%s dur=%dms", jobID, userID, finalStatus, time.Since(start).Milliseconds())
+}
+
 type fbOAuthPageRow struct {
 	ID          string   `json:"id"`
 	Name        *string  `json:"name"`
@@ -821,6 +1084,35 @@ func saveUploadedMedia(userID string, media []uploadedMedia) ([]string, map[stri
 	}
 	details["saved"] = files
 	return rel, details, nil
+}
+
+func loadUploadedMediaFromRelPaths(relPaths []string) ([]uploadedMedia, error) {
+	out := make([]uploadedMedia, 0, len(relPaths))
+	for _, rel := range relPaths {
+		rel = strings.TrimSpace(rel)
+		if rel == "" {
+			continue
+		}
+		// rel example: /media/uploads/<userId>/<file>
+		local := strings.TrimPrefix(rel, "/media/")
+		path := filepath.Clean(filepath.Join("media", local))
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		fn := filepath.Base(path)
+		ct := http.DetectContentType(b)
+		out = append(out, uploadedMedia{Filename: fn, ContentType: ct, Bytes: b})
+	}
+	return out, nil
+}
+
+func nullTimePtr(nt sql.NullTime) *time.Time {
+	if !nt.Valid {
+		return nil
+	}
+	t := nt.Time
+	return &t
 }
 
 func parsePublishPostRequest(r *http.Request) (publishPostRequest, []uploadedMedia, error) {
@@ -1268,13 +1560,11 @@ type instagramOAuth struct {
 	ExpiresAt    string `json:"expiresAt"`
 }
 
-func (h *Handler) publishInstagram(ctx context.Context, r *http.Request, userID, caption string, media []uploadedMedia, dryRun bool) (int, error, map[string]interface{}) {
-	details := map[string]interface{}{}
-
-	if len(media) == 0 {
+func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, caption string, imageURLs []string, dryRun bool) (int, error, map[string]interface{}) {
+	details := map[string]interface{}{"imageUrls": imageURLs}
+	if len(imageURLs) == 0 {
 		return 0, fmt.Errorf("instagram_requires_image"), details
 	}
-
 	// Load IG token + business account id from UserSettings
 	var raw []byte
 	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='instagram_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
@@ -1295,22 +1585,8 @@ func (h *Handler) publishInstagram(ctx context.Context, r *http.Request, userID,
 	}
 
 	if dryRun {
-		return 0, nil, map[string]interface{}{"dryRun": true, "mediaCount": len(media)}
+		return 0, nil, map[string]interface{}{"dryRun": true, "mediaCount": len(imageURLs), "imageUrls": imageURLs}
 	}
-
-	rel, saveDetails, err := saveUploadedMedia(userID, media)
-	if err != nil {
-		return 0, err, details
-	}
-	for k, v := range saveDetails {
-		details[k] = v
-	}
-	origin := publicOrigin(r)
-	imageURLs := make([]string, 0, len(rel))
-	for _, u := range rel {
-		imageURLs = append(imageURLs, origin+u)
-	}
-	details["imageUrls"] = imageURLs
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	accessToken := tok.AccessToken
@@ -1429,6 +1705,30 @@ func (h *Handler) publishInstagram(ctx context.Context, r *http.Request, userID,
 
 	log.Printf("[IGPublish] ok userId=%s igBusinessId=%s mediaId=%s", userID, tok.IGBusinessID, mediaID)
 	return 1, nil, details
+}
+
+func (h *Handler) publishInstagram(ctx context.Context, r *http.Request, userID, caption string, media []uploadedMedia, dryRun bool) (int, error, map[string]interface{}) {
+	details := map[string]interface{}{}
+	if len(media) == 0 {
+		return 0, fmt.Errorf("instagram_requires_image"), details
+	}
+	rel, saveDetails, err := saveUploadedMedia(userID, media)
+	if err != nil {
+		return 0, err, details
+	}
+	for k, v := range saveDetails {
+		details[k] = v
+	}
+	origin := publicOrigin(r)
+	imageURLs := make([]string, 0, len(rel))
+	for _, u := range rel {
+		imageURLs = append(imageURLs, origin+u)
+	}
+	posted, err2, det2 := h.publishInstagramWithImageURLs(ctx, userID, caption, imageURLs, dryRun)
+	for k, v := range det2 {
+		details[k] = v
+	}
+	return posted, err2, details
 }
 
 func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {

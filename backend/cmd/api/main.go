@@ -91,6 +91,10 @@ func main() {
 
 	// Publishing: post content to connected networks
 	r.HandleFunc("/api/social-posts/publish/user/{userId}", h.PublishSocialPostForUser).Methods("POST")
+	// Publishing (async): enqueue job + return jobId immediately
+	r.HandleFunc("/api/social-posts/publish-async/user/{userId}", h.EnqueuePublishJobForUser).Methods("POST")
+	// Publishing job status
+	r.HandleFunc("/api/social-posts/publish-jobs/{jobId}", h.GetPublishJob).Methods("GET")
 
 	// Team endpoints
 	r.HandleFunc("/api/teams", h.CreateTeam).Methods("POST")
@@ -128,8 +132,8 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Handler:      handler,
-		Addr:         ":" + port,
+		Handler: handler,
+		Addr:    ":" + port,
 		// Publishing (Facebook pages fan-out + Instagram container creation/publish) can legitimately take > 15s.
 		// If these are too low, nginx will see "upstream prematurely closed connection" and return 502.
 		WriteTimeout: 120 * time.Second,
