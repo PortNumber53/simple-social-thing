@@ -1592,6 +1592,52 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 	accessToken := tok.AccessToken
 	igID := tok.IGBusinessID
 
+	waitForContainer := func(containerID string) (string, error) {
+		// Poll container status until FINISHED to avoid:
+		// OAuthException code=9007 subcode=2207027 "Media ID is not available" / "media is not ready for publishing".
+		// See: https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/content-publishing/
+		type statusResp struct {
+			ID         string `json:"id"`
+			StatusCode string `json:"status_code"`
+		}
+		var last string
+		for i := 0; i < 30; i++ { // ~60s worst case
+			if i > 0 {
+				time.Sleep(2 * time.Second)
+			}
+			endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s?fields=status_code&access_token=%s",
+				url.PathEscape(containerID),
+				url.QueryEscape(accessToken),
+			)
+			req, _ := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+			req.Header.Set("Accept", "application/json")
+			res, err := client.Do(req)
+			if err != nil {
+				last = "request_error"
+				continue
+			}
+			b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+			_ = res.Body.Close()
+			if res.StatusCode < 200 || res.StatusCode >= 300 {
+				last = fmt.Sprintf("http_%d", res.StatusCode)
+				continue
+			}
+			var sr statusResp
+			if err := json.Unmarshal(b, &sr); err != nil {
+				last = "bad_json"
+				continue
+			}
+			last = strings.ToUpper(strings.TrimSpace(sr.StatusCode))
+			if last == "FINISHED" {
+				return last, nil
+			}
+			if last == "ERROR" || last == "EXPIRED" {
+				return last, fmt.Errorf("instagram_container_%s", strings.ToLower(last))
+			}
+		}
+		return last, fmt.Errorf("instagram_container_not_ready")
+	}
+
 	// Create media containers (children for carousel, or the single post container).
 	containerIDs := []string{}
 	for _, img := range imageURLs {
@@ -1625,6 +1671,11 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 			return 0, fmt.Errorf("instagram_missing_container_id"), map[string]interface{}{"body": truncate(string(b), 1200)}
 		}
 		containerIDs = append(containerIDs, id)
+
+		// Wait until the container is ready.
+		if st, err := waitForContainer(id); err != nil {
+			return 0, fmt.Errorf("instagram_container_not_ready"), map[string]interface{}{"containerId": id, "status": st}
+		}
 	}
 	details["containerIds"] = containerIDs
 
@@ -1658,6 +1709,13 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 	}
 	if creationID == "" {
 		return 0, fmt.Errorf("instagram_missing_creation_id"), details
+	}
+
+	// Wait for carousel parent container too.
+	if len(containerIDs) > 1 {
+		if st, err := waitForContainer(creationID); err != nil {
+			return 0, fmt.Errorf("instagram_container_not_ready"), map[string]interface{}{"containerId": creationID, "status": st}
+		}
 	}
 
 	// Publish
