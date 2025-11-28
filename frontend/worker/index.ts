@@ -608,6 +608,9 @@ export default {
       if (url.pathname === "/api/posts/publish") {
         return handlePostsPublish(request, env);
       }
+      if (url.pathname === "/api/posts/publish/ws") {
+        return handlePublishJobWs(request, env);
+      }
 
       return Response.json({ ok: true });
     }
@@ -830,7 +833,8 @@ async function handlePostsPublish(request: Request, env: Env): Promise<Response>
   }
 
   try {
-    const res = await fetch(`${backendOrigin}/api/social-posts/publish/user/${encodeURIComponent(sid)}`, {
+    // Async publish: enqueue server job and return fast.
+    const res = await fetch(`${backendOrigin}/api/social-posts/publish-async/user/${encodeURIComponent(sid)}`, {
       method: 'POST',
       headers: { 'Content-Type': contentType || 'application/octet-stream', Accept: 'application/json' },
       body: bodyBuf,
@@ -912,6 +916,88 @@ async function handleFacebookWebhook(request: Request, env: Env): Promise<Respon
   }
 
   return new Response(null, { status: 405 });
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function handlePublishJobWs(request: Request, env: Env): Promise<Response> {
+  // WebSocket endpoint: streams publish job status updates by polling backend.
+  if (request.headers.get('Upgrade') !== 'websocket') {
+    return new Response('expected websocket', { status: 400 });
+  }
+  const url = new URL(request.url);
+  const jobId = url.searchParams.get('jobId') || '';
+
+  const headers = buildCorsHeaders(request);
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  if (!sid) {
+    return new Response('unauthenticated', { status: 401, headers });
+  }
+  if (!jobId) {
+    return new Response('missing_jobId', { status: 400, headers });
+  }
+
+  const backendOrigin = getBackendOrigin(env, request);
+
+  const pair = new WebSocketPair();
+  const client = pair[0];
+  const server = pair[1];
+  server.accept();
+
+  const send = (obj: unknown) => {
+    try { server.send(JSON.stringify(obj)); } catch { void 0; }
+  };
+
+  let closed = false;
+  server.addEventListener('close', () => { closed = true; });
+  server.addEventListener('error', () => { closed = true; });
+
+  // Run in background: poll backend until terminal status.
+  (async () => {
+    let lastStatus: string | null = null;
+    for (let attempt = 0; attempt < 600 && !closed; attempt++) { // up to 10 minutes
+      try {
+        const r = await fetch(`${backendOrigin}/api/social-posts/publish-jobs/${encodeURIComponent(jobId)}`, {
+          headers: { Accept: 'application/json' },
+        });
+        const text = await r.text().catch(() => '');
+        let data: any = null;
+        try { data = text ? JSON.parse(text) : null; } catch { data = { ok: false, raw: text }; }
+
+        // Guard: ensure job belongs to current sid.
+        if (data && data.userId && String(data.userId) !== String(sid)) {
+          send({ ok: false, error: 'forbidden' });
+          try { server.close(1008, 'forbidden'); } catch { void 0; }
+          return;
+        }
+
+        const status = data && typeof data.status === 'string' ? data.status : null;
+        if (status && status !== lastStatus) {
+          send({ ok: true, type: 'status', job: data });
+          lastStatus = status;
+        } else if (attempt % 5 === 0) {
+          // periodic keepalive
+          send({ ok: true, type: 'ping', t: Date.now() });
+        }
+
+        if (status === 'completed' || status === 'failed') {
+          send({ ok: true, type: 'done', job: data });
+          try { server.close(1000, 'done'); } catch { void 0; }
+          return;
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        if (attempt % 5 === 0) send({ ok: false, error: 'poll_failed', details: { message } });
+      }
+      await sleep(1000);
+    }
+    try { server.close(1000, 'timeout'); } catch { void 0; }
+  })();
+
+  return new Response(null, { status: 101, webSocket: client, headers });
 }
 
 async function handleSunoCredits(request: Request, env: Env): Promise<Response> {

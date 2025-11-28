@@ -14,6 +14,8 @@ type PublishResponse = {
   error?: string;
   status?: number;
   body?: string;
+  jobId?: string;
+  jobStatus?: string;
 };
 
 
@@ -42,6 +44,7 @@ export const ContentPosts: React.FC = () => {
 	const [status, setStatus] = useState<string | null>(null);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [results, setResults] = useState<PublishResponse | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectAll, setSelectAll] = useState(true);
   const [showDetails, setShowDetails] = useState<Record<string, boolean>>({});
@@ -128,6 +131,7 @@ export const ContentPosts: React.FC = () => {
 	const submit = async () => {
     setResults(null);
     setShowDetails({});
+    setJobId(null);
     if (!caption.trim()) {
       setStatus('Please write a caption.');
       return;
@@ -166,6 +170,37 @@ export const ContentPosts: React.FC = () => {
         body,
       });
       const data: PublishResponse = await res.json().catch(() => ({}));
+      // Async path: we get back a jobId quickly. Then subscribe over WS for progress + final result.
+      if (data?.jobId) {
+        setJobId(data.jobId);
+        setStatus(`Publishing in background (job ${data.jobId})...`);
+        const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsUrl = `${proto}://${window.location.host}/api/posts/publish/ws?jobId=${encodeURIComponent(data.jobId)}`;
+        const ws = new WebSocket(wsUrl);
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data as string);
+            const job = msg?.job;
+            const st = typeof job?.status === 'string' ? job.status : null;
+            if (st) setStatus(`Publish job ${st}...`);
+
+            // Backend job status response includes `result` (JSON) when finished.
+            const result = job?.result;
+            if (result && typeof result === 'object' && (result as any).results) {
+              setResults(result as PublishResponse);
+              const rmap = (result as any).results;
+              const anyFail = rmap && typeof rmap === 'object' && Object.values(rmap).some((r: any) => !r?.ok);
+              if (st === 'failed' || anyFail) setStatus('Publish completed with errors. Expand Results for details.');
+              if (st === 'completed' && !anyFail) setStatus('Publish completed successfully.');
+            }
+          } catch { void 0; }
+        };
+        ws.onerror = () => setStatus('Publish started, but realtime updates failed (websocket error).');
+        // don't block: request already enqueued
+        return;
+      }
+
+      // Sync fallback (legacy)
       setResults(data);
       const resultMap = data?.results && typeof data.results === 'object' ? data.results : null;
       const anyFail = !!resultMap && Object.values(resultMap).some((r) => !r?.ok);
@@ -393,6 +428,7 @@ export const ContentPosts: React.FC = () => {
               {isSubmitting ? 'Publishing…' : 'Publish'}
             </button>
 						{status && <span className="text-sm text-slate-500 dark:text-slate-300">{status}</span>}
+            {jobId && <span className="text-xs text-slate-400 dark:text-slate-400">job: {jobId}</span>}
 					</div>
           {results?.results && (
             <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4">
