@@ -1,19 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Layout } from '../components/Layout';
+import { useIntegrations } from '../contexts/IntegrationsContext';
 
 interface MediaPreview {
 	id: string;
 	file: File;
 	url: string;
 }
-
-type IntegrationsStatusResponse = Record<
-  string,
-  {
-    connected?: boolean;
-    account?: Record<string, unknown>;
-  }
->;
 
 type PublishResponse = {
   ok?: boolean;
@@ -23,11 +16,6 @@ type PublishResponse = {
   body?: string;
 };
 
-type FacebookPagesResponse = {
-  ok?: boolean;
-  connected?: boolean;
-  pages?: Array<{ id: string; name: string | null; tasks: string[]; canPost: boolean }>;
-};
 
 const PROVIDER_LABELS: Record<string, string> = {
   instagram: 'Instagram',
@@ -39,56 +27,38 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 export const ContentPosts: React.FC = () => {
+  const { connectedProviders, facebookPages } = useIntegrations();
 	const [caption, setCaption] = useState<string>('');
 	const [media, setMedia] = useState<MediaPreview[]>([]);
 	const [status, setStatus] = useState<string | null>(null);
-  const [connected, setConnected] = useState<string[]>([]);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [results, setResults] = useState<PublishResponse | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectAll, setSelectAll] = useState(true);
   const [showDetails, setShowDetails] = useState<Record<string, boolean>>({});
-  const [fbPages, setFbPages] = useState<Array<{ id: string; name: string | null; tasks: string[]; canPost: boolean }>>([]);
   const [fbSelected, setFbSelected] = useState<Record<string, boolean>>({});
   const [fbExpanded, setFbExpanded] = useState(true);
+  const didInit = useRef(false);
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await fetch('/api/integrations/status', { credentials: 'include' });
-        const data: unknown = await res.json().catch(() => null);
-        const obj = (data && typeof data === 'object') ? (data as IntegrationsStatusResponse) : null;
-        if (!obj) return;
-        const conns = Object.keys(obj).filter((k) => !!obj[k]?.connected);
-        setConnected(conns);
-        // Default select all connected
-        const next: Record<string, boolean> = {};
-        for (const p of conns) next[p] = true;
-        setSelected(next);
-        setSelectAll(true);
-      } catch { void 0; }
-    };
-    void load();
-  }, []);
+    // Initialize selections once when we first have connected providers/pages.
+    if (didInit.current) return;
+    if (connectedProviders.length === 0) return;
+    didInit.current = true;
 
-  useEffect(() => {
-    const loadFbPages = async () => {
-      if (!connected.includes('facebook')) return;
-      try {
-        const res = await fetch('/api/integrations/facebook/pages', { credentials: 'include' });
-        const data: FacebookPagesResponse = await res.json().catch(() => ({}));
-        const pages = Array.isArray(data.pages) ? data.pages : [];
-        setFbPages(pages);
-        // default select all postable pages
-        const next: Record<string, boolean> = {};
-        for (const p of pages) {
-          if (p.canPost) next[p.id] = true;
-        }
-        setFbSelected(next);
-      } catch { void 0; }
-    };
-    void loadFbPages();
-  }, [connected]);
+    const next: Record<string, boolean> = {};
+    for (const p of connectedProviders) next[p] = true;
+    setSelected(next);
+    setSelectAll(true);
+
+    if (connectedProviders.includes('facebook')) {
+      const fbNext: Record<string, boolean> = {};
+      for (const p of facebookPages) {
+        if (p.canPost) fbNext[p.id] = true;
+      }
+      setFbSelected(fbNext);
+    }
+  }, [connectedProviders, facebookPages]);
 
   const selectedProviders = useMemo(() => {
     return Object.keys(selected).filter((k) => selected[k]);
@@ -96,10 +66,10 @@ export const ContentPosts: React.FC = () => {
 
   useEffect(() => {
     // Keep "select all" in sync when user toggles individuals
-    if (connected.length === 0) return;
-    const allOn = connected.every((p) => selected[p]);
+    if (connectedProviders.length === 0) return;
+    const allOn = connectedProviders.every((p) => selected[p]);
     setSelectAll(allOn);
-  }, [connected, selected]);
+  }, [connectedProviders, selected]);
 
 	const onFiles = (files: FileList | null) => {
 		if (!files) return;
@@ -179,20 +149,20 @@ export const ContentPosts: React.FC = () => {
                     const v = e.target.checked;
                     setSelectAll(v);
                     const next: Record<string, boolean> = { ...selected };
-                    for (const p of connected) next[p] = v;
+                    for (const p of connectedProviders) next[p] = v;
                     setSelected(next);
                   }}
                 />
                 Post to all connected
               </label>
             </div>
-            {connected.length === 0 ? (
+            {connectedProviders.length === 0 ? (
               <div className="text-sm text-slate-500 dark:text-slate-300">
                 No connected networks yet. Go to <a href="/integrations" className="underline">Integrations</a> to connect.
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {connected.map((p) => (
+                {connectedProviders.map((p) => (
                   <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm">
                     <input
                       type="checkbox"
@@ -205,7 +175,7 @@ export const ContentPosts: React.FC = () => {
               </div>
             )}
 
-            {connected.includes('facebook') && selected.facebook && (
+            {connectedProviders.includes('facebook') && selected.facebook && (
               <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4 bg-white/60 dark:bg-slate-900/20">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-sm font-medium text-slate-700 dark:text-slate-200">Facebook Pages</div>
@@ -219,13 +189,13 @@ export const ContentPosts: React.FC = () => {
                 </div>
                 {fbExpanded && (
                   <div className="mt-3 space-y-2">
-                    {fbPages.length === 0 ? (
+                    {facebookPages.length === 0 ? (
                       <div className="text-sm text-slate-500 dark:text-slate-300">
                         No pages found (or you need to reconnect Facebook so we can read your page list/tasks).
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {fbPages.map((pg) => {
+                        {facebookPages.map((pg) => {
                           const disabled = !pg.canPost;
                           return (
                             <label
@@ -297,7 +267,7 @@ export const ContentPosts: React.FC = () => {
 						<p className="text-xs text-slate-500 dark:text-slate-400">Tip: upload 2+ images to make a carousel.</p>
 					</div>
 					<div className="flex gap-3 items-center">
-						<button onClick={submit} className="btn btn-primary" disabled={isSubmitting || connected.length === 0}>
+						<button onClick={submit} className="btn btn-primary" disabled={isSubmitting || connectedProviders.length === 0}>
               {isSubmitting ? 'Publishing…' : 'Publish'}
             </button>
 						{status && <span className="text-sm text-slate-500 dark:text-slate-300">{status}</span>}

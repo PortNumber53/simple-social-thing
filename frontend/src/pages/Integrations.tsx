@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
+import { useIntegrations } from '../contexts/IntegrationsContext';
 
 type SunoApiKeyResponse = { ok?: boolean; value?: { apiKey?: unknown } };
 type ProviderStatusResponse = {
@@ -16,6 +17,7 @@ type IntegrationsStatusResponse = {
 };
 
 export const Integrations: React.FC = () => {
+  const { status: integrationsStatus, refreshStatus, refreshFacebookPages } = useIntegrations();
   const [igStatus, setIgStatus] = useState<string | null>(null);
   const [igAccount, setIgAccount] = useState<{ id: string; username: string | null } | null>(null);
   const [ttStatus, setTtStatus] = useState<string | null>(null);
@@ -57,6 +59,7 @@ export const Integrations: React.FC = () => {
       } finally {
         // Clean the URL
         window.history.replaceState({}, document.title, '/integrations');
+        void refreshStatus();
       }
     } else if (tt) {
       try {
@@ -74,6 +77,7 @@ export const Integrations: React.FC = () => {
         setTtStatus('TikTok connection status could not be parsed.');
       } finally {
         window.history.replaceState({}, document.title, '/integrations');
+        void refreshStatus();
       }
     } else if (fb) {
       try {
@@ -91,6 +95,8 @@ export const Integrations: React.FC = () => {
         setFbStatus('Facebook connection status could not be parsed.');
       } finally {
         window.history.replaceState({}, document.title, '/integrations');
+        void refreshStatus();
+        void refreshFacebookPages();
       }
     } else if (yt) {
       try {
@@ -108,6 +114,7 @@ export const Integrations: React.FC = () => {
         setYtStatus('YouTube connection status could not be parsed.');
       } finally {
         window.history.replaceState({}, document.title, '/integrations');
+        void refreshStatus();
       }
     } else if (pin) {
       try {
@@ -125,6 +132,7 @@ export const Integrations: React.FC = () => {
         setPinStatus('Pinterest connection status could not be parsed.');
       } finally {
         window.history.replaceState({}, document.title, '/integrations');
+        void refreshStatus();
       }
     } else if (th) {
       try {
@@ -142,6 +150,7 @@ export const Integrations: React.FC = () => {
         setThStatus('Threads connection status could not be parsed.');
       } finally {
         window.history.replaceState({}, document.title, '/integrations');
+        void refreshStatus();
       }
     } else {
       // Load existing connection from localStorage if present
@@ -203,54 +212,52 @@ export const Integrations: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // Prefer live status from worker so UI stays correct across devices.
-    const loadStatus = async () => {
-      try {
-        const res = await fetch('/api/integrations/status', { credentials: 'include' });
-        const data: unknown = await res.json().catch(() => null);
-        if (!res.ok || !data || typeof data !== 'object') return;
-        const obj = data as IntegrationsStatusResponse;
+    // Ensure we have a fresh app-wide status when opening this page.
+    void refreshStatus();
+  }, [refreshStatus]);
 
-        if (obj.instagram?.connected) {
-          const a = obj.instagram.account || {};
-          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
-          const username = typeof a.username === 'string' ? a.username : null;
-          if (id) setIgAccount({ id, username });
-        }
-        if (obj.tiktok?.connected) {
-          const a = obj.tiktok.account || {};
-          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
-          const displayName = typeof a.displayName === 'string' ? a.displayName : null;
-          if (id) setTtAccount({ id, displayName });
-        }
-        if (obj.facebook?.connected) {
-          const a = obj.facebook.account || {};
-          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
-          const name = typeof a.name === 'string' ? a.name : null;
-          if (id) setFbAccount({ id, name });
-        }
-        if (obj.youtube?.connected) {
-          const a = obj.youtube.account || {};
-          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
-          const name = typeof a.name === 'string' ? a.name : null;
-          if (id) setYtAccount({ id, name });
-        }
-        if (obj.pinterest?.connected) {
-          const a = obj.pinterest.account || {};
-          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
-          const name = typeof a.name === 'string' ? a.name : null;
-          if (id) setPinAccount({ id, name });
-        }
-        if (obj.threads?.connected) {
-          const a = obj.threads.account || {};
-          const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
-          const name = typeof a.name === 'string' ? a.name : null;
-          if (id) setThAccount({ id, name });
-        }
-      } catch { void 0; }
-    };
-    loadStatus();
-  }, []);
+  useEffect(() => {
+    // Keep local page state in sync with app-wide integrations state.
+    if (!integrationsStatus) return;
+    const obj = integrationsStatus as IntegrationsStatusResponse;
+
+    if (obj.instagram?.connected) {
+      const a = obj.instagram.account || {};
+      const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+      const username = typeof a.username === 'string' ? a.username : null;
+      if (id) setIgAccount({ id, username });
+    }
+    if (obj.tiktok?.connected) {
+      const a = obj.tiktok.account || {};
+      const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+      const displayName = typeof a.displayName === 'string' ? a.displayName : null;
+      if (id) setTtAccount({ id, displayName });
+    }
+    if (obj.facebook?.connected) {
+      const a = obj.facebook.account || {};
+      const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+      const name = typeof a.name === 'string' ? a.name : null;
+      if (id) setFbAccount({ id, name });
+    }
+    if (obj.youtube?.connected) {
+      const a = obj.youtube.account || {};
+      const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+      const name = typeof a.name === 'string' ? a.name : null;
+      if (id) setYtAccount({ id, name });
+    }
+    if (obj.pinterest?.connected) {
+      const a = obj.pinterest.account || {};
+      const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+      const name = typeof a.name === 'string' ? a.name : null;
+      if (id) setPinAccount({ id, name });
+    }
+    if (obj.threads?.connected) {
+      const a = obj.threads.account || {};
+      const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
+      const name = typeof a.name === 'string' ? a.name : null;
+      if (id) setThAccount({ id, name });
+    }
+  }, [integrationsStatus]);
 
   useEffect(() => {
     // Fetch TikTok granted scopes (without exposing tokens) so we can surface "video import enabled" state.
