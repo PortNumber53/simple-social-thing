@@ -521,6 +521,10 @@ export default {
       if (url.pathname === "/api/integrations/facebook/permissions") {
         return handleFacebookPermissions(request, env);
       }
+      // Facebook pages list (no secrets; returns ids/names/tasks/canPost only)
+      if (url.pathname === "/api/integrations/facebook/pages") {
+        return handleFacebookPages(request, env);
+      }
 
       // YouTube OAuth start/callback
       if (url.pathname === "/api/integrations/youtube/auth") {
@@ -2357,6 +2361,53 @@ async function handleFacebookPermissions(request: Request, env: Env): Promise<Re
         tasks: Array.isArray(p?.tasks) ? p.tasks.filter((t: any) => typeof t === 'string') : [],
       })),
     }), { status: 200, headers });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    headers.set('Content-Type', 'application/json');
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
+}
+
+async function handleFacebookPages(request: Request, env: Env): Promise<Response> {
+  const headers = buildCorsHeaders(request);
+  if (request.method === 'OPTIONS') {
+    headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
+    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+    return new Response(null, { status: 204, headers });
+  }
+  if (request.method !== 'GET') return new Response(null, { status: 405, headers });
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  if (!sid) {
+    headers.set('Content-Type', 'application/json');
+    return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+  }
+
+  const backendOrigin = getBackendOrigin(env, request);
+  try {
+    const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/facebook_oauth`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (res.status === 404) {
+      headers.set('Content-Type', 'application/json');
+      return new Response(JSON.stringify({ ok: true, connected: false, pages: [] }), { status: 200, headers });
+    }
+    const data: any = await res.json().catch(() => null);
+    const value = data?.value || null;
+    const pages = Array.isArray(value?.pages) ? value.pages : [];
+    const normalized = pages
+      .map((p: any) => {
+        const id = typeof p?.id === 'string' ? p.id : (p?.id ? String(p.id) : '');
+        const name = typeof p?.name === 'string' ? p.name : null;
+        const tasks = Array.isArray(p?.tasks) ? p.tasks.filter((t: any) => typeof t === 'string') : [];
+        const canPost = tasks.map((t: string) => (t || '').toUpperCase()).some((t: string) => t === 'CREATE_CONTENT' || t === 'MANAGE');
+        return { id, name, tasks, canPost };
+      })
+      .filter((p: any) => p.id);
+
+    headers.set('Content-Type', 'application/json');
+    return new Response(JSON.stringify({ ok: true, connected: true, pages: normalized }), { status: 200, headers });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     headers.set('Content-Type', 'application/json');
