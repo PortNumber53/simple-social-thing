@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Layout } from '../components/Layout';
 
 interface MediaPreview {
@@ -7,10 +7,70 @@ interface MediaPreview {
 	url: string;
 }
 
+type IntegrationsStatusResponse = Record<
+  string,
+  {
+    connected?: boolean;
+    account?: Record<string, unknown>;
+  }
+>;
+
+type PublishResponse = {
+  ok?: boolean;
+  results?: Record<string, { ok?: boolean; posted?: number; error?: string; details?: unknown }>;
+  error?: string;
+  status?: number;
+  body?: string;
+};
+
+const PROVIDER_LABELS: Record<string, string> = {
+  instagram: 'Instagram',
+  facebook: 'Facebook Pages',
+  tiktok: 'TikTok',
+  youtube: 'YouTube',
+  pinterest: 'Pinterest',
+  threads: 'Threads',
+};
+
 export const ContentPosts: React.FC = () => {
 	const [caption, setCaption] = useState<string>('');
 	const [media, setMedia] = useState<MediaPreview[]>([]);
 	const [status, setStatus] = useState<string | null>(null);
+  const [connected, setConnected] = useState<string[]>([]);
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [results, setResults] = useState<PublishResponse | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectAll, setSelectAll] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch('/api/integrations/status', { credentials: 'include' });
+        const data: unknown = await res.json().catch(() => null);
+        const obj = (data && typeof data === 'object') ? (data as IntegrationsStatusResponse) : null;
+        if (!obj) return;
+        const conns = Object.keys(obj).filter((k) => !!obj[k]?.connected);
+        setConnected(conns);
+        // Default select all connected
+        const next: Record<string, boolean> = {};
+        for (const p of conns) next[p] = true;
+        setSelected(next);
+        setSelectAll(true);
+      } catch { void 0; }
+    };
+    void load();
+  }, []);
+
+  const selectedProviders = useMemo(() => {
+    return Object.keys(selected).filter((k) => selected[k]);
+  }, [selected]);
+
+  useEffect(() => {
+    // Keep "select all" in sync when user toggles individuals
+    if (connected.length === 0) return;
+    const allOn = connected.every((p) => selected[p]);
+    setSelectAll(allOn);
+  }, [connected, selected]);
 
 	const onFiles = (files: FileList | null) => {
 		if (!files) return;
@@ -27,21 +87,90 @@ export const ContentPosts: React.FC = () => {
 	};
 
 	const submit = async () => {
-		setStatus('Posting to Instagram (placeholder)...');
-		// In a real flow we would send FormData to backend which would talk to IG Graph API
-		setTimeout(() => {
-			setStatus('Post queued.');
-		}, 900);
+    setResults(null);
+    if (!caption.trim()) {
+      setStatus('Please write a caption.');
+      return;
+    }
+    if (selectedProviders.length === 0) {
+      setStatus('Select at least one connected network.');
+      return;
+    }
+    setIsSubmitting(true);
+		setStatus(`Publishing to ${selectedProviders.length} network(s)...`);
+    try {
+      const res = await fetch('/api/posts/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ caption, providers: selectedProviders }),
+      });
+      const data: PublishResponse = await res.json().catch(() => ({}));
+      setResults(data);
+      if (!res.ok || data.ok === false) {
+        setStatus(`Publish failed: ${data.error || 'Unknown error'}`);
+      } else {
+        setStatus('Publish request completed.');
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setResults({ ok: false, error: msg });
+      setStatus(`Publish failed: ${msg}`);
+    } finally {
+      setIsSubmitting(false);
+    }
 	};
 
 	return (
 		<Layout headerPaddingClass="pt-24">
 			<div className="max-w-5xl mx-auto space-y-8">
 				<header className="space-y-2">
-					<h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50">Instagram Posts</h1>
-					<p className="text-slate-600 dark:text-slate-400 text-sm">Create single or multi-image posts.</p>
+					<h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50">Publish Post</h1>
+					<p className="text-slate-600 dark:text-slate-400 text-sm">
+            Choose which connected networks to publish to.
+					</p>
 				</header>
 				<div className="bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-6 space-y-6">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Networks</label>
+              <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={selectAll}
+                  onChange={(e) => {
+                    const v = e.target.checked;
+                    setSelectAll(v);
+                    const next: Record<string, boolean> = { ...selected };
+                    for (const p of connected) next[p] = v;
+                    setSelected(next);
+                  }}
+                />
+                Post to all connected
+              </label>
+            </div>
+            {connected.length === 0 ? (
+              <div className="text-sm text-slate-500 dark:text-slate-300">
+                No connected networks yet. Go to <a href="/integrations" className="underline">Integrations</a> to connect.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {connected.map((p) => (
+                  <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={!!selected[p]}
+                      onChange={(e) => setSelected((prev) => ({ ...prev, [p]: e.target.checked }))}
+                    />
+                    <span className="text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p] || p}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Note: publishing support is incremental. Currently the backend supports caption-only publishing for Facebook Pages; other networks may report <span className="font-mono">not_supported_yet</span>.
+            </p>
+          </div>
 					<div className="space-y-2">
 						<label className="text-sm font-medium text-slate-700 dark:text-slate-200">Caption</label>
 						<textarea
@@ -73,9 +202,30 @@ export const ContentPosts: React.FC = () => {
 						<p className="text-xs text-slate-500 dark:text-slate-400">Tip: upload 2+ images to make a carousel.</p>
 					</div>
 					<div className="flex gap-3 items-center">
-						<button onClick={submit} className="btn btn-primary">Publish</button>
+						<button onClick={submit} className="btn btn-primary" disabled={isSubmitting || connected.length === 0}>
+              {isSubmitting ? 'Publishing…' : 'Publish'}
+            </button>
 						{status && <span className="text-sm text-slate-500 dark:text-slate-300">{status}</span>}
 					</div>
+          {results?.results && (
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4">
+              <div className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">Results</div>
+              <div className="space-y-1 text-sm">
+                {Object.entries(results.results).map(([provider, r]) => (
+                  <div key={provider} className="flex items-start justify-between gap-3">
+                    <div className="text-slate-700 dark:text-slate-200">{PROVIDER_LABELS[provider] || provider}</div>
+                    <div className="text-right text-slate-600 dark:text-slate-300">
+                      {r.ok ? (
+                        <span>ok{typeof r.posted === 'number' ? ` (posted ${r.posted})` : ''}</span>
+                      ) : (
+                        <span className="text-rose-600 dark:text-rose-400">{r.error || 'error'}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 				</div>
 			</div>
 		</Layout>
