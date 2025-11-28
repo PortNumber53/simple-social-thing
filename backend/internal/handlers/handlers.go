@@ -1031,7 +1031,40 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		}
 	}
 
-	for _, p := range []string{"pinterest", "threads"} {
+	// Pinterest (requires a public image URL)
+	if want["pinterest"] {
+		imageURL := ""
+		for i, rel := range relMedia {
+			ct := ""
+			fn := ""
+			if i < len(mediaFiles) {
+				ct = strings.ToLower(strings.TrimSpace(mediaFiles[i].ContentType))
+				fn = strings.ToLower(strings.TrimSpace(mediaFiles[i].Filename))
+			}
+			if strings.Contains(ct, "multipart/") || strings.Contains(ct, "application/") {
+				// ignore
+			}
+			if strings.HasPrefix(ct, "image/") ||
+				strings.HasSuffix(strings.ToLower(rel), ".jpg") ||
+				strings.HasSuffix(strings.ToLower(rel), ".jpeg") ||
+				strings.HasSuffix(strings.ToLower(rel), ".png") ||
+				strings.HasSuffix(strings.ToLower(rel), ".webp") ||
+				strings.HasSuffix(strings.ToLower(rel), ".gif") ||
+				strings.HasSuffix(fn, ".jpg") || strings.HasSuffix(fn, ".jpeg") || strings.HasSuffix(fn, ".png") || strings.HasSuffix(fn, ".webp") || strings.HasSuffix(fn, ".gif") {
+				imageURL = strings.TrimRight(origin, "/") + rel
+				break
+			}
+		}
+		posted, err, details := h.publishPinterestWithImageURL(context.Background(), userID, caption, imageURL, req.DryRun)
+		if err != nil {
+			results["pinterest"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
+			overallOK = false
+		} else {
+			results["pinterest"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+		}
+	}
+
+	for _, p := range []string{"threads"} {
 		if want[p] {
 			results[p] = publishProviderResult{OK: false, Error: "not_supported_yet"}
 			overallOK = false
@@ -1657,6 +1690,13 @@ type youtubeOAuth struct {
 	Scope        string `json:"scope"`
 }
 
+type pinterestOAuth struct {
+	AccessToken string `json:"accessToken"`
+	TokenType   string `json:"tokenType"`
+	ExpiresAt   string `json:"expiresAt"`
+	Scope       string `json:"scope"`
+}
+
 func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, caption string, imageURLs []string, dryRun bool) (int, error, map[string]interface{}) {
 	details := map[string]interface{}{"imageUrls": imageURLs}
 	if len(imageURLs) == 0 {
@@ -1936,6 +1976,180 @@ func (h *Handler) publishTikTokWithVideoURL(ctx context.Context, userID, caption
 	details["response"] = json.RawMessage(b)
 	log.Printf("[TTPost] ok userId=%s", userID)
 	// NOTE: inbox flow may require user to finalize in TikTok app. We still mark as "posted 1" for now.
+	return 1, nil, details
+}
+
+func (h *Handler) publishPinterestWithImageURL(ctx context.Context, userID, caption, imageURL string, dryRun bool) (int, error, map[string]interface{}) {
+	details := map[string]interface{}{
+		"imageUrl": imageURL,
+	}
+	if strings.TrimSpace(imageURL) == "" {
+		return 0, fmt.Errorf("pinterest_requires_image"), details
+	}
+
+	// Load token
+	var raw []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("not_connected"), details
+		}
+		return 0, err, details
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, fmt.Errorf("not_connected"), details
+	}
+	var tok pinterestOAuth
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return 0, fmt.Errorf("invalid_oauth_payload"), map[string]interface{}{"raw": truncate(string(raw), 800)}
+	}
+	if strings.TrimSpace(tok.AccessToken) == "" {
+		return 0, fmt.Errorf("not_connected"), details
+	}
+
+	// Basic scope guard (Pinterest returns comma-delimited scopes; be permissive).
+	scope := strings.ToLower(tok.Scope)
+	if scope != "" && !(strings.Contains(scope, "pins:write") || strings.Contains(scope, "pins:write_secret")) {
+		return 0, fmt.Errorf("missing_scope"), map[string]interface{}{"scope": tok.Scope, "required": []string{"pins:write"}}
+	}
+
+	// Best-effort expiration check (Pinterest tokens are often long-lived; we don't refresh here).
+	if strings.TrimSpace(tok.ExpiresAt) != "" {
+		if t, err := time.Parse(time.RFC3339, tok.ExpiresAt); err == nil {
+			if time.Now().After(t.Add(-30 * time.Second)) {
+				return 0, fmt.Errorf("token_expired_reconnect"), map[string]interface{}{"expiresAt": tok.ExpiresAt}
+			}
+		}
+	}
+
+	if dryRun {
+		return 0, nil, map[string]interface{}{"dryRun": true}
+	}
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	authHeader := "Bearer " + tok.AccessToken
+
+	// 1) Find a board (or create a default one)
+	boardID := ""
+	{
+		reqURL := "https://api.pinterest.com/v5/boards?page_size=25"
+		req, _ := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+		req.Header.Set("Authorization", authHeader)
+		req.Header.Set("Accept", "application/json")
+		res, err := client.Do(req)
+		if err != nil {
+			return 0, err, details
+		}
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		_ = res.Body.Close()
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			return 0, fmt.Errorf("pinterest_boards_non_2xx"), map[string]interface{}{"status": res.StatusCode, "body": truncate(string(body), 2000)}
+		}
+		var parsed map[string]interface{}
+		_ = json.Unmarshal(body, &parsed)
+		items, _ := parsed["items"].([]interface{})
+		if len(items) > 0 {
+			if m, _ := items[0].(map[string]interface{}); m != nil {
+				if id, _ := m["id"].(string); id != "" {
+					boardID = id
+				}
+			}
+		}
+		details["boardsList"] = map[string]interface{}{"count": len(items)}
+	}
+
+	if boardID == "" {
+		create := map[string]interface{}{
+			"name":        "Simple Social Thing",
+			"description": "Created by Simple Social Thing",
+			"privacy":     "PUBLIC",
+		}
+		b, _ := json.Marshal(create)
+		req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.pinterest.com/v5/boards", bytes.NewReader(b))
+		req.Header.Set("Authorization", authHeader)
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Content-Type", "application/json")
+		res, err := client.Do(req)
+		if err != nil {
+			return 0, err, details
+		}
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		_ = res.Body.Close()
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			return 0, fmt.Errorf("pinterest_create_board_non_2xx"), map[string]interface{}{"status": res.StatusCode, "body": truncate(string(body), 2000)}
+		}
+		var parsed map[string]interface{}
+		_ = json.Unmarshal(body, &parsed)
+		if id, _ := parsed["id"].(string); id != "" {
+			boardID = id
+		}
+		details["createdBoard"] = json.RawMessage(body)
+	}
+	if boardID == "" {
+		return 0, fmt.Errorf("pinterest_no_board"), details
+	}
+	details["boardId"] = boardID
+
+	// 2) Create pin
+	title := strings.TrimSpace(caption)
+	if title == "" {
+		title = "New pin"
+	}
+	if len(title) > 95 {
+		title = truncate(title, 95)
+	}
+	pinReq := map[string]interface{}{
+		"board_id":     boardID,
+		"title":        title,
+		"description":  caption,
+		"media_source": map[string]interface{}{"source_type": "image_url", "url": imageURL},
+	}
+	pinBytes, _ := json.Marshal(pinReq)
+	req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.pinterest.com/v5/pins", bytes.NewReader(pinBytes))
+	req.Header.Set("Authorization", authHeader)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		return 0, err, details
+	}
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 2<<20))
+	_ = res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return 0, fmt.Errorf("pinterest_create_pin_non_2xx"), map[string]interface{}{"status": res.StatusCode, "body": truncate(string(body), 3000)}
+	}
+
+	var pinParsed map[string]interface{}
+	_ = json.Unmarshal(body, &pinParsed)
+	pinID, _ := pinParsed["id"].(string)
+	link, _ := pinParsed["link"].(string)
+	if link == "" && pinID != "" {
+		link = fmt.Sprintf("https://www.pinterest.com/pin/%s/", pinID)
+	}
+	details["pinId"] = pinID
+	details["response"] = json.RawMessage(body)
+
+	if pinID != "" {
+		rawPayload := strings.ReplaceAll(string(body), "\x00", "")
+		if !utf8.ValidString(rawPayload) {
+			rawPayload = strings.ToValidUTF8(rawPayload, "�")
+		}
+		rowID := fmt.Sprintf("pinterest:%s:%s", userID, pinID)
+		_, _ = h.db.ExecContext(ctx, `
+			INSERT INTO public."SocialLibraries"
+			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
+			VALUES
+			  ($1, $2, 'pinterest', 'pin', NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULL, NOW(), NULL, NULL, $6::jsonb, $7, NOW(), NOW())
+			ON CONFLICT (user_id, network, external_id)
+			DO UPDATE SET
+			  title = EXCLUDED.title,
+			  permalink_url = EXCLUDED.permalink_url,
+			  media_url = EXCLUDED.media_url,
+			  raw_payload = EXCLUDED.raw_payload,
+			  updated_at = NOW()
+		`, rowID, userID, title, link, imageURL, rawPayload, pinID)
+	}
+
+	log.Printf("[PINPublish] ok userId=%s pinId=%s", userID, pinID)
 	return 1, nil, details
 }
 
