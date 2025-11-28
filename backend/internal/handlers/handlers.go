@@ -982,7 +982,33 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		}
 	}
 
-	for _, p := range []string{"youtube", "pinterest", "threads"} {
+	// YouTube (requires a video upload; currently supports small uploads due to request size limits)
+	if want["youtube"] {
+		var video uploadedMedia
+		found := false
+		for i := range mediaFiles {
+			ct := strings.ToLower(strings.TrimSpace(mediaFiles[i].ContentType))
+			if strings.HasPrefix(ct, "video/") {
+				video = mediaFiles[i]
+				found = true
+				break
+			}
+		}
+		if !found {
+			results["youtube"] = publishProviderResult{OK: false, Error: "youtube_requires_video"}
+			overallOK = false
+		} else {
+			posted, err, details := h.publishYouTubeWithVideoBytes(context.Background(), userID, caption, video, req.DryRun)
+			if err != nil {
+				results["youtube"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
+				overallOK = false
+			} else {
+				results["youtube"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+			}
+		}
+	}
+
+	for _, p := range []string{"pinterest", "threads"} {
 		if want[p] {
 			results[p] = publishProviderResult{OK: false, Error: "not_supported_yet"}
 			overallOK = false
@@ -1591,6 +1617,14 @@ type tiktokOAuth struct {
 	ExpiresAt   string `json:"expiresAt"`
 }
 
+type youtubeOAuth struct {
+	AccessToken  string `json:"accessToken"`
+	TokenType    string `json:"tokenType"`
+	ExpiresAt    string `json:"expiresAt"`
+	RefreshToken string `json:"refreshToken"`
+	Scope        string `json:"scope"`
+}
+
 func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, caption string, imageURLs []string, dryRun bool) (int, error, map[string]interface{}) {
 	details := map[string]interface{}{"imageUrls": imageURLs}
 	if len(imageURLs) == 0 {
@@ -1870,6 +1904,154 @@ func (h *Handler) publishTikTokWithVideoURL(ctx context.Context, userID, caption
 	details["response"] = json.RawMessage(b)
 	log.Printf("[TTPost] ok userId=%s", userID)
 	// NOTE: inbox flow may require user to finalize in TikTok app. We still mark as "posted 1" for now.
+	return 1, nil, details
+}
+
+func (h *Handler) publishYouTubeWithVideoBytes(ctx context.Context, userID, caption string, video uploadedMedia, dryRun bool) (int, error, map[string]interface{}) {
+	details := map[string]interface{}{
+		"contentType": video.ContentType,
+		"size":        len(video.Bytes),
+	}
+	if len(video.Bytes) == 0 {
+		return 0, fmt.Errorf("youtube_requires_video"), details
+	}
+
+	// Load token
+	var raw []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("not_connected"), details
+		}
+		return 0, err, details
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, fmt.Errorf("not_connected"), details
+	}
+	var tok youtubeOAuth
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return 0, fmt.Errorf("invalid_oauth_payload"), map[string]interface{}{"raw": truncate(string(raw), 800)}
+	}
+	if strings.TrimSpace(tok.AccessToken) == "" {
+		return 0, fmt.Errorf("not_connected"), details
+	}
+
+	// Guard: publishing requires youtube.upload
+	if !strings.Contains(tok.Scope, "youtube.upload") {
+		return 0, fmt.Errorf("missing_scope"), map[string]interface{}{"scope": tok.Scope, "required": []string{"https://www.googleapis.com/auth/youtube.upload"}}
+	}
+
+	// Best-effort: detect expiration (we don't refresh tokens server-side yet).
+	if strings.TrimSpace(tok.ExpiresAt) != "" {
+		if t, err := time.Parse(time.RFC3339, tok.ExpiresAt); err == nil {
+			if time.Now().After(t.Add(-30 * time.Second)) {
+				return 0, fmt.Errorf("token_expired_reconnect"), map[string]interface{}{"expiresAt": tok.ExpiresAt}
+			}
+		}
+	}
+
+	if dryRun {
+		return 0, nil, map[string]interface{}{"dryRun": true}
+	}
+
+	title := strings.TrimSpace(caption)
+	if title == "" {
+		title = "New video"
+	}
+	if len(title) > 95 {
+		title = truncate(title, 95)
+	}
+
+	meta := map[string]interface{}{
+		"snippet": map[string]interface{}{
+			"title":       title,
+			"description": caption,
+			"categoryId":  "22",
+		},
+		"status": map[string]interface{}{
+			"privacyStatus": "public",
+		},
+	}
+	metaBytes, _ := json.Marshal(meta)
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	initURL := "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status"
+	initReq, err := http.NewRequestWithContext(ctx, "POST", initURL, bytes.NewReader(metaBytes))
+	if err != nil {
+		return 0, err, details
+	}
+	initReq.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	initReq.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	initReq.Header.Set("Accept", "application/json")
+	initReq.Header.Set("X-Upload-Content-Length", fmt.Sprintf("%d", len(video.Bytes)))
+	if video.ContentType != "" {
+		initReq.Header.Set("X-Upload-Content-Type", video.ContentType)
+	}
+
+	initRes, err := client.Do(initReq)
+	if err != nil {
+		return 0, err, details
+	}
+	initBody, _ := io.ReadAll(io.LimitReader(initRes.Body, 1<<20))
+	_ = initRes.Body.Close()
+	if initRes.StatusCode < 200 || initRes.StatusCode >= 300 {
+		return 0, fmt.Errorf("youtube_init_non_2xx"), map[string]interface{}{"status": initRes.StatusCode, "body": truncate(string(initBody), 2000)}
+	}
+	uploadURL := initRes.Header.Get("Location")
+	if uploadURL == "" {
+		return 0, fmt.Errorf("youtube_missing_upload_url"), map[string]interface{}{"headers": initRes.Header}
+	}
+
+	putReq, err := http.NewRequestWithContext(ctx, "PUT", uploadURL, bytes.NewReader(video.Bytes))
+	if err != nil {
+		return 0, err, details
+	}
+	putReq.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	if video.ContentType != "" {
+		putReq.Header.Set("Content-Type", video.ContentType)
+	} else {
+		putReq.Header.Set("Content-Type", "application/octet-stream")
+	}
+	putReq.Header.Set("Content-Length", fmt.Sprintf("%d", len(video.Bytes)))
+
+	putRes, err := client.Do(putReq)
+	if err != nil {
+		return 0, err, details
+	}
+	putBody, _ := io.ReadAll(io.LimitReader(putRes.Body, 4<<20))
+	_ = putRes.Body.Close()
+	if putRes.StatusCode < 200 || putRes.StatusCode >= 300 {
+		return 0, fmt.Errorf("youtube_upload_non_2xx"), map[string]interface{}{"status": putRes.StatusCode, "body": truncate(string(putBody), 3000)}
+	}
+
+	var published map[string]interface{}
+	_ = json.Unmarshal(putBody, &published)
+	videoID, _ := published["id"].(string)
+	details["videoId"] = videoID
+	details["response"] = json.RawMessage(putBody)
+
+	if videoID != "" {
+		permalink := fmt.Sprintf("https://www.youtube.com/watch?v=%s", videoID)
+		rawPayload := strings.ReplaceAll(string(putBody), "\x00", "")
+		if !utf8.ValidString(rawPayload) {
+			rawPayload = strings.ToValidUTF8(rawPayload, "�")
+		}
+		rowID := fmt.Sprintf("youtube:%s:%s", userID, videoID)
+		_, _ = h.db.ExecContext(ctx, `
+			INSERT INTO public."SocialLibraries"
+			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
+			VALUES
+			  ($1, $2, 'youtube', 'video', NULLIF($3,''), $4, $4, NULL, NOW(), NULL, NULL, $5::jsonb, $6, NOW(), NOW())
+			ON CONFLICT (user_id, network, external_id)
+			DO UPDATE SET
+			  title = EXCLUDED.title,
+			  permalink_url = EXCLUDED.permalink_url,
+			  media_url = EXCLUDED.media_url,
+			  raw_payload = EXCLUDED.raw_payload,
+			  updated_at = NOW()
+		`, rowID, userID, title, permalink, rawPayload, videoID)
+	}
+
+	log.Printf("[YTPublish] ok userId=%s videoId=%s", userID, videoID)
 	return 1, nil, details
 }
 
