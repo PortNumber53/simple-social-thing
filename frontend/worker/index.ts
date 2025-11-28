@@ -591,6 +591,11 @@ export default {
         return handleLibrarySync(request, env);
       }
 
+      // Publishing: caption-only post fan-out (backend does per-provider posting)
+      if (url.pathname === "/api/posts/publish") {
+        return handlePostsPublish(request, env);
+      }
+
       return Response.json({ ok: true });
     }
 
@@ -779,6 +784,53 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 	}
 
 	return Response.json({ ok: true, suno: { audioUrl, sunoTrackId, taskId }, track: { id: ourTrackId } }, { headers });
+}
+
+async function handlePostsPublish(request: Request, env: Env): Promise<Response> {
+  const headers = buildCorsHeaders(request);
+  if (request.method === 'OPTIONS') {
+    headers.set('Access-Control-Allow-Methods', 'POST,OPTIONS');
+    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+    return new Response(null, { status: 204, headers });
+  }
+  if (request.method !== 'POST') return new Response(null, { status: 405, headers });
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  if (!sid) {
+    headers.set('Content-Type', 'application/json');
+    return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+  }
+
+  const backendOrigin = getBackendOrigin(env, request);
+  let bodyText = '';
+  try {
+    bodyText = await request.text();
+  } catch {
+    bodyText = '';
+  }
+  if (!bodyText) {
+    headers.set('Content-Type', 'application/json');
+    return new Response(JSON.stringify({ ok: false, error: 'missing_body' }), { status: 400, headers });
+  }
+
+  try {
+    const res = await fetch(`${backendOrigin}/api/social-posts/publish/user/${encodeURIComponent(sid)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: bodyText,
+    });
+    const text = await res.text().catch(() => '');
+    headers.set('Content-Type', 'application/json');
+    if (!res.ok) {
+      return new Response(JSON.stringify({ ok: false, error: 'backend_error', status: res.status, body: text.slice(0, 1200) }), { status: 502, headers });
+    }
+    return new Response(text || JSON.stringify({ ok: true }), { status: 200, headers });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    headers.set('Content-Type', 'application/json');
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
 }
 
 async function handleSunoCredits(request: Request, env: Env): Promise<Response> {

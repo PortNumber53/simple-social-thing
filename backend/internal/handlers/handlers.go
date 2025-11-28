@@ -8,10 +8,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/PortNumber53/simple-social-thing/backend/internal/models"
 	"github.com/PortNumber53/simple-social-thing/backend/internal/socialimport"
@@ -612,6 +614,228 @@ func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 	log.Printf("[LibrarySync] done userId=%s dur=%dms", userID, resp.DurationMs)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+type publishPostRequest struct {
+	Caption   string   `json:"caption"`
+	Providers []string `json:"providers"`
+	DryRun    bool     `json:"dryRun"`
+}
+
+type publishProviderResult struct {
+	OK      bool                   `json:"ok"`
+	Posted  int                    `json:"posted,omitempty"`
+	Error   string                 `json:"error,omitempty"`
+	Details map[string]interface{} `json:"details,omitempty"`
+}
+
+// PublishSocialPostForUser publishes a caption-only post to one or more connected networks.
+// For now, only Facebook Page posts are implemented; other providers return not_supported.
+func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	vars := mux.Vars(r)
+	userID := vars["userId"]
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	var req publishPostRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	caption := strings.TrimSpace(req.Caption)
+	if caption == "" {
+		http.Error(w, "caption is required", http.StatusBadRequest)
+		return
+	}
+	// Ensure caption is valid UTF-8 (Postgres + downstream APIs).
+	caption = strings.ReplaceAll(caption, "\x00", "")
+	if !utf8.ValidString(caption) {
+		caption = strings.ToValidUTF8(caption, "�")
+	}
+
+	want := map[string]bool{}
+	if len(req.Providers) > 0 {
+		for _, p := range req.Providers {
+			pp := strings.TrimSpace(strings.ToLower(p))
+			if pp != "" {
+				want[pp] = true
+			}
+		}
+	} else {
+		// Default: attempt all known providers
+		want["facebook"] = true
+		want["instagram"] = true
+		want["tiktok"] = true
+		want["youtube"] = true
+		want["pinterest"] = true
+		want["threads"] = true
+	}
+
+	start := time.Now()
+	log.Printf("[Publish] start userId=%s providers=%v", userID, req.Providers)
+
+	results := map[string]publishProviderResult{}
+
+	// Facebook: Post to all saved pages in facebook_oauth using page access tokens.
+	if want["facebook"] {
+		posted, err, details := h.publishFacebookPages(r.Context(), userID, caption, req.DryRun)
+		if err != nil {
+			results["facebook"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
+		} else {
+			results["facebook"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+		}
+	}
+
+	// Other providers: stub for now.
+	for _, p := range []string{"instagram", "tiktok", "youtube", "pinterest", "threads"} {
+		if want[p] {
+			results[p] = publishProviderResult{OK: false, Error: "not_supported_yet"}
+		}
+	}
+
+	resp := map[string]interface{}{
+		"ok":         true,
+		"userId":     userID,
+		"durationMs": time.Since(start).Milliseconds(),
+		"results":    results,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+type fbOAuthPageRow struct {
+	ID          string  `json:"id"`
+	Name        *string `json:"name"`
+	AccessToken string  `json:"access_token"`
+}
+
+type fbOAuthPayload struct {
+	AccessToken string           `json:"accessToken"` // legacy single-page access token (page token)
+	PageID      string           `json:"pageId"`
+	PageName    string           `json:"pageName"`
+	UserToken   string           `json:"userAccessToken"`
+	Pages       []fbOAuthPageRow `json:"pages"`
+}
+
+func truncate(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+func (h *Handler) publishFacebookPages(ctx context.Context, userID string, caption string, dryRun bool) (int, error, map[string]interface{}) {
+	details := map[string]interface{}{}
+	var raw []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='facebook_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("not_connected"), details
+		}
+		return 0, err, details
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, fmt.Errorf("not_connected"), details
+	}
+	var tok fbOAuthPayload
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return 0, fmt.Errorf("invalid_oauth_payload"), map[string]interface{}{"raw": string(raw)}
+	}
+
+	pages := make([]fbOAuthPageRow, 0, len(tok.Pages))
+	for _, p := range tok.Pages {
+		if strings.TrimSpace(p.ID) != "" && strings.TrimSpace(p.AccessToken) != "" {
+			pages = append(pages, p)
+		}
+	}
+	// Backward compat: single page fields
+	if len(pages) == 0 && tok.PageID != "" && tok.AccessToken != "" {
+		name := tok.PageName
+		pages = append(pages, fbOAuthPageRow{ID: tok.PageID, Name: &name, AccessToken: tok.AccessToken})
+	}
+	if len(pages) == 0 {
+		return 0, fmt.Errorf("no_pages_found"), details
+	}
+
+	type pageResult struct {
+		PageID string `json:"pageId"`
+		Posted bool   `json:"posted"`
+		PostID string `json:"postId,omitempty"`
+		Error  string `json:"error,omitempty"`
+	}
+	pageResults := make([]pageResult, 0, len(pages))
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	postedCount := 0
+	for _, page := range pages {
+		if dryRun {
+			pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: false})
+			continue
+		}
+		form := url.Values{}
+		form.Set("message", caption)
+		form.Set("access_token", page.AccessToken)
+		endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/feed", url.PathEscape(page.ID))
+		req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
+		if err != nil {
+			pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: false, Error: err.Error()})
+			continue
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+
+		res, err := client.Do(req)
+		if err != nil {
+			pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: false, Error: err.Error()})
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		_ = res.Body.Close()
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: false, Error: truncate(string(body), 800)})
+			continue
+		}
+		var obj map[string]interface{}
+		_ = json.Unmarshal(body, &obj)
+		postID, _ := obj["id"].(string)
+		pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: true, PostID: postID})
+		postedCount++
+
+		// Store this in SocialLibraries as "created content"
+		if postID != "" {
+			rawPayload := strings.ReplaceAll(string(body), "\x00", "")
+			if !utf8.ValidString(rawPayload) {
+				rawPayload = strings.ToValidUTF8(rawPayload, "�")
+			}
+			rowID := fmt.Sprintf("facebook:%s:%s", userID, postID)
+			_, _ = h.db.ExecContext(ctx, `
+				INSERT INTO public."SocialLibraries"
+				  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
+				VALUES
+				  ($1, $2, 'facebook', 'post', NULLIF($3,''), NULL, NULL, NULL, NOW(), NULL, NULL, $4::jsonb, $5, NOW(), NOW())
+				ON CONFLICT (user_id, network, external_id)
+				DO UPDATE SET
+				  title = EXCLUDED.title,
+				  raw_payload = EXCLUDED.raw_payload,
+				  updated_at = NOW()
+			`, rowID, userID, caption, rawPayload, postID)
+		}
+	}
+
+	details["pages"] = pageResults
+	// If *every* page errored, surface an error
+	if postedCount == 0 && !dryRun {
+		return 0, fmt.Errorf("no_posts_created"), details
+	}
+	return postedCount, nil, details
 }
 
 func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
