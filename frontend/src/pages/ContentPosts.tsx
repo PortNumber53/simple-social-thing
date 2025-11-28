@@ -229,7 +229,7 @@ export const ContentPosts: React.FC = () => {
                         )}
                       </div>
                     </div>
-                    {!r.ok && r.details && (
+                    {!r.ok && r.details != null && (
                       <div>
                         <button
                           type="button"
