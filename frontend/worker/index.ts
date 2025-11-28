@@ -2962,10 +2962,12 @@ async function startThreadsOAuth(request: Request, env: Env): Promise<Response> 
   const headers = new Headers();
   headers.append('Set-Cookie', buildTempCookie('th_state', state, 10 * 60, request.url));
 
-  // Threads publishing permissions.
-  // Ref: Meta Threads API docs (permission list): https://www.postman.com/meta/threads/documentation/dht3nzz/threads-api
+  // IMPORTANT:
+  // These are not Facebook Login permissions, so requesting them via `facebook.com/.../dialog/oauth`
+  // hard-fails with "Invalid Scopes" (see Facebook Login permissions ref: https://developers.facebook.com/docs/facebook-login/permissions).
+  // Threads uses its own OAuth authorize endpoint.
   const scopes = ['threads_basic', 'threads_content_publish'].join(',');
-  const authUrl = new URL('https://www.facebook.com/v18.0/dialog/oauth');
+  const authUrl = new URL('https://www.threads.net/oauth/authorize');
   authUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('scope', scopes);
@@ -3011,13 +3013,18 @@ async function handleThreadsCallback(request: Request, env: Env): Promise<Respon
     return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
   }
 
-  const tokenUrl = new URL('https://graph.facebook.com/v18.0/oauth/access_token');
-  tokenUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
-  tokenUrl.searchParams.set('client_secret', env.INSTAGRAM_APP_SECRET);
-  tokenUrl.searchParams.set('redirect_uri', redirectUri);
-  tokenUrl.searchParams.set('code', code);
-
-  const tokenRes = await fetch(tokenUrl.toString(), { headers: { Accept: 'application/json' } });
+  // Threads OAuth token exchange (not Facebook Graph).
+  const tokenRes = await fetch('https://graph.threads.net/oauth/access_token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    body: new URLSearchParams({
+      client_id: env.INSTAGRAM_APP_ID,
+      client_secret: env.INSTAGRAM_APP_SECRET,
+      grant_type: 'authorization_code',
+      redirect_uri: redirectUri,
+      code,
+    }),
+  });
   const tokenText = await tokenRes.text().catch(() => '');
   if (!tokenRes.ok) {
     console.error('[TH] token_exchange_failed', tokenRes.status, tokenText);
@@ -3028,21 +3035,26 @@ async function handleThreadsCallback(request: Request, env: Env): Promise<Respon
   const accessToken = typeof tokenJson?.access_token === 'string' ? tokenJson.access_token : '';
   const tokenType = typeof tokenJson?.token_type === 'string' ? tokenJson.token_type : 'bearer';
   const expiresIn = getNumber(tokenJson?.expires_in) || 0;
+  const scope = typeof tokenJson?.scope === 'string' ? tokenJson.scope : '';
   if (!accessToken) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'invalid_token_response' }));
     return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
   }
 
-  // Best-effort: discover threads user id. This may need adjustment depending on Meta configuration.
+  // Best-effort: discover threads user id via Threads Graph (not Facebook Graph).
   let threadsUserId: string | null = null;
   let name: string | null = null;
   try {
-    const meRes = await fetch(`https://graph.facebook.com/v18.0/me?fields=id,name&access_token=${encodeURIComponent(accessToken)}`);
-    const meText = await meRes.text().catch(() => '');
+    let meRes = await fetch(`https://graph.threads.net/v1.0/me?fields=id,username,name&access_token=${encodeURIComponent(accessToken)}`);
+    let meText = await meRes.text().catch(() => '');
+    if (!meRes.ok) {
+      meRes = await fetch(`https://graph.threads.net/me?fields=id,username,name&access_token=${encodeURIComponent(accessToken)}`);
+      meText = await meRes.text().catch(() => '');
+    }
     if (meRes.ok) {
       const meJson: any = meText ? JSON.parse(meText) : null;
       threadsUserId = meJson?.id ? String(meJson.id) : null;
-      name = typeof meJson?.name === 'string' ? meJson.name : null;
+      name = typeof meJson?.username === 'string' ? meJson.username : (typeof meJson?.name === 'string' ? meJson.name : null);
     } else {
       console.warn('[TH] me_failed', meRes.status, meText);
     }
@@ -3073,7 +3085,7 @@ async function handleThreadsCallback(request: Request, env: Env): Promise<Respon
     const settingsRes = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/threads_oauth`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ value: { accessToken, tokenType, threadsUserId, obtainedAt, expiresAt, raw: tokenJson } }),
+      body: JSON.stringify({ value: { accessToken, tokenType, scope, expiresIn, threadsUserId, obtainedAt, expiresAt, raw: tokenJson } }),
     });
     if (!settingsRes.ok) {
       const errText = await settingsRes.text().catch(() => '');
