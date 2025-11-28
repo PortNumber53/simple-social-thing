@@ -8,9 +8,6 @@ interface Env {
   INSTAGRAM_APP_ID?: string;
   INSTAGRAM_APP_SECRET?: string;
   FACEBOOK_WEBHOOK_TOKEN?: string;
-  // Threads permissions are enforced by Meta at the OAuth dialog. If you pass an invalid permission, the dialog hard-fails.
-  // Configure explicitly once your app has Threads permissions enabled.
-  THREADS_SCOPES?: string;
   TIKTOK_CLIENT_KEY?: string;
   TIKTOK_CLIENT_SECRET?: string;
   PINTEREST_CLIENT_ID?: string;
@@ -2879,13 +2876,13 @@ async function startThreadsOAuth(request: Request, env: Env): Promise<Response> 
   const headers = new Headers();
   headers.append('Set-Cookie', buildTempCookie('th_state', state, 10 * 60, request.url));
 
-  // NOTE: Meta hard-fails the dialog if any requested permission is unknown/invalid.
-  // Keep this empty by default until the app is configured for Threads permissions.
-  const scopes = (env.THREADS_SCOPES || '').trim();
+  // Threads publishing permissions.
+  // Ref: Meta Threads API docs (permission list): https://www.postman.com/meta/threads/documentation/dht3nzz/threads-api
+  const scopes = ['threads_basic', 'threads_content_publish'].join(',');
   const authUrl = new URL('https://www.facebook.com/v18.0/dialog/oauth');
   authUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
   authUrl.searchParams.set('redirect_uri', redirectUri);
-  if (scopes) authUrl.searchParams.set('scope', scopes);
+  authUrl.searchParams.set('scope', scopes);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('state', state);
 
