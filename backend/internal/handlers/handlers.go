@@ -3,7 +3,9 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -698,8 +701,19 @@ func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Instagram: publish image posts to the connected IG Business account.
+	if want["instagram"] {
+		posted, err, details := h.publishInstagram(r.Context(), r, userID, caption, mediaFiles, req.DryRun)
+		if err != nil {
+			results["instagram"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
+			overallOK = false
+		} else {
+			results["instagram"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+		}
+	}
+
 	// Other providers: stub for now.
-	for _, p := range []string{"instagram", "tiktok", "youtube", "pinterest", "threads"} {
+	for _, p := range []string{"tiktok", "youtube", "pinterest", "threads"} {
 		if want[p] {
 			results[p] = publishProviderResult{OK: false, Error: "not_supported_yet"}
 			overallOK = false
@@ -745,6 +759,68 @@ type uploadedMedia struct {
 	Filename    string
 	ContentType string
 	Bytes       []byte
+}
+
+var reSafeFilename = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+
+func publicOrigin(r *http.Request) string {
+	proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+	if proto == "" {
+		if r.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+	host := r.Host
+	if h := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); h != "" {
+		host = h
+	}
+	return fmt.Sprintf("%s://%s", proto, host)
+}
+
+func randHex(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
+func saveUploadedMedia(userID string, media []uploadedMedia) ([]string, map[string]interface{}, error) {
+	details := map[string]interface{}{}
+	if len(media) == 0 {
+		return nil, details, nil
+	}
+	dir := filepath.Join("media", "uploads", userID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, details, err
+	}
+	rel := make([]string, 0, len(media))
+	files := make([]map[string]interface{}, 0, len(media))
+	for _, m := range media {
+		name := strings.TrimSpace(m.Filename)
+		if name == "" {
+			name = "upload.bin"
+		}
+		name = reSafeFilename.ReplaceAllString(name, "_")
+		fn := fmt.Sprintf("%s_%s", randHex(8), name)
+		path := filepath.Join(dir, fn)
+		if err := os.WriteFile(path, m.Bytes, 0o644); err != nil {
+			return nil, details, err
+		}
+		rel = append(rel, fmt.Sprintf("/media/uploads/%s/%s", userID, fn))
+		files = append(files, map[string]interface{}{
+			"filename":    fn,
+			"contentType": m.ContentType,
+			"size":        len(m.Bytes),
+		})
+	}
+	details["saved"] = files
+	return rel, details, nil
 }
 
 func parsePublishPostRequest(r *http.Request) (publishPostRequest, []uploadedMedia, error) {
@@ -1182,6 +1258,177 @@ func fbUploadPhoto(ctx context.Context, client *http.Client, pageID, pageToken, 
 		postID = pid
 	}
 	return photoID, postID, status, bodyText, "", nil
+}
+
+type instagramOAuth struct {
+	AccessToken  string `json:"accessToken"`
+	IGBusinessID string `json:"igBusinessId"`
+	PageID       string `json:"pageId"`
+	Username     string `json:"username"`
+	ExpiresAt    string `json:"expiresAt"`
+}
+
+func (h *Handler) publishInstagram(ctx context.Context, r *http.Request, userID, caption string, media []uploadedMedia, dryRun bool) (int, error, map[string]interface{}) {
+	details := map[string]interface{}{}
+
+	if len(media) == 0 {
+		return 0, fmt.Errorf("instagram_requires_image"), details
+	}
+
+	// Load IG token + business account id from UserSettings
+	var raw []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='instagram_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("not_connected"), details
+		}
+		return 0, err, details
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, fmt.Errorf("not_connected"), details
+	}
+	var tok instagramOAuth
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return 0, fmt.Errorf("invalid_oauth_payload"), map[string]interface{}{"raw": truncate(string(raw), 800)}
+	}
+	if strings.TrimSpace(tok.AccessToken) == "" || strings.TrimSpace(tok.IGBusinessID) == "" {
+		return 0, fmt.Errorf("not_connected"), details
+	}
+
+	if dryRun {
+		return 0, nil, map[string]interface{}{"dryRun": true, "mediaCount": len(media)}
+	}
+
+	rel, saveDetails, err := saveUploadedMedia(userID, media)
+	if err != nil {
+		return 0, err, details
+	}
+	for k, v := range saveDetails {
+		details[k] = v
+	}
+	origin := publicOrigin(r)
+	imageURLs := make([]string, 0, len(rel))
+	for _, u := range rel {
+		imageURLs = append(imageURLs, origin+u)
+	}
+	details["imageUrls"] = imageURLs
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	accessToken := tok.AccessToken
+	igID := tok.IGBusinessID
+
+	// Create media containers (children for carousel, or the single post container).
+	containerIDs := []string{}
+	for _, img := range imageURLs {
+		form := url.Values{}
+		form.Set("image_url", img)
+		form.Set("access_token", accessToken)
+		if len(imageURLs) > 1 {
+			form.Set("is_carousel_item", "true")
+		} else {
+			form.Set("caption", caption)
+		}
+		endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media", url.PathEscape(igID))
+		req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+
+		res, err := client.Do(req)
+		if err != nil {
+			return 0, err, details
+		}
+		b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		_ = res.Body.Close()
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			msg := extractFacebookErrorMessage(b, string(b))
+			return 0, fmt.Errorf("instagram_container_failed"), map[string]interface{}{"status": res.StatusCode, "error": msg, "body": truncate(string(b), 1200)}
+		}
+		var obj map[string]interface{}
+		_ = json.Unmarshal(b, &obj)
+		id, _ := obj["id"].(string)
+		if id == "" {
+			return 0, fmt.Errorf("instagram_missing_container_id"), map[string]interface{}{"body": truncate(string(b), 1200)}
+		}
+		containerIDs = append(containerIDs, id)
+	}
+	details["containerIds"] = containerIDs
+
+	creationID := ""
+	if len(containerIDs) > 1 {
+		// Parent carousel container
+		form := url.Values{}
+		form.Set("media_type", "CAROUSEL")
+		form.Set("children", strings.Join(containerIDs, ","))
+		form.Set("caption", caption)
+		form.Set("access_token", accessToken)
+		endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media", url.PathEscape(igID))
+		req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		res, err := client.Do(req)
+		if err != nil {
+			return 0, err, details
+		}
+		b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		_ = res.Body.Close()
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			msg := extractFacebookErrorMessage(b, string(b))
+			return 0, fmt.Errorf("instagram_carousel_failed"), map[string]interface{}{"status": res.StatusCode, "error": msg, "body": truncate(string(b), 1200)}
+		}
+		var obj map[string]interface{}
+		_ = json.Unmarshal(b, &obj)
+		creationID, _ = obj["id"].(string)
+	} else {
+		creationID = containerIDs[0]
+	}
+	if creationID == "" {
+		return 0, fmt.Errorf("instagram_missing_creation_id"), details
+	}
+
+	// Publish
+	form := url.Values{}
+	form.Set("creation_id", creationID)
+	form.Set("access_token", accessToken)
+	endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media_publish", url.PathEscape(igID))
+	req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		return 0, err, details
+	}
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	_ = res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		msg := extractFacebookErrorMessage(b, string(b))
+		return 0, fmt.Errorf("instagram_publish_failed"), map[string]interface{}{"status": res.StatusCode, "error": msg, "body": truncate(string(b), 1200)}
+	}
+	var pub map[string]interface{}
+	_ = json.Unmarshal(b, &pub)
+	mediaID, _ := pub["id"].(string)
+	details["publishedId"] = mediaID
+
+	// Store created item in SocialLibraries
+	if mediaID != "" {
+		rawPayload := strings.ReplaceAll(string(b), "\x00", "")
+		if !utf8.ValidString(rawPayload) {
+			rawPayload = strings.ToValidUTF8(rawPayload, "�")
+		}
+		rowID := fmt.Sprintf("instagram:%s:%s", userID, mediaID)
+		_, _ = h.db.ExecContext(ctx, `
+			INSERT INTO public."SocialLibraries"
+			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
+			VALUES
+			  ($1, $2, 'instagram', 'post', NULLIF($3,''), NULL, NULL, NULL, NOW(), NULL, NULL, $4::jsonb, $5, NOW(), NOW())
+			ON CONFLICT (user_id, network, external_id)
+			DO UPDATE SET
+			  title = EXCLUDED.title,
+			  raw_payload = EXCLUDED.raw_payload,
+			  updated_at = NOW()
+		`, rowID, userID, caption, rawPayload, mediaID)
+	}
+
+	log.Printf("[IGPublish] ok userId=%s igBusinessId=%s mediaId=%s", userID, tok.IGBusinessID, mediaID)
+	return 1, nil, details
 }
 
 func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {

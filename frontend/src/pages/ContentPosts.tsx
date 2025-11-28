@@ -28,7 +28,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 const PUBLISH_SUPPORTED: Record<string, boolean> = {
   facebook: true,
-  instagram: false,
+  instagram: true,
   tiktok: false,
   youtube: false,
   pinterest: false,
@@ -134,6 +134,10 @@ export const ContentPosts: React.FC = () => {
     }
     if (selectedProviders.length === 0) {
       setStatus('Select at least one connected network.');
+      return;
+    }
+    if (selectedProviders.includes('instagram') && media.length === 0) {
+      setStatus('Instagram publishing requires at least one image.');
       return;
     }
     setIsSubmitting(true);
