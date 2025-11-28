@@ -517,6 +517,10 @@ export default {
       if (url.pathname === "/api/integrations/facebook/callback") {
         return handleFacebookCallback(request, env);
       }
+      // Facebook permissions debug (no secrets; reads stored oauth and calls Graph /me/permissions)
+      if (url.pathname === "/api/integrations/facebook/permissions") {
+        return handleFacebookPermissions(request, env);
+      }
 
       // YouTube OAuth start/callback
       if (url.pathname === "/api/integrations/youtube/auth") {
@@ -2225,7 +2229,7 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
   } catch { void 0; }
 
   // Get pages and pick the first page; use page access token for page posts API.
-  const pagesRes = await fetch(`https://graph.facebook.com/v18.0/me/accounts?fields=id,name,access_token&access_token=${encodeURIComponent(userToken)}`);
+  const pagesRes = await fetch(`https://graph.facebook.com/v18.0/me/accounts?fields=id,name,access_token,tasks&access_token=${encodeURIComponent(userToken)}`);
   const pagesText = await pagesRes.text().catch(() => '');
   if (!pagesRes.ok) {
     console.error('[FB] pages_fetch_failed', pagesRes.status, pagesText);
@@ -2277,6 +2281,7 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
               id: typeof p?.id === 'string' ? p.id : (p?.id ? String(p.id) : ''),
               name: typeof p?.name === 'string' ? p.name : null,
               access_token: typeof p?.access_token === 'string' ? p.access_token : '',
+              tasks: Array.isArray(p?.tasks) ? p.tasks.filter((t: any) => typeof t === 'string') : [],
             }))
             .filter(p => p.id && p.access_token),
         },
@@ -2296,6 +2301,67 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'facebook', account: { id: pageId, name: pageName } }));
   headers.set('Location', `${clientUrl}/integrations?facebook=${data}`);
   return new Response(null, { status: 302, headers });
+}
+
+async function handleFacebookPermissions(request: Request, env: Env): Promise<Response> {
+  const headers = buildCorsHeaders(request);
+  if (request.method === 'OPTIONS') {
+    headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
+    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+    return new Response(null, { status: 204, headers });
+  }
+  if (request.method !== 'GET') return new Response(null, { status: 405, headers });
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  if (!sid) {
+    headers.set('Content-Type', 'application/json');
+    return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+  }
+
+  const backendOrigin = getBackendOrigin(env, request);
+  try {
+    const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/facebook_oauth`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (res.status === 404) {
+      headers.set('Content-Type', 'application/json');
+      return new Response(JSON.stringify({ ok: true, connected: false }), { status: 200, headers });
+    }
+    const data: any = await res.json().catch(() => null);
+    const value = data?.value || null;
+    const userToken = typeof value?.userAccessToken === 'string' ? value.userAccessToken : '';
+    const pages = Array.isArray(value?.pages) ? value.pages : [];
+    if (!userToken) {
+      headers.set('Content-Type', 'application/json');
+      return new Response(JSON.stringify({ ok: true, connected: true, hasUserToken: false, pagesCount: pages.length }), { status: 200, headers });
+    }
+
+    const permRes = await fetch(`https://graph.facebook.com/v18.0/me/permissions?access_token=${encodeURIComponent(userToken)}`, {
+      headers: { Accept: 'application/json' },
+    });
+    const permText = await permRes.text().catch(() => '');
+    let permJson: any = null;
+    try { permJson = permText ? JSON.parse(permText) : null; } catch { permJson = null; }
+
+    headers.set('Content-Type', 'application/json');
+    return new Response(JSON.stringify({
+      ok: true,
+      connected: true,
+      hasUserToken: true,
+      permissionsStatus: permRes.status,
+      permissions: permJson,
+      pagesPreview: pages.slice(0, 20).map((p: any) => ({
+        id: typeof p?.id === 'string' ? p.id : (p?.id ? String(p.id) : ''),
+        name: typeof p?.name === 'string' ? p.name : null,
+        tasks: Array.isArray(p?.tasks) ? p.tasks.filter((t: any) => typeof t === 'string') : [],
+      })),
+    }), { status: 200, headers });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    headers.set('Content-Type', 'application/json');
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
 }
 
 async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> {

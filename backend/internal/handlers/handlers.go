@@ -713,9 +713,10 @@ func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Reques
 }
 
 type fbOAuthPageRow struct {
-	ID          string  `json:"id"`
-	Name        *string `json:"name"`
-	AccessToken string  `json:"access_token"`
+	ID          string   `json:"id"`
+	Name        *string  `json:"name"`
+	AccessToken string   `json:"access_token"`
+	Tasks       []string `json:"tasks"`
 }
 
 type fbOAuthPayload struct {
@@ -781,6 +782,27 @@ func (h *Handler) publishFacebookPages(ctx context.Context, userID string, capti
 	client := &http.Client{Timeout: 20 * time.Second}
 	postedCount := 0
 	for _, page := range pages {
+		// If we have tasks, only attempt pages where user can create content.
+		if len(page.Tasks) > 0 {
+			canPost := false
+			for _, t := range page.Tasks {
+				tt := strings.ToUpper(strings.TrimSpace(t))
+				if tt == "CREATE_CONTENT" || tt == "MANAGE" {
+					canPost = true
+					break
+				}
+			}
+			if !canPost {
+				pageResults = append(pageResults, pageResult{
+					PageID: page.ID,
+					Posted: false,
+					Error:  "insufficient_page_role",
+				})
+				log.Printf("[FBPublish] skip userId=%s pageId=%s reason=insufficient_page_role tasks=%v", userID, page.ID, page.Tasks)
+				continue
+			}
+		}
+
 		if dryRun {
 			pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: false})
 			continue
