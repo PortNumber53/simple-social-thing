@@ -2210,7 +2210,23 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
     const settingsRes = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/facebook_oauth`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ value: { accessToken: pageToken, pageId, pageName } }),
+      body: JSON.stringify({
+        value: {
+          // Backward-compatible single-page fields (used by older backend importers)
+          accessToken: pageToken,
+          pageId,
+          pageName,
+          // New: persist the long-lived user token and full pages list so backend can import across all pages
+          userAccessToken: userToken,
+          pages: pagesArr
+            .map(p => ({
+              id: typeof p?.id === 'string' ? p.id : (p?.id ? String(p.id) : ''),
+              name: typeof p?.name === 'string' ? p.name : null,
+              access_token: typeof p?.access_token === 'string' ? p.access_token : '',
+            }))
+            .filter(p => p.id && p.access_token),
+        },
+      }),
     });
     if (!settingsRes.ok) {
       const errText = await settingsRes.text().catch(() => '');
