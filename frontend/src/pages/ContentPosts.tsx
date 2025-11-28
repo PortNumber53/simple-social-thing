@@ -132,11 +132,24 @@ export const ContentPosts: React.FC = () => {
       const facebookPageIds = selectedProviders.includes('facebook')
         ? Object.keys(fbSelected).filter((id) => fbSelected[id])
         : [];
+      const hasMedia = media.length > 0;
+      const body = hasMedia ? (() => {
+        const fd = new FormData();
+        fd.append('caption', caption);
+        fd.append('providers', JSON.stringify(selectedProviders));
+        fd.append('facebookPageIds', JSON.stringify(facebookPageIds));
+        for (const m of media) {
+          fd.append('media', m.file, m.file.name);
+        }
+        return fd;
+      })() : JSON.stringify({ caption, providers: selectedProviders, facebookPageIds });
+
       const res = await fetch('/api/posts/publish', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // IMPORTANT: don't set Content-Type for FormData; browser will set boundary.
+        headers: hasMedia ? undefined : { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ caption, providers: selectedProviders, facebookPageIds }),
+        body,
       });
       const data: PublishResponse = await res.json().catch(() => ({}));
       setResults(data);
