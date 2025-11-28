@@ -32,7 +32,7 @@ const PUBLISH_SUPPORTED: Record<string, boolean> = {
   facebook: true,
   instagram: true,
   tiktok: true,
-  youtube: false,
+  youtube: true,
   pinterest: false,
   threads: false,
 };
@@ -148,6 +148,13 @@ export const ContentPosts: React.FC = () => {
       const hasVideo = media.some((m) => (m.file?.type || '').startsWith('video/'));
       if (!hasVideo) {
         setStatus('TikTok publishing requires a video file (mp4/mov/webm).');
+        return;
+      }
+    }
+    if (selectedProviders.includes('youtube')) {
+      const hasVideo = media.some((m) => (m.file?.type || '').startsWith('video/'));
+      if (!hasVideo) {
+        setStatus('YouTube publishing requires a video file.');
         return;
       }
     }

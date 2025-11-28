@@ -2695,7 +2695,9 @@ async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> 
   authUrl.searchParams.set('access_type', 'offline');
   authUrl.searchParams.set('prompt', 'consent');
   authUrl.searchParams.set('include_granted_scopes', 'true');
-  authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/youtube.readonly');
+  // NOTE: publishing requires `youtube.upload`; imports can work with `youtube.readonly`.
+  // We request both so a single connect covers publish + import (user will need to re-consent once if previously readonly-only).
+  authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly');
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('code_challenge', challenge);
   authUrl.searchParams.set('code_challenge_method', 'S256');
