@@ -72,6 +72,10 @@ func main() {
 	// Health check
 	r.HandleFunc("/health", h.Health).Methods("GET")
 
+	// Public media (uploaded assets used for publishing)
+	// NOTE: required for Instagram publishing which needs public HTTPS URLs for images.
+	r.PathPrefix("/media/").Handler(http.StripPrefix("/media/", http.FileServer(http.Dir("media"))))
+
 	// User endpoints
 	r.HandleFunc("/api/users", h.CreateUser).Methods("POST")
 	r.HandleFunc("/api/users/{id}", h.GetUser).Methods("GET")

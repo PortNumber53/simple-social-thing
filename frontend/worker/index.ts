@@ -7,6 +7,7 @@ interface Env {
   ASSETS?: Fetcher;
   INSTAGRAM_APP_ID?: string;
   INSTAGRAM_APP_SECRET?: string;
+  FACEBOOK_WEBHOOK_TOKEN?: string;
   TIKTOK_CLIENT_KEY?: string;
   TIKTOK_CLIENT_SECRET?: string;
   PINTEREST_CLIENT_ID?: string;
@@ -302,6 +303,10 @@ export default {
 
     // Handle other API routes
     if (url.pathname.startsWith("/api/")) {
+      // Facebook Webhook callback (Meta Webhooks product)
+      if (url.pathname === "/api/webhook/facebook/callback") {
+        return handleFacebookWebhook(request, env);
+      }
       // User settings bundle for current session (sanitized; used for client-side caching)
       if (url.pathname === "/api/user-settings") {
         return handleUserSettingsBundle(request, env);
@@ -841,6 +846,72 @@ async function handlePostsPublish(request: Request, env: Env): Promise<Response>
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
+}
+
+async function handleFacebookWebhook(request: Request, env: Env): Promise<Response> {
+  // GET: verification handshake (hub.challenge)
+  if (request.method === 'GET') {
+    const url = new URL(request.url);
+    const mode = url.searchParams.get('hub.mode') || url.searchParams.get('hub_mode');
+    const token = url.searchParams.get('hub.verify_token') || url.searchParams.get('hub_verify_token');
+    const challenge = url.searchParams.get('hub.challenge') || url.searchParams.get('hub_challenge');
+
+    if (mode === 'subscribe' && challenge) {
+      const expected = (env.FACEBOOK_WEBHOOK_TOKEN || '').trim();
+      if (!expected) {
+        return new Response('missing_verify_token', { status: 500 });
+      }
+      if (token !== expected) {
+        return new Response('forbidden', { status: 403 });
+      }
+      return new Response(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } });
+    }
+    // Friendly health response when hitting the endpoint without verification params.
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  // POST: delivery
+  if (request.method === 'POST') {
+    const sig = request.headers.get('x-hub-signature-256') || request.headers.get('X-Hub-Signature-256');
+    const secret = (env.INSTAGRAM_APP_SECRET || '').trim();
+
+    // Read body once (we might need it for signature validation + logging).
+    const raw = await request.arrayBuffer().catch(() => null);
+    if (!raw) return new Response('bad_request', { status: 400 });
+
+    // Optional signature validation (recommended).
+    if (secret && sig && sig.startsWith('sha256=')) {
+      const expectedHex = sig.slice('sha256='.length).trim();
+      try {
+        const key = await crypto.subtle.importKey(
+          'raw',
+          new TextEncoder().encode(secret),
+          { name: 'HMAC', hash: 'SHA-256' },
+          false,
+          ['sign'],
+        );
+        const mac = await crypto.subtle.sign('HMAC', key, raw);
+        const macHex = Array.from(new Uint8Array(mac)).map(b => b.toString(16).padStart(2, '0')).join('');
+        if (macHex !== expectedHex) {
+          console.warn('[FBWebhook] invalid_signature');
+          return new Response('forbidden', { status: 403 });
+        }
+      } catch (e) {
+        console.warn('[FBWebhook] signature_validation_error', e);
+        return new Response('forbidden', { status: 403 });
+      }
+    }
+
+    // Acknowledge quickly; best-effort log payload for debugging.
+    try {
+      const text = new TextDecoder().decode(raw);
+      console.log('[FBWebhook] event', text.slice(0, 4000));
+    } catch { void 0; }
+
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  return new Response(null, { status: 405 });
 }
 
 async function handleSunoCredits(request: Request, env: Env): Promise<Response> {
@@ -1449,7 +1520,9 @@ async function startInstagramOAuth(request: Request, env: Env): Promise<Response
     'instagram_manage_messages',
     'instagram_manage_comments',
     'business_management',
-    'pages_read_engagement'
+    'pages_read_engagement',
+    // Required for publishing via Instagram Content Publishing API
+    'instagram_content_publish',
   ].join(',');
 
   const state = crypto.randomUUID();
@@ -1868,7 +1941,11 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
     .split(/[,\s]+/)
     .map(s => s.trim())
     .filter(Boolean);
-  const allow = new Set(['user.info.basic', 'video.list']);
+  // Supported scopes in our app:
+  // - user.info.basic (Login Kit)
+  // - video.list (import)
+  // - video.publish / video.upload (posting; requires Content Posting API approval)
+  const allow = new Set(['user.info.basic', 'video.list', 'video.publish', 'video.upload']);
   const finalScopes = new Set<string>(['user.info.basic']);
   for (const s of requested) {
     if (allow.has(s)) finalScopes.add(s);
