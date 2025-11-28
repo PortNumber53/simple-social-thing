@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -645,8 +647,8 @@ func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var req publishPostRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, mediaFiles, err := parsePublishPostRequest(r)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -687,7 +689,7 @@ func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Reques
 
 	// Facebook: Post to all saved pages in facebook_oauth using page access tokens.
 	if want["facebook"] {
-		posted, err, details := h.publishFacebookPages(r.Context(), userID, caption, req.FacebookPageIDs, req.DryRun)
+		posted, err, details := h.publishFacebookPages(r.Context(), userID, caption, req.FacebookPageIDs, mediaFiles, req.DryRun)
 		if err != nil {
 			results["facebook"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
 			overallOK = false
@@ -739,7 +741,109 @@ func truncate(s string, max int) string {
 	return s[:max] + "…"
 }
 
-func (h *Handler) publishFacebookPages(ctx context.Context, userID string, caption string, pageIDs []string, dryRun bool) (int, error, map[string]interface{}) {
+type uploadedMedia struct {
+	Filename    string
+	ContentType string
+	Bytes       []byte
+}
+
+func parsePublishPostRequest(r *http.Request) (publishPostRequest, []uploadedMedia, error) {
+	ct := r.Header.Get("Content-Type")
+	if strings.Contains(ct, "multipart/form-data") {
+		// 25MB for request parsing; files are read into memory below with additional caps.
+		if err := r.ParseMultipartForm(25 << 20); err != nil {
+			return publishPostRequest{}, nil, err
+		}
+		getStr := func(k string) string {
+			if r.MultipartForm == nil || r.MultipartForm.Value == nil {
+				return ""
+			}
+			if vv := r.MultipartForm.Value[k]; len(vv) > 0 {
+				return vv[0]
+			}
+			return ""
+		}
+
+		var req publishPostRequest
+		req.Caption = getStr("caption")
+		req.DryRun = strings.TrimSpace(getStr("dryRun")) == "true"
+
+		// providers: accept JSON array or comma-separated
+		provRaw := strings.TrimSpace(getStr("providers"))
+		if provRaw != "" {
+			var arr []string
+			if json.Unmarshal([]byte(provRaw), &arr) == nil && len(arr) > 0 {
+				req.Providers = arr
+			} else {
+				for _, p := range strings.Split(provRaw, ",") {
+					pp := strings.TrimSpace(p)
+					if pp != "" {
+						req.Providers = append(req.Providers, pp)
+					}
+				}
+			}
+		}
+
+		pageRaw := strings.TrimSpace(getStr("facebookPageIds"))
+		if pageRaw != "" {
+			var arr []string
+			if json.Unmarshal([]byte(pageRaw), &arr) == nil && len(arr) > 0 {
+				req.FacebookPageIDs = arr
+			} else {
+				for _, p := range strings.Split(pageRaw, ",") {
+					pp := strings.TrimSpace(p)
+					if pp != "" {
+						req.FacebookPageIDs = append(req.FacebookPageIDs, pp)
+					}
+				}
+			}
+		}
+
+		// media files
+		files := []*multipart.FileHeader{}
+		if r.MultipartForm != nil && r.MultipartForm.File != nil {
+			files = r.MultipartForm.File["media"]
+		}
+		out := make([]uploadedMedia, 0, len(files))
+		const maxFiles = 5
+		const maxFileSize = 6 << 20 // 6MB each
+		for i, fh := range files {
+			if i >= maxFiles {
+				break
+			}
+			if fh == nil {
+				continue
+			}
+			if fh.Size > maxFileSize {
+				return publishPostRequest{}, nil, fmt.Errorf("media file too large: %s", fh.Filename)
+			}
+			f, err := fh.Open()
+			if err != nil {
+				return publishPostRequest{}, nil, err
+			}
+			b, err := io.ReadAll(io.LimitReader(f, maxFileSize))
+			_ = f.Close()
+			if err != nil {
+				return publishPostRequest{}, nil, err
+			}
+			out = append(out, uploadedMedia{
+				Filename:    fh.Filename,
+				ContentType: fh.Header.Get("Content-Type"),
+				Bytes:       b,
+			})
+		}
+		return req, out, nil
+	}
+
+	// Default: JSON body
+	var req publishPostRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return publishPostRequest{}, nil, err
+	}
+	return req, nil, nil
+}
+
+func (h *Handler) publishFacebookPages(ctx context.Context, userID string, caption string, pageIDs []string, media []uploadedMedia, dryRun bool) (int, error, map[string]interface{}) {
 	details := map[string]interface{}{}
 	var raw []byte
 	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='facebook_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
@@ -803,7 +907,7 @@ func (h *Handler) publishFacebookPages(ctx context.Context, userID string, capti
 	}
 	pageResults := make([]pageResult, 0, len(pages))
 
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	postedCount := 0
 	for _, page := range pages {
 		// If we have tasks, only attempt pages where user can create content.
@@ -831,11 +935,50 @@ func (h *Handler) publishFacebookPages(ctx context.Context, userID string, capti
 			pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: false})
 			continue
 		}
+		var endpoint string
+		var req *http.Request
+		var err error
+
+		// If media is included, publish as a photo post (single) or feed post with attached media (multi).
+		if len(media) > 0 {
+			postID, status, bodyText, errMsg, err := fbPublishWithImages(ctx, client, page.ID, page.AccessToken, caption, media)
+			if err != nil {
+				pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: false, StatusCode: status, Error: errMsg, Body: truncate(bodyText, 1200)})
+				log.Printf("[FBPublish] non_2xx userId=%s pageId=%s status=%d body=%s", userID, page.ID, status, truncate(bodyText, 600))
+				continue
+			}
+			pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: true, PostID: postID, StatusCode: status})
+			postedCount++
+			log.Printf("[FBPublish] ok userId=%s pageId=%s postId=%s", userID, page.ID, postID)
+
+			// Store as created content
+			rawPayload := strings.ReplaceAll(bodyText, "\x00", "")
+			if !utf8.ValidString(rawPayload) {
+				rawPayload = strings.ToValidUTF8(rawPayload, "�")
+			}
+			if postID != "" {
+				rowID := fmt.Sprintf("facebook:%s:%s", userID, postID)
+				_, _ = h.db.ExecContext(ctx, `
+					INSERT INTO public."SocialLibraries"
+					  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
+					VALUES
+					  ($1, $2, 'facebook', 'post', NULLIF($3,''), NULL, NULL, NULL, NOW(), NULL, NULL, $4::jsonb, $5, NOW(), NOW())
+					ON CONFLICT (user_id, network, external_id)
+					DO UPDATE SET
+					  title = EXCLUDED.title,
+					  raw_payload = EXCLUDED.raw_payload,
+					  updated_at = NOW()
+				`, rowID, userID, caption, rawPayload, postID)
+			}
+			continue
+		}
+
+		// Caption-only post
 		form := url.Values{}
 		form.Set("message", caption)
 		form.Set("access_token", page.AccessToken)
-		endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/feed", url.PathEscape(page.ID))
-		req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
+		endpoint = fmt.Sprintf("https://graph.facebook.com/v18.0/%s/feed", url.PathEscape(page.ID))
+		req, err = http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
 		if err != nil {
 			pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: false, Error: err.Error()})
 			continue
@@ -907,6 +1050,138 @@ func (h *Handler) publishFacebookPages(ctx context.Context, userID string, capti
 		return 0, fmt.Errorf("no_posts_created"), details
 	}
 	return postedCount, nil, details
+}
+
+func fbPublishWithImages(ctx context.Context, client *http.Client, pageID, pageToken, caption string, media []uploadedMedia) (postID string, status int, bodyText string, errMsg string, err error) {
+	if client == nil {
+		client = &http.Client{Timeout: 60 * time.Second}
+	}
+	// One image: publish directly via /photos (creates a photo post).
+	if len(media) == 1 {
+		photoID, createdPostID, status, bodyText, errMsg, err := fbUploadPhoto(ctx, client, pageID, pageToken, caption, media[0], true)
+		if err != nil {
+			return "", status, bodyText, errMsg, err
+		}
+		if createdPostID != "" {
+			return createdPostID, status, bodyText, "", nil
+		}
+		return photoID, status, bodyText, "", nil
+	}
+
+	// Multiple: upload unpublished photos, then create a feed post with attached_media.
+	mediaIDs := make([]string, 0, len(media))
+	for _, m := range media {
+		photoID, _, status, bodyText, errMsg, err := fbUploadPhoto(ctx, client, pageID, pageToken, "", m, false)
+		if err != nil {
+			return "", status, bodyText, errMsg, err
+		}
+		if photoID != "" {
+			mediaIDs = append(mediaIDs, photoID)
+		}
+	}
+	if len(mediaIDs) == 0 {
+		return "", 0, "", "no_media_uploaded", fmt.Errorf("no_media_uploaded")
+	}
+
+	form := url.Values{}
+	form.Set("message", caption)
+	form.Set("access_token", pageToken)
+	for i, id := range mediaIDs {
+		// Each value must be a JSON object string
+		form.Set(fmt.Sprintf("attached_media[%d]", i), fmt.Sprintf(`{"media_fbid":"%s"}`, id))
+	}
+	endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/feed", url.PathEscape(pageID))
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", 0, "", err.Error(), err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		return "", 0, "", err.Error(), err
+	}
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	_ = res.Body.Close()
+	bodyText = string(b)
+	status = res.StatusCode
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		errMsg = extractFacebookErrorMessage(b, bodyText)
+		return "", status, bodyText, errMsg, fmt.Errorf("facebook_non_2xx")
+	}
+	var obj map[string]interface{}
+	_ = json.Unmarshal(b, &obj)
+	if id, ok := obj["id"].(string); ok && id != "" {
+		return id, status, bodyText, "", nil
+	}
+	return "", status, bodyText, "", nil
+}
+
+func extractFacebookErrorMessage(body []byte, fallback string) string {
+	errMsg := fallback
+	var fb map[string]interface{}
+	if json.Unmarshal(body, &fb) == nil {
+		if eObj, ok := fb["error"].(map[string]interface{}); ok {
+			if m, ok := eObj["message"].(string); ok && m != "" {
+				errMsg = m
+			}
+		}
+	}
+	return truncate(errMsg, 400)
+}
+
+func fbUploadPhoto(ctx context.Context, client *http.Client, pageID, pageToken, caption string, media uploadedMedia, published bool) (photoID string, postID string, status int, bodyText string, errMsg string, err error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+
+	// Standard fields
+	_ = w.WriteField("access_token", pageToken)
+	if caption != "" {
+		_ = w.WriteField("message", caption)
+	}
+	if published {
+		_ = w.WriteField("published", "true")
+	} else {
+		_ = w.WriteField("published", "false")
+	}
+
+	fw, err := w.CreateFormFile("source", media.Filename)
+	if err != nil {
+		_ = w.Close()
+		return "", "", 0, "", err.Error(), err
+	}
+	_, _ = fw.Write(media.Bytes)
+	_ = w.Close()
+
+	endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/photos", url.PathEscape(pageID))
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		return "", "", 0, "", err.Error(), err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+
+	res, err := client.Do(req)
+	if err != nil {
+		return "", "", 0, "", err.Error(), err
+	}
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	_ = res.Body.Close()
+	bodyText = string(b)
+	status = res.StatusCode
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		errMsg = extractFacebookErrorMessage(b, bodyText)
+		return "", "", status, bodyText, errMsg, fmt.Errorf("facebook_non_2xx")
+	}
+	var obj map[string]interface{}
+	_ = json.Unmarshal(b, &obj)
+	if id, ok := obj["id"].(string); ok {
+		photoID = id
+	}
+	if pid, ok := obj["post_id"].(string); ok {
+		postID = pid
+	}
+	return photoID, postID, status, bodyText, "", nil
 }
 
 func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {

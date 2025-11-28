@@ -811,13 +811,15 @@ async function handlePostsPublish(request: Request, env: Env): Promise<Response>
   }
 
   const backendOrigin = getBackendOrigin(env, request);
-  let bodyText = '';
+  // Support both JSON and multipart/form-data (for media uploads).
+  const contentType = request.headers.get('Content-Type') || request.headers.get('content-type') || '';
+  let bodyBuf: ArrayBuffer | null = null;
   try {
-    bodyText = await request.text();
+    bodyBuf = await request.arrayBuffer();
   } catch {
-    bodyText = '';
+    bodyBuf = null;
   }
-  if (!bodyText) {
+  if (!bodyBuf || bodyBuf.byteLength === 0) {
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'missing_body' }), { status: 400, headers });
   }
@@ -825,8 +827,8 @@ async function handlePostsPublish(request: Request, env: Env): Promise<Response>
   try {
     const res = await fetch(`${backendOrigin}/api/social-posts/publish/user/${encodeURIComponent(sid)}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: bodyText,
+      headers: { 'Content-Type': contentType || 'application/octet-stream', Accept: 'application/json' },
+      body: bodyBuf,
     });
     const text = await res.text().catch(() => '');
     headers.set('Content-Type', 'application/json');
