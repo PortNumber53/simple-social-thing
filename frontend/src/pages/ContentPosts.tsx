@@ -39,6 +39,19 @@ export const ContentPosts: React.FC = () => {
   const [fbSelected, setFbSelected] = useState<Record<string, boolean>>({});
   const [fbExpanded, setFbExpanded] = useState(true);
   const didInit = useRef(false);
+  const facebookProviderRef = useRef<HTMLInputElement | null>(null);
+
+  const postableFacebookPages = useMemo(() => facebookPages.filter((p) => p.canPost), [facebookPages]);
+  const postableFacebookPageIds = useMemo(() => postableFacebookPages.map((p) => p.id), [postableFacebookPages]);
+
+  const selectedFacebookPageIds = useMemo(() => {
+    return postableFacebookPageIds.filter((id) => !!fbSelected[id]);
+  }, [fbSelected, postableFacebookPageIds]);
+
+  const fbSelectedCount = selectedFacebookPageIds.length;
+  const fbTotalCount = postableFacebookPageIds.length;
+  const fbAllSelected = fbTotalCount > 0 && fbSelectedCount === fbTotalCount;
+  const fbSomeSelected = fbSelectedCount > 0 && !fbAllSelected;
 
   useEffect(() => {
     // Initialize selections once when we first have connected providers/pages.
@@ -59,6 +72,23 @@ export const ContentPosts: React.FC = () => {
       setFbSelected(fbNext);
     }
   }, [connectedProviders, facebookPages]);
+
+  // Keep Facebook provider checkbox in sync with page selection state (tri-state via indeterminate).
+  useEffect(() => {
+    const el = facebookProviderRef.current;
+    if (!el) return;
+    el.indeterminate = !!selected.facebook && fbSomeSelected;
+  }, [fbSomeSelected, selected.facebook]);
+
+  // If Facebook is selected but pages arrive later, default-select all postable pages once.
+  useEffect(() => {
+    if (!selected.facebook) return;
+    if (fbTotalCount === 0) return;
+    if (Object.keys(fbSelected).length > 0) return;
+    const next: Record<string, boolean> = {};
+    for (const id of postableFacebookPageIds) next[id] = true;
+    setFbSelected(next);
+  }, [selected.facebook, fbTotalCount, fbSelected, postableFacebookPageIds]);
 
   const selectedProviders = useMemo(() => {
     return Object.keys(selected).filter((k) => selected[k]);
@@ -128,6 +158,31 @@ export const ContentPosts: React.FC = () => {
     }
 	};
 
+  const setFacebookSelectedAll = (checked: boolean) => {
+    setSelected((prev) => ({ ...prev, facebook: checked }));
+    if (!checked) {
+      setFbSelected({});
+      return;
+    }
+    const next: Record<string, boolean> = {};
+    for (const id of postableFacebookPageIds) next[id] = true;
+    setFbSelected(next);
+    setFbExpanded(true);
+  };
+
+  const toggleFacebookPage = (pageId: string, checked: boolean) => {
+    setFbSelected((prev) => {
+      const next = { ...prev };
+      if (checked) next[pageId] = true;
+      else delete next[pageId];
+
+      // Maintain provider checkbox state: checked if any page is selected.
+      const anySelected = postableFacebookPageIds.some((id) => !!next[id]);
+      setSelected((prevSel) => ({ ...prevSel, facebook: anySelected }));
+      return next;
+    });
+  };
+
 	return (
 		<Layout headerPaddingClass="pt-24">
 			<div className="max-w-5xl mx-auto space-y-8">
@@ -151,6 +206,16 @@ export const ContentPosts: React.FC = () => {
                     const next: Record<string, boolean> = { ...selected };
                     for (const p of connectedProviders) next[p] = v;
                     setSelected(next);
+                    if (connectedProviders.includes('facebook')) {
+                      // When selecting all providers, also select all postable Facebook pages.
+                      if (v) {
+                        const fbNext: Record<string, boolean> = {};
+                        for (const id of postableFacebookPageIds) fbNext[id] = true;
+                        setFbSelected(fbNext);
+                      } else {
+                        setFbSelected({});
+                      }
+                    }
                   }}
                 />
                 Post to all connected
@@ -163,14 +228,31 @@ export const ContentPosts: React.FC = () => {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {connectedProviders.map((p) => (
-                  <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={!!selected[p]}
-                      onChange={(e) => setSelected((prev) => ({ ...prev, [p]: e.target.checked }))}
-                    />
-                    <span className="text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p] || p}</span>
-                  </label>
+                  p === 'facebook' ? (
+                    <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm">
+                      <input
+                        ref={facebookProviderRef}
+                        type="checkbox"
+                        checked={!!selected.facebook && (fbAllSelected || fbSomeSelected || fbTotalCount === 0)}
+                        onChange={(e) => setFacebookSelectedAll(e.target.checked)}
+                      />
+                      <span className="text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p] || p}</span>
+                      {fbTotalCount > 0 && (
+                        <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">
+                          {fbSelectedCount}/{fbTotalCount}
+                        </span>
+                      )}
+                    </label>
+                  ) : (
+                    <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={!!selected[p]}
+                        onChange={(e) => setSelected((prev) => ({ ...prev, [p]: e.target.checked }))}
+                      />
+                      <span className="text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p] || p}</span>
+                    </label>
+                  )
                 ))}
               </div>
             )}
@@ -210,7 +292,7 @@ export const ContentPosts: React.FC = () => {
                                 type="checkbox"
                                 disabled={disabled}
                                 checked={!!fbSelected[pg.id]}
-                                onChange={(e) => setFbSelected((prev) => ({ ...prev, [pg.id]: e.target.checked }))}
+                                onChange={(e) => toggleFacebookPage(pg.id, e.target.checked)}
                               />
                               <div className="min-w-0">
                                 <div className="text-slate-800 dark:text-slate-100 truncate">
