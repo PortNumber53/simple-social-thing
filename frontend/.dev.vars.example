@@ -17,6 +17,9 @@ VITE_DISABLE_CF_PLUGIN=1
 # Mock Auth (for local dev without real OAuth)
 USE_MOCK_AUTH=false
 
+# Threads integration (Meta permissions can change; keep blank unless you know the correct permissions for your app)
+# THREADS_SCOPES=threads_basic,threads_content_publish
+
 # Hyperdrive Local Connection (for local Postgres emulation)
 # Use your local DATABASE_URL from .env
 CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://user:password@localhost:5432/dbname
