@@ -307,6 +307,10 @@ export default {
       if (url.pathname === "/api/webhook/facebook/callback") {
         return handleFacebookWebhook(request, env);
       }
+      // TikTok Webhook callback (TikTok Webhooks product)
+      if (url.pathname === "/api/webhooks/tiktok/callback") {
+        return handleTikTokWebhook(request, env);
+      }
       // User settings bundle for current session (sanitized; used for client-side caching)
       if (url.pathname === "/api/user-settings") {
         return handleUserSettingsBundle(request, env);
@@ -998,6 +1002,73 @@ async function handlePublishJobWs(request: Request, env: Env): Promise<Response>
   })();
 
   return new Response(null, { status: 101, webSocket: client, headers });
+}
+
+async function handleTikTokWebhook(request: Request, env: Env): Promise<Response> {
+  // TikTok Webhooks: https://developers.tiktok.com/doc/webhooks-verification
+  // We support:
+  // - GET: simple health (TikTok generally delivers via POST; verification is signature-based)
+  // - POST: validate TikTok-Signature (if present) using client_secret, then ack quickly.
+
+  if (request.method === 'GET') {
+    return Response.json({ ok: true });
+  }
+
+  if (request.method !== 'POST') {
+    return new Response(null, { status: 405 });
+  }
+
+  const sigHeader = request.headers.get('TikTok-Signature') || request.headers.get('tiktok-signature') || '';
+  const clientSecret = (env.TIKTOK_CLIENT_SECRET || '').trim();
+
+  const raw = await request.arrayBuffer().catch(() => null);
+  if (!raw) return new Response('bad_request', { status: 400 });
+
+  // Best-effort signature verification. If header exists, enforce it.
+  if (sigHeader && clientSecret) {
+    // Header format: t=timestamp,s=hexsignature
+    const parts = sigHeader.split(',').map(p => p.trim());
+    const tPart = parts.find(p => p.startsWith('t='));
+    const sPart = parts.find(p => p.startsWith('s='));
+    const t = tPart ? tPart.slice(2) : '';
+    const s = sPart ? sPart.slice(2) : '';
+    if (!t || !s) {
+      console.warn('[TTWebhook] invalid_signature_header', sigHeader);
+      return new Response('forbidden', { status: 403 });
+    }
+
+    try {
+      const payloadText = new TextDecoder().decode(raw);
+      const signedPayload = `${t}.${payloadText}`;
+      const key = await crypto.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(clientSecret),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign'],
+      );
+      const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signedPayload));
+      const macHex = Array.from(new Uint8Array(mac)).map(b => b.toString(16).padStart(2, '0')).join('');
+      if (macHex !== s) {
+        console.warn('[TTWebhook] signature_mismatch');
+        return new Response('forbidden', { status: 403 });
+      }
+    } catch (e) {
+      console.warn('[TTWebhook] signature_validation_error', e);
+      return new Response('forbidden', { status: 403 });
+    }
+  } else if (sigHeader && !clientSecret) {
+    console.warn('[TTWebhook] missing_client_secret_for_signature_validation');
+    return new Response('misconfigured', { status: 500 });
+  }
+
+  // Log minimally for debugging; do not store secrets.
+  try {
+    const text = new TextDecoder().decode(raw);
+    console.log('[TTWebhook] event', text.slice(0, 4000));
+  } catch { void 0; }
+
+  return Response.json({ ok: true });
 }
 
 async function handleSunoCredits(request: Request, env: Env): Promise<Response> {
