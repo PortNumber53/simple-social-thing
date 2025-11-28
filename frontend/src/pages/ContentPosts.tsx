@@ -23,6 +23,12 @@ type PublishResponse = {
   body?: string;
 };
 
+type FacebookPagesResponse = {
+  ok?: boolean;
+  connected?: boolean;
+  pages?: Array<{ id: string; name: string | null; tasks: string[]; canPost: boolean }>;
+};
+
 const PROVIDER_LABELS: Record<string, string> = {
   instagram: 'Instagram',
   facebook: 'Facebook Pages',
@@ -42,6 +48,9 @@ export const ContentPosts: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectAll, setSelectAll] = useState(true);
   const [showDetails, setShowDetails] = useState<Record<string, boolean>>({});
+  const [fbPages, setFbPages] = useState<Array<{ id: string; name: string | null; tasks: string[]; canPost: boolean }>>([]);
+  const [fbSelected, setFbSelected] = useState<Record<string, boolean>>({});
+  const [fbExpanded, setFbExpanded] = useState(true);
 
   useEffect(() => {
     const load = async () => {
@@ -61,6 +70,25 @@ export const ContentPosts: React.FC = () => {
     };
     void load();
   }, []);
+
+  useEffect(() => {
+    const loadFbPages = async () => {
+      if (!connected.includes('facebook')) return;
+      try {
+        const res = await fetch('/api/integrations/facebook/pages', { credentials: 'include' });
+        const data: FacebookPagesResponse = await res.json().catch(() => ({}));
+        const pages = Array.isArray(data.pages) ? data.pages : [];
+        setFbPages(pages);
+        // default select all postable pages
+        const next: Record<string, boolean> = {};
+        for (const p of pages) {
+          if (p.canPost) next[p.id] = true;
+        }
+        setFbSelected(next);
+      } catch { void 0; }
+    };
+    void loadFbPages();
+  }, [connected]);
 
   const selectedProviders = useMemo(() => {
     return Object.keys(selected).filter((k) => selected[k]);
@@ -101,11 +129,14 @@ export const ContentPosts: React.FC = () => {
     setIsSubmitting(true);
 		setStatus(`Publishing to ${selectedProviders.length} network(s)...`);
     try {
+      const facebookPageIds = selectedProviders.includes('facebook')
+        ? Object.keys(fbSelected).filter((id) => fbSelected[id])
+        : [];
       const res = await fetch('/api/posts/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ caption, providers: selectedProviders }),
+        body: JSON.stringify({ caption, providers: selectedProviders, facebookPageIds }),
       });
       const data: PublishResponse = await res.json().catch(() => ({}));
       setResults(data);
@@ -171,6 +202,64 @@ export const ContentPosts: React.FC = () => {
                     <span className="text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p] || p}</span>
                   </label>
                 ))}
+              </div>
+            )}
+
+            {connected.includes('facebook') && selected.facebook && (
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4 bg-white/60 dark:bg-slate-900/20">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium text-slate-700 dark:text-slate-200">Facebook Pages</div>
+                  <button
+                    type="button"
+                    className="text-xs underline text-slate-600 dark:text-slate-300"
+                    onClick={() => setFbExpanded((v) => !v)}
+                  >
+                    {fbExpanded ? 'Hide pages' : 'Choose pages'}
+                  </button>
+                </div>
+                {fbExpanded && (
+                  <div className="mt-3 space-y-2">
+                    {fbPages.length === 0 ? (
+                      <div className="text-sm text-slate-500 dark:text-slate-300">
+                        No pages found (or you need to reconnect Facebook so we can read your page list/tasks).
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {fbPages.map((pg) => {
+                          const disabled = !pg.canPost;
+                          return (
+                            <label
+                              key={pg.id}
+                              className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+                                disabled
+                                  ? 'border-slate-200 dark:border-slate-700 opacity-60'
+                                  : 'border-slate-200 dark:border-slate-700'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                disabled={disabled}
+                                checked={!!fbSelected[pg.id]}
+                                onChange={(e) => setFbSelected((prev) => ({ ...prev, [pg.id]: e.target.checked }))}
+                              />
+                              <div className="min-w-0">
+                                <div className="text-slate-800 dark:text-slate-100 truncate">
+                                  {pg.name || pg.id}
+                                </div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400">
+                                  {disabled ? 'Not postable with your current role' : 'Will post to this page'}
+                                </div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <div className="text-xs text-slate-500 dark:text-slate-400">
+                      Tip: if everything is disabled, reconnect Facebook and ensure your user has Page permissions that include creating content.
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             <p className="text-xs text-slate-500 dark:text-slate-400">

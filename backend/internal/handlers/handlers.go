@@ -619,7 +619,9 @@ func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 type publishPostRequest struct {
 	Caption   string   `json:"caption"`
 	Providers []string `json:"providers"`
-	DryRun    bool     `json:"dryRun"`
+	// Optional: restrict Facebook publishing to a subset of page IDs.
+	FacebookPageIDs []string `json:"facebookPageIds"`
+	DryRun          bool     `json:"dryRun"`
 }
 
 type publishProviderResult struct {
@@ -685,7 +687,7 @@ func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Reques
 
 	// Facebook: Post to all saved pages in facebook_oauth using page access tokens.
 	if want["facebook"] {
-		posted, err, details := h.publishFacebookPages(r.Context(), userID, caption, req.DryRun)
+		posted, err, details := h.publishFacebookPages(r.Context(), userID, caption, req.FacebookPageIDs, req.DryRun)
 		if err != nil {
 			results["facebook"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
 			overallOK = false
@@ -737,7 +739,7 @@ func truncate(s string, max int) string {
 	return s[:max] + "…"
 }
 
-func (h *Handler) publishFacebookPages(ctx context.Context, userID string, caption string, dryRun bool) (int, error, map[string]interface{}) {
+func (h *Handler) publishFacebookPages(ctx context.Context, userID string, caption string, pageIDs []string, dryRun bool) (int, error, map[string]interface{}) {
 	details := map[string]interface{}{}
 	var raw []byte
 	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='facebook_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
@@ -767,6 +769,28 @@ func (h *Handler) publishFacebookPages(ctx context.Context, userID string, capti
 	}
 	if len(pages) == 0 {
 		return 0, fmt.Errorf("no_pages_found"), details
+	}
+
+	// Optional page filter
+	if len(pageIDs) > 0 {
+		allow := map[string]bool{}
+		for _, id := range pageIDs {
+			id = strings.TrimSpace(id)
+			if id != "" {
+				allow[id] = true
+			}
+		}
+		filtered := make([]fbOAuthPageRow, 0, len(pages))
+		for _, p := range pages {
+			if allow[p.ID] {
+				filtered = append(filtered, p)
+			}
+		}
+		pages = filtered
+		details["requestedPageIds"] = pageIDs
+	}
+	if len(pages) == 0 {
+		return 0, fmt.Errorf("no_selected_pages"), details
 	}
 
 	type pageResult struct {
