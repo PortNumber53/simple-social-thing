@@ -2028,129 +2028,183 @@ func (h *Handler) publishPinterestWithImageURL(ctx context.Context, userID, capt
 	client := &http.Client{Timeout: 60 * time.Second}
 	authHeader := "Bearer " + tok.AccessToken
 
-	// 1) Find a board (or create a default one)
-	boardID := ""
-	{
-		reqURL := "https://api.pinterest.com/v5/boards?page_size=25"
-		req, _ := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
-		req.Header.Set("Authorization", authHeader)
-		req.Header.Set("Accept", "application/json")
-		res, err := client.Do(req)
-		if err != nil {
-			return 0, err, details
+	type pinAPIError struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	isTrialSandboxError := func(status int, body []byte) bool {
+		if status != http.StatusForbidden {
+			return false
 		}
-		body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-		_ = res.Body.Close()
-		if res.StatusCode < 200 || res.StatusCode >= 300 {
-			return 0, fmt.Errorf("pinterest_boards_non_2xx"), map[string]interface{}{"status": res.StatusCode, "body": truncate(string(body), 2000)}
-		}
-		var parsed map[string]interface{}
-		_ = json.Unmarshal(body, &parsed)
-		items, _ := parsed["items"].([]interface{})
-		if len(items) > 0 {
-			if m, _ := items[0].(map[string]interface{}); m != nil {
-				if id, _ := m["id"].(string); id != "" {
-					boardID = id
-				}
+		var pe pinAPIError
+		if err := json.Unmarshal(body, &pe); err == nil {
+			if pe.Code == 29 {
+				return true
+			}
+			if strings.Contains(strings.ToLower(pe.Message), "trial access") && strings.Contains(strings.ToLower(pe.Message), "api-sandbox") {
+				return true
 			}
 		}
-		details["boardsList"] = map[string]interface{}{"count": len(items)}
+		// fallback: substring match
+		lb := strings.ToLower(string(body))
+		return strings.Contains(lb, "trial access") && strings.Contains(lb, "api-sandbox.pinterest.com")
 	}
 
-	if boardID == "" {
-		create := map[string]interface{}{
-			"name":        "Simple Social Thing",
-			"description": "Created by Simple Social Thing",
-			"privacy":     "PUBLIC",
+	publishOnce := func(apiBase string) (int, error, map[string]interface{}, bool) {
+		local := map[string]interface{}{"apiBase": apiBase}
+
+		// 1) Find a board (or create a default one)
+		boardID := ""
+		{
+			reqURL := strings.TrimRight(apiBase, "/") + "/v5/boards?page_size=25"
+			req, _ := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+			req.Header.Set("Authorization", authHeader)
+			req.Header.Set("Accept", "application/json")
+			res, err := client.Do(req)
+			if err != nil {
+				return 0, err, local, false
+			}
+			body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+			_ = res.Body.Close()
+			if res.StatusCode < 200 || res.StatusCode >= 300 {
+				// Some trial apps may require sandbox even for write; keep boards failure verbose.
+				return 0, fmt.Errorf("pinterest_boards_non_2xx"), map[string]interface{}{"apiBase": apiBase, "status": res.StatusCode, "body": truncate(string(body), 2000)}, isTrialSandboxError(res.StatusCode, body)
+			}
+			var parsed map[string]interface{}
+			_ = json.Unmarshal(body, &parsed)
+			items, _ := parsed["items"].([]interface{})
+			if len(items) > 0 {
+				if m, _ := items[0].(map[string]interface{}); m != nil {
+					if id, _ := m["id"].(string); id != "" {
+						boardID = id
+					}
+				}
+			}
+			local["boardsList"] = map[string]interface{}{"count": len(items)}
 		}
-		b, _ := json.Marshal(create)
-		req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.pinterest.com/v5/boards", bytes.NewReader(b))
+
+		if boardID == "" {
+			create := map[string]interface{}{
+				"name":        "Simple Social Thing",
+				"description": "Created by Simple Social Thing",
+				"privacy":     "PUBLIC",
+			}
+			b, _ := json.Marshal(create)
+			req, _ := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(apiBase, "/")+"/v5/boards", bytes.NewReader(b))
+			req.Header.Set("Authorization", authHeader)
+			req.Header.Set("Accept", "application/json")
+			req.Header.Set("Content-Type", "application/json")
+			res, err := client.Do(req)
+			if err != nil {
+				return 0, err, local, false
+			}
+			body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+			_ = res.Body.Close()
+			if res.StatusCode < 200 || res.StatusCode >= 300 {
+				return 0, fmt.Errorf("pinterest_create_board_non_2xx"), map[string]interface{}{"apiBase": apiBase, "status": res.StatusCode, "body": truncate(string(body), 2000)}, isTrialSandboxError(res.StatusCode, body)
+			}
+			var parsed map[string]interface{}
+			_ = json.Unmarshal(body, &parsed)
+			if id, _ := parsed["id"].(string); id != "" {
+				boardID = id
+			}
+			local["createdBoard"] = json.RawMessage(body)
+		}
+		if boardID == "" {
+			return 0, fmt.Errorf("pinterest_no_board"), local, false
+		}
+		local["boardId"] = boardID
+
+		// 2) Create pin
+		title := strings.TrimSpace(caption)
+		if title == "" {
+			title = "New pin"
+		}
+		if len(title) > 95 {
+			title = truncate(title, 95)
+		}
+		pinReq := map[string]interface{}{
+			"board_id":     boardID,
+			"title":        title,
+			"description":  caption,
+			"media_source": map[string]interface{}{"source_type": "image_url", "url": imageURL},
+		}
+		pinBytes, _ := json.Marshal(pinReq)
+		req, _ := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(apiBase, "/")+"/v5/pins", bytes.NewReader(pinBytes))
 		req.Header.Set("Authorization", authHeader)
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("Content-Type", "application/json")
 		res, err := client.Do(req)
 		if err != nil {
-			return 0, err, details
+			return 0, err, local, false
 		}
-		body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 2<<20))
 		_ = res.Body.Close()
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
-			return 0, fmt.Errorf("pinterest_create_board_non_2xx"), map[string]interface{}{"status": res.StatusCode, "body": truncate(string(body), 2000)}
+			return 0, fmt.Errorf("pinterest_create_pin_non_2xx"), map[string]interface{}{"apiBase": apiBase, "status": res.StatusCode, "body": truncate(string(body), 3000)}, isTrialSandboxError(res.StatusCode, body)
 		}
-		var parsed map[string]interface{}
-		_ = json.Unmarshal(body, &parsed)
-		if id, _ := parsed["id"].(string); id != "" {
-			boardID = id
+
+		var pinParsed map[string]interface{}
+		_ = json.Unmarshal(body, &pinParsed)
+		pinID, _ := pinParsed["id"].(string)
+		link, _ := pinParsed["link"].(string)
+		if link == "" && pinID != "" {
+			link = fmt.Sprintf("https://www.pinterest.com/pin/%s/", pinID)
 		}
-		details["createdBoard"] = json.RawMessage(body)
-	}
-	if boardID == "" {
-		return 0, fmt.Errorf("pinterest_no_board"), details
-	}
-	details["boardId"] = boardID
+		local["pinId"] = pinID
+		local["response"] = json.RawMessage(body)
 
-	// 2) Create pin
-	title := strings.TrimSpace(caption)
-	if title == "" {
-		title = "New pin"
-	}
-	if len(title) > 95 {
-		title = truncate(title, 95)
-	}
-	pinReq := map[string]interface{}{
-		"board_id":     boardID,
-		"title":        title,
-		"description":  caption,
-		"media_source": map[string]interface{}{"source_type": "image_url", "url": imageURL},
-	}
-	pinBytes, _ := json.Marshal(pinReq)
-	req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.pinterest.com/v5/pins", bytes.NewReader(pinBytes))
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	res, err := client.Do(req)
-	if err != nil {
-		return 0, err, details
-	}
-	body, _ := io.ReadAll(io.LimitReader(res.Body, 2<<20))
-	_ = res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return 0, fmt.Errorf("pinterest_create_pin_non_2xx"), map[string]interface{}{"status": res.StatusCode, "body": truncate(string(body), 3000)}
-	}
-
-	var pinParsed map[string]interface{}
-	_ = json.Unmarshal(body, &pinParsed)
-	pinID, _ := pinParsed["id"].(string)
-	link, _ := pinParsed["link"].(string)
-	if link == "" && pinID != "" {
-		link = fmt.Sprintf("https://www.pinterest.com/pin/%s/", pinID)
-	}
-	details["pinId"] = pinID
-	details["response"] = json.RawMessage(body)
-
-	if pinID != "" {
-		rawPayload := strings.ReplaceAll(string(body), "\x00", "")
-		if !utf8.ValidString(rawPayload) {
-			rawPayload = strings.ToValidUTF8(rawPayload, "�")
+		if pinID != "" {
+			rawPayload := strings.ReplaceAll(string(body), "\x00", "")
+			if !utf8.ValidString(rawPayload) {
+				rawPayload = strings.ToValidUTF8(rawPayload, "�")
+			}
+			rowID := fmt.Sprintf("pinterest:%s:%s", userID, pinID)
+			_, _ = h.db.ExecContext(ctx, `
+				INSERT INTO public."SocialLibraries"
+				  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
+				VALUES
+				  ($1, $2, 'pinterest', 'pin', NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULL, NOW(), NULL, NULL, $6::jsonb, $7, NOW(), NOW())
+				ON CONFLICT (user_id, network, external_id)
+				DO UPDATE SET
+				  title = EXCLUDED.title,
+				  permalink_url = EXCLUDED.permalink_url,
+				  media_url = EXCLUDED.media_url,
+				  raw_payload = EXCLUDED.raw_payload,
+				  updated_at = NOW()
+			`, rowID, userID, title, link, imageURL, rawPayload, pinID)
 		}
-		rowID := fmt.Sprintf("pinterest:%s:%s", userID, pinID)
-		_, _ = h.db.ExecContext(ctx, `
-			INSERT INTO public."SocialLibraries"
-			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
-			VALUES
-			  ($1, $2, 'pinterest', 'pin', NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULL, NOW(), NULL, NULL, $6::jsonb, $7, NOW(), NOW())
-			ON CONFLICT (user_id, network, external_id)
-			DO UPDATE SET
-			  title = EXCLUDED.title,
-			  permalink_url = EXCLUDED.permalink_url,
-			  media_url = EXCLUDED.media_url,
-			  raw_payload = EXCLUDED.raw_payload,
-			  updated_at = NOW()
-		`, rowID, userID, title, link, imageURL, rawPayload, pinID)
+
+		log.Printf("[PINPublish] ok userId=%s pinId=%s apiBase=%s", userID, pinID, apiBase)
+		return 1, nil, local, false
 	}
 
-	log.Printf("[PINPublish] ok userId=%s pinId=%s", userID, pinID)
-	return 1, nil, details
+	// Trial apps cannot create pins using the production API host; Pinterest returns code=29 and instructs using api-sandbox.
+	posted, err, det, trial := publishOnce("https://api.pinterest.com")
+	if err == nil {
+		for k, v := range det {
+			details[k] = v
+		}
+		return posted, nil, details
+	}
+	if trial {
+		posted2, err2, det2, _ := publishOnce("https://api-sandbox.pinterest.com")
+		if err2 == nil {
+			details["sandboxFallback"] = true
+			for k, v := range det2 {
+				details[k] = v
+			}
+			return posted2, nil, details
+		}
+		details["sandboxFallback"] = true
+		details["sandboxError"] = det2
+		return 0, fmt.Errorf("pinterest_trial_requires_sandbox"), details
+	}
+
+	for k, v := range det {
+		details[k] = v
+	}
+	return 0, err, details
 }
 
 func (h *Handler) publishYouTubeWithVideoBytes(ctx context.Context, userID, caption string, video uploadedMedia, dryRun bool) (int, error, map[string]interface{}) {
