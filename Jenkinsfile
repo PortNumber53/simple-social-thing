@@ -84,11 +84,11 @@ pipeline {
         withCredentials([
           string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL')
         ]) {
-          sh label: 'dbtool diagnostics', script: '''
-            set -euo pipefail
-            echo "dbtool version: $(dbtool --version || echo not-found)"
-          '''
-          sh 'bash deploy/dbtool-migrate.sh'
+        sh label: 'dbtool diagnostics', script: '''
+          set -euo pipefail
+          echo "dbtool version: $(dbtool --version || echo not-found)"
+        '''
+        sh 'bash deploy/dbtool-migrate.sh'
         }
       }
     }
@@ -97,8 +97,8 @@ pipeline {
       when { branch 'master' }
       parallel {
         stage('Deploy Backend (amd64 → web1)') {
-          steps {
-            unstash "bin-amd64"
+      steps {
+        unstash "bin-amd64"
             withCredentials([
               string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL')
             ]) {
@@ -127,7 +127,7 @@ pipeline {
             withCredentials([
               string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL')
             ]) {
-              sshagent(credentials: [env.SSH_CREDENTIALS]) {
+        sshagent(credentials: [env.SSH_CREDENTIALS]) {
                 sh label: 'Deploy via script', script: '''
                   set -euo pipefail
                   GOARCH=arm64 \
@@ -158,6 +158,7 @@ pipeline {
               string(credentialsId: 'prod-tiktok-client-secret-simple-social-thing', variable: 'TIKTOK_CLIENT_SECRET'),
               string(credentialsId: 'prod-pinterest-client-id-simple-social-thing', variable: 'PINTEREST_CLIENT_ID'),
               string(credentialsId: 'prod-pinterest-client-secret-simple-social-thing', variable: 'PINTEREST_CLIENT_SECRET'),
+              string(credentialsId: 'prod-facebook-webhook-token-simple-social-thing', variable: 'FACEBOOK_WEBHOOK_TOKEN'),
               string(credentialsId: 'prod-jwt-secret-simple-social-thing', variable: 'JWT_SECRET'),
               string(credentialsId: 'prod-stripe-secret-key-simple-social-thing', variable: 'STRIPE_SECRET_KEY'),
               string(credentialsId: 'prod-stripe-publishable-key-simple-social-thing', variable: 'STRIPE_PUBLISHABLE_KEY'),

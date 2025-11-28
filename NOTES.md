@@ -15,6 +15,7 @@ Jenkins Secret Names:
 - prod-instagram-app-id-simple-social-thing
 - prod-instagram-app-secret-simple-social-thing
 - prod-suno-api-key-simple-social-thing
+- prod-facebook-webhook-token-simple-social-thing
 
 
 Oracle - Ubuntu - ARM64 machines - ssh port 22, user grimlock
