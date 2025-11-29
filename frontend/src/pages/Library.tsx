@@ -11,6 +11,13 @@ type LocalPost = {
   updatedAt?: string | null;
 };
 
+type UploadPreview = {
+  id: string;
+  file: File;
+  url: string;
+  kind: 'image' | 'video' | 'other';
+};
+
 export const Library: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'draft' | 'scheduled'>('draft');
   const [items, setItems] = useState<LocalPost[]>([]);
@@ -23,6 +30,9 @@ export const Library: React.FC = () => {
   const [draftStatus, setDraftStatus] = useState<'draft' | 'scheduled'>('draft');
   const [scheduledForLocal, setScheduledForLocal] = useState<string>('');
   const editorRef = useRef<HTMLDivElement | null>(null);
+
+  const [uploads, setUploads] = useState<UploadPreview[]>([]);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = async (status: 'draft' | 'scheduled') => {
     setLoading(true);
@@ -53,6 +63,46 @@ export const Library: React.FC = () => {
     setDraftStatus('draft');
     setScheduledForLocal('');
   };
+
+  const addFiles = (files: FileList | File[] | null | undefined) => {
+    if (!files) return;
+    const arr = Array.from(files);
+    if (arr.length === 0) return;
+    setUploads((prev) => {
+      const next = [...prev];
+      for (const f of arr) {
+        const type = (f.type || '').toLowerCase();
+        const kind: UploadPreview['kind'] =
+          type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : 'other';
+        next.push({ id: crypto.randomUUID(), file: f, url: URL.createObjectURL(f), kind });
+      }
+      return next;
+    });
+  };
+
+  const clearUploads = () => {
+    setUploads((prev) => {
+      for (const u of prev) URL.revokeObjectURL(u.url);
+      return [];
+    });
+    if (uploadInputRef.current) uploadInputRef.current.value = '';
+  };
+
+  const removeUpload = (id: string) => {
+    setUploads((prev) => {
+      const u = prev.find((x) => x.id === id);
+      if (u) URL.revokeObjectURL(u.url);
+      return prev.filter((x) => x.id !== id);
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      // Cleanup object URLs on unmount.
+      for (const u of uploads) URL.revokeObjectURL(u.url);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const scrollToEditor = () => {
     const el = editorRef.current;
@@ -274,6 +324,85 @@ export const Library: React.FC = () => {
 
           {/* List */}
           <div className="space-y-4">
+            <div className="card p-5 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Uploads</div>
+                <div className="flex items-center gap-2">
+                  {uploads.length > 0 && (
+                    <button type="button" className="btn btn-ghost" onClick={clearUploads}>
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => uploadInputRef.current?.click()}
+                  >
+                    Add files
+                  </button>
+                </div>
+              </div>
+
+              <div
+                className="rounded-lg border border-dashed border-slate-300/70 dark:border-slate-700/70 bg-slate-50/60 dark:bg-slate-900/20 p-4"
+                onDragOver={(e) => {
+                  e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  addFiles(e.dataTransfer.files);
+                }}
+              >
+                <input
+                  ref={uploadInputRef}
+                  type="file"
+                  accept="image/*,video/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => addFiles(e.target.files)}
+                />
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                  <div className="text-sm text-slate-700 dark:text-slate-200">
+                    Drag & drop files here, or click <span className="font-medium">Add files</span>.
+                  </div>
+                  <div className="sm:ml-auto text-xs text-slate-500 dark:text-slate-400">
+                    Images & videos · multiple files
+                  </div>
+                </div>
+              </div>
+
+              {uploads.length > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4">
+                  {uploads.map((u) => (
+                    <div key={u.id} className="card p-0 overflow-hidden">
+                      <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
+                        {u.kind === 'image' ? (
+                          <img src={u.url} alt={u.file.name} className="w-full h-full object-cover" />
+                        ) : u.kind === 'video' ? (
+                          <video src={u.url} className="w-full h-full object-cover" muted playsInline />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-slate-400">
+                            <span className="text-sm">File</span>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          className="absolute top-2 right-2 bg-slate-900/70 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs hover:bg-slate-900/80"
+                          aria-label={`Remove ${u.file.name}`}
+                          onClick={() => removeUpload(u.id)}
+                        >
+                          ×
+                        </button>
+                        <div className="absolute bottom-2 left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate">
+                          {u.file.name}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="card p-5 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                 <div className="inline-flex rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden">
