@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Layout } from '../components/Layout';
 
 type LocalPost = {
@@ -18,11 +18,11 @@ export const Library: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<LocalPost | null>(null);
   const [draftText, setDraftText] = useState('');
   const [draftStatus, setDraftStatus] = useState<'draft' | 'scheduled'>('draft');
   const [scheduledForLocal, setScheduledForLocal] = useState<string>('');
+  const editorRef = useRef<HTMLDivElement | null>(null);
 
   const load = async (status: 'draft' | 'scheduled') => {
     setLoading(true);
@@ -47,12 +47,22 @@ export const Library: React.FC = () => {
     void load(statusFilter);
   }, [statusFilter]);
 
-  const openNew = () => {
+  const resetEditorToNewDraft = () => {
     setEditing(null);
     setDraftText('');
     setDraftStatus('draft');
     setScheduledForLocal('');
-    setEditorOpen(true);
+  };
+
+  const scrollToEditor = () => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const openNew = () => {
+    resetEditorToNewDraft();
+    scrollToEditor();
   };
 
   const openEdit = (p: LocalPost) => {
@@ -69,7 +79,7 @@ export const Library: React.FC = () => {
     } else {
       setScheduledForLocal('');
     }
-    setEditorOpen(true);
+    scrollToEditor();
   };
 
   const toIsoOrNull = (localValue: string): string | null => {
@@ -104,7 +114,15 @@ export const Library: React.FC = () => {
           return;
         }
         const updated = data as LocalPost;
-        setItems((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+        // If the update moves the post between tabs, switch tabs.
+        if (updated.status === 'draft' || updated.status === 'scheduled') {
+          if (updated.status !== statusFilter) setStatusFilter(updated.status);
+        }
+        setItems((prev) => {
+          if (updated.status !== statusFilter) return prev.filter((p) => p.id !== updated.id);
+          return prev.map((p) => (p.id === updated.id ? updated : p));
+        });
+        setEditing(updated);
       } else {
         const res = await fetch(`/api/local-library/items`, {
           method: 'POST',
@@ -118,11 +136,12 @@ export const Library: React.FC = () => {
           return;
         }
         const created = data as LocalPost;
-        setItems((prev) => [created, ...prev]);
+        if (created.status === 'draft' || created.status === 'scheduled') {
+          if (created.status !== statusFilter) setStatusFilter(created.status);
+        }
+        setItems((prev) => (created.status === statusFilter ? [created, ...prev] : prev));
+        setEditing(created);
       }
-
-      setEditorOpen(false);
-      setEditing(null);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg || 'Failed to save.');
@@ -163,161 +182,189 @@ export const Library: React.FC = () => {
           </p>
         </header>
 
-        <div className="card p-5 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <div className="inline-flex rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setStatusFilter('draft')}
-                className={[
-                  'px-3 py-2 text-sm',
-                  statusFilter === 'draft'
-                    ? 'bg-slate-900 text-white dark:bg-slate-200 dark:text-slate-900'
-                    : 'bg-white/70 dark:bg-slate-900/30 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/40',
-                ].join(' ')}
-              >
-                Drafts
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter('scheduled')}
-                className={[
-                  'px-3 py-2 text-sm border-l border-slate-200 dark:border-slate-700',
-                  statusFilter === 'scheduled'
-                    ? 'bg-slate-900 text-white dark:bg-slate-200 dark:text-slate-900'
-                    : 'bg-white/70 dark:bg-slate-900/30 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/40',
-                ].join(' ')}
-              >
-                Scheduled
-              </button>
-            </div>
-
-            <div className="sm:ml-auto flex items-center gap-2">
-              <button type="button" className="btn btn-secondary" onClick={() => void load(statusFilter)} disabled={loading}>
-                {loading ? 'Loading…' : 'Refresh'}
-              </button>
-              <button type="button" className="btn btn-primary" onClick={openNew}>
-                New draft
-              </button>
-            </div>
-          </div>
-
-          {error && <div className="text-sm text-red-600 dark:text-red-300">{error}</div>}
-        </div>
-
-        <div className="card p-0 overflow-hidden">
-          <div className="divide-y divide-slate-200/60 dark:divide-slate-700/40">
-            {items.length === 0 ? (
-              <div className="p-8 text-slate-500 dark:text-slate-400">{emptyState}</div>
-            ) : (
-              items.map((p) => {
-                const scheduledLabel = p.scheduledFor ? new Date(p.scheduledFor).toLocaleString() : '—';
-                const createdLabel = p.createdAt ? new Date(p.createdAt).toLocaleString() : '';
-                const preview = (p.content || '').trim();
-                return (
-                  <div key={p.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
-                          {p.status}
-                        </span>
-                        {p.status === 'scheduled' && (
-                          <span className="text-xs text-slate-600 dark:text-slate-300">Scheduled: {scheduledLabel}</span>
-                        )}
-                      </div>
-                      <div className="mt-2 text-sm text-slate-900 dark:text-slate-50 break-words">
-                        {preview ? preview : <span className="text-slate-500 dark:text-slate-400">No content</span>}
-                      </div>
-                      {createdLabel && (
-                        <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">Created: {createdLabel}</div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button type="button" className="btn btn-secondary" onClick={() => openEdit(p)}>
-                        Edit
-                      </button>
-                      <a
-                        className="btn btn-ghost"
-                        href={`/content/posts?caption=${encodeURIComponent((p.content || '').toString())}`}
-                        title="Open in publisher (caption-only)"
-                      >
-                        Open publisher
-                      </a>
-                      <button type="button" className="btn btn-ghost text-red-600 hover:text-red-700" onClick={() => void remove(p)}>
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        {editorOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-            <div className="absolute inset-0 bg-black/40" onClick={() => setEditorOpen(false)} aria-hidden="true" />
-            <div className="relative w-full max-w-2xl card p-6 space-y-4">
-              <div className="flex items-center justify-between gap-3">
+        <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-6 items-start">
+          {/* Editor (always visible) */}
+          <div ref={editorRef} className="card p-5 space-y-4 xl:sticky xl:top-24">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
                 <div className="text-lg font-semibold text-slate-900 dark:text-slate-50">
-                  {editing ? 'Edit item' : 'New draft'}
+                  {editing ? 'Edit draft' : 'New draft'}
                 </div>
-                <button type="button" className="btn btn-ghost" onClick={() => setEditorOpen(false)} aria-label="Close">
-                  Close
-                </button>
+                <div className="text-xs text-slate-600 dark:text-slate-300">
+                  {editing ? `ID: ${editing.id}` : 'Create local content you can reuse and schedule later.'}
+                </div>
               </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={openNew}
+                disabled={saving}
+                title="Clear the form"
+              >
+                New
+              </button>
+            </div>
 
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Content</label>
-                <textarea
-                  value={draftText}
-                  onChange={(e) => setDraftText(e.target.value)}
-                  rows={6}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Content</label>
+              <textarea
+                value={draftText}
+                onChange={(e) => setDraftText(e.target.value)}
+                rows={8}
+                className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
+                placeholder="Write your caption / notes…"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Status</label>
+                <select
+                  value={draftStatus}
+                  onChange={(e) => setDraftStatus(e.target.value === 'scheduled' ? 'scheduled' : 'draft')}
                   className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
-                  placeholder="Write your caption / notes…"
+                >
+                  <option value="draft">Draft</option>
+                  <option value="scheduled">Scheduled</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Scheduled for</label>
+                <input
+                  type="datetime-local"
+                  value={scheduledForLocal}
+                  onChange={(e) => setScheduledForLocal(e.target.value)}
+                  disabled={draftStatus !== 'scheduled'}
+                  className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm disabled:opacity-60"
                 />
               </div>
+            </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Status</label>
-                  <select
-                    value={draftStatus}
-                    onChange={(e) => setDraftStatus(e.target.value === 'scheduled' ? 'scheduled' : 'draft')}
-                    className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" className="btn btn-primary" onClick={() => void save()} disabled={saving}>
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  resetEditorToNewDraft();
+                  setError(null);
+                }}
+                disabled={saving}
+              >
+                Clear
+              </button>
+              {editing && (
+                <a
+                  className="btn btn-secondary"
+                  href={`/content/posts?caption=${encodeURIComponent(draftText.trim())}`}
+                  title="Open in publisher (caption-only)"
+                >
+                  Open publisher
+                </a>
+              )}
+            </div>
+
+            {error && <div className="text-sm text-red-600 dark:text-red-300">{error}</div>}
+            <div className="text-xs text-slate-600 dark:text-slate-300">
+              Scheduling is stored in the app, but automated scheduled publishing is not wired up yet.
+            </div>
+          </div>
+
+          {/* List */}
+          <div className="space-y-4">
+            <div className="card p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="inline-flex rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('draft')}
+                    className={[
+                      'px-3 py-2 text-sm',
+                      statusFilter === 'draft'
+                        ? 'bg-slate-900 text-white dark:bg-slate-200 dark:text-slate-900'
+                        : 'bg-white/70 dark:bg-slate-900/30 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/40',
+                    ].join(' ')}
                   >
-                    <option value="draft">Draft</option>
-                    <option value="scheduled">Scheduled</option>
-                  </select>
+                    Drafts
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('scheduled')}
+                    className={[
+                      'px-3 py-2 text-sm border-l border-slate-200 dark:border-slate-700',
+                      statusFilter === 'scheduled'
+                        ? 'bg-slate-900 text-white dark:bg-slate-200 dark:text-slate-900'
+                        : 'bg-white/70 dark:bg-slate-900/30 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/40',
+                    ].join(' ')}
+                  >
+                    Scheduled
+                  </button>
                 </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Scheduled for</label>
-                  <input
-                    type="datetime-local"
-                    value={scheduledForLocal}
-                    onChange={(e) => setScheduledForLocal(e.target.value)}
-                    disabled={draftStatus !== 'scheduled'}
-                    className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm disabled:opacity-60"
-                  />
+
+                <div className="sm:ml-auto flex items-center gap-2">
+                  <button type="button" className="btn btn-secondary" onClick={() => void load(statusFilter)} disabled={loading}>
+                    {loading ? 'Loading…' : 'Refresh'}
+                  </button>
+                  <button type="button" className="btn btn-primary" onClick={openNew}>
+                    New draft
+                  </button>
                 </div>
               </div>
+            </div>
 
-              <div className="flex items-center justify-end gap-2">
-                <button type="button" className="btn btn-secondary" onClick={() => setEditorOpen(false)} disabled={saving}>
-                  Cancel
-                </button>
-                <button type="button" className="btn btn-primary" onClick={() => void save()} disabled={saving}>
-                  {saving ? 'Saving…' : 'Save'}
-                </button>
-              </div>
+            <div className="card p-0 overflow-hidden">
+              <div className="divide-y divide-slate-200/60 dark:divide-slate-700/40">
+                {items.length === 0 ? (
+                  <div className="p-8 text-slate-500 dark:text-slate-400">{emptyState}</div>
+                ) : (
+                  items.map((p) => {
+                    const scheduledLabel = p.scheduledFor ? new Date(p.scheduledFor).toLocaleString() : '—';
+                    const createdLabel = p.createdAt ? new Date(p.createdAt).toLocaleString() : '';
+                    const preview = (p.content || '').trim();
+                    return (
+                      <div key={p.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
+                              {p.status}
+                            </span>
+                            {p.status === 'scheduled' && (
+                              <span className="text-xs text-slate-600 dark:text-slate-300">Scheduled: {scheduledLabel}</span>
+                            )}
+                          </div>
+                          <div className="mt-2 text-sm text-slate-900 dark:text-slate-50 break-words">
+                            {preview ? preview : <span className="text-slate-500 dark:text-slate-400">No content</span>}
+                          </div>
+                          {createdLabel && (
+                            <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">Created: {createdLabel}</div>
+                          )}
+                        </div>
 
-              <div className="text-xs text-slate-600 dark:text-slate-300">
-                Scheduling is stored in the app, but automated scheduled publishing is not wired up yet.
+                        <div className="flex items-center gap-2">
+                          <button type="button" className="btn btn-secondary" onClick={() => openEdit(p)}>
+                            Edit
+                          </button>
+                          <a
+                            className="btn btn-ghost"
+                            href={`/content/posts?caption=${encodeURIComponent((p.content || '').toString())}`}
+                            title="Open in publisher (caption-only)"
+                          >
+                            Open publisher
+                          </a>
+                          <button type="button" className="btn btn-ghost text-red-600 hover:text-red-700" onClick={() => void remove(p)}>
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>
-        )}
+        </div>
       </div>
     </Layout>
   );
