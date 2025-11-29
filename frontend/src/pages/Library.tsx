@@ -33,6 +33,9 @@ export const Library: React.FC = () => {
 
   const [uploads, setUploads] = useState<UploadPreview[]>([]);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadsRef = useRef<UploadPreview[]>([]);
+  const [dragUploadId, setDragUploadId] = useState<string | null>(null);
+  const [dragOverUploadId, setDragOverUploadId] = useState<string | null>(null);
 
   const load = async (status: 'draft' | 'scheduled') => {
     setLoading(true);
@@ -97,12 +100,28 @@ export const Library: React.FC = () => {
   };
 
   useEffect(() => {
+    uploadsRef.current = uploads;
+  }, [uploads]);
+
+  useEffect(() => {
     return () => {
       // Cleanup object URLs on unmount.
-      for (const u of uploads) URL.revokeObjectURL(u.url);
+      for (const u of uploadsRef.current) URL.revokeObjectURL(u.url);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const reorderUploads = (fromId: string, toId: string) => {
+    if (!fromId || !toId || fromId === toId) return;
+    setUploads((prev) => {
+      const fromIdx = prev.findIndex((u) => u.id === fromId);
+      const toIdx = prev.findIndex((u) => u.id === toId);
+      if (fromIdx < 0 || toIdx < 0) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+  };
 
   const scrollToEditor = () => {
     const el = editorRef.current;
@@ -350,6 +369,8 @@ export const Library: React.FC = () => {
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
+                  // If we're dragging an existing thumbnail, ignore here (reorder handled on thumbnails).
+                  if (e.dataTransfer.types.includes('application/x-sst-upload-id')) return;
                   addFiles(e.dataTransfer.files);
                 }}
               >
@@ -374,7 +395,45 @@ export const Library: React.FC = () => {
               {uploads.length > 0 && (
                 <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4">
                   {uploads.map((u) => (
-                    <div key={u.id} className="card p-0 overflow-hidden">
+                    <div
+                      key={u.id}
+                      className={[
+                        'card p-0 overflow-hidden',
+                        dragOverUploadId === u.id && dragUploadId && dragUploadId !== u.id ? 'ring-2 ring-primary-500' : '',
+                        dragUploadId === u.id ? 'opacity-60' : '',
+                      ].join(' ')}
+                      draggable
+                      onDragStart={(e) => {
+                        setDragUploadId(u.id);
+                        setDragOverUploadId(null);
+                        e.dataTransfer.effectAllowed = 'move';
+                        try {
+                          e.dataTransfer.setData('application/x-sst-upload-id', u.id);
+                          e.dataTransfer.setData('text/plain', u.id);
+                        } catch { /* ignore */ }
+                      }}
+                      onDragEnd={() => {
+                        setDragUploadId(null);
+                        setDragOverUploadId(null);
+                      }}
+                      onDragOver={(e) => {
+                        if (!dragUploadId || dragUploadId === u.id) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        setDragOverUploadId(u.id);
+                      }}
+                      onDragLeave={() => {
+                        setDragOverUploadId((prev) => (prev === u.id ? null : prev));
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const from = e.dataTransfer.getData('application/x-sst-upload-id') || dragUploadId;
+                        if (!from) return;
+                        reorderUploads(from, u.id);
+                        setDragOverUploadId(null);
+                      }}
+                      title="Drag to reorder"
+                    >
                       <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
                         {u.kind === 'image' ? (
                           <img src={u.url} alt={u.file.name} className="w-full h-full object-cover" />
