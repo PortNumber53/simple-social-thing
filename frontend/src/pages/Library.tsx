@@ -158,11 +158,11 @@ export const Library: React.FC = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content, status: draftStatus, scheduledFor: scheduledForIso }),
         });
-        const data: unknown = await res.json().catch(() => null);
-        if (!res.ok) {
+      const data: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
           setError('Failed to save.');
-          return;
-        }
+        return;
+      }
         const updated = data as LocalPost;
         // If the update moves the post between tabs, switch tabs.
         if (updated.status === 'draft' || updated.status === 'scheduled') {
@@ -278,7 +278,7 @@ export const Library: React.FC = () => {
                   <option value="scheduled">Scheduled</option>
                 </select>
               </div>
-              <div className="space-y-1">
+            <div className="space-y-1">
                 <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Scheduled for</label>
                 <input
                   type="datetime-local"
@@ -286,7 +286,7 @@ export const Library: React.FC = () => {
                   onChange={(e) => setScheduledForLocal(e.target.value)}
                   disabled={draftStatus !== 'scheduled'}
                   className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm disabled:opacity-60"
-                />
+                      />
               </div>
             </div>
 
@@ -340,8 +340,8 @@ export const Library: React.FC = () => {
                   >
                     Add files
                   </button>
-                </div>
               </div>
+            </div>
 
               <div
                 className="rounded-lg border border-dashed border-slate-300/70 dark:border-slate-700/70 bg-slate-50/60 dark:bg-slate-900/20 p-4"
@@ -353,7 +353,7 @@ export const Library: React.FC = () => {
                   addFiles(e.dataTransfer.files);
                 }}
               >
-                <input
+              <input
                   ref={uploadInputRef}
                   type="file"
                   accept="image/*,video/*"
@@ -368,8 +368,8 @@ export const Library: React.FC = () => {
                   <div className="sm:ml-auto text-xs text-slate-500 dark:text-slate-400">
                     Images & videos · multiple files
                   </div>
-                </div>
-              </div>
+            </div>
+          </div>
 
               {uploads.length > 0 && (
                 <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4">
@@ -385,14 +385,14 @@ export const Library: React.FC = () => {
                             <span className="text-sm">File</span>
                           </div>
                         )}
-                        <button
-                          type="button"
+              <button
+                type="button"
                           className="absolute top-2 right-2 bg-slate-900/70 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs hover:bg-slate-900/80"
                           aria-label={`Remove ${u.file.name}`}
                           onClick={() => removeUpload(u.id)}
-                        >
+              >
                           ×
-                        </button>
+              </button>
                         <div className="absolute bottom-2 left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate">
                           {u.file.name}
                         </div>
@@ -403,8 +403,8 @@ export const Library: React.FC = () => {
               )}
             </div>
 
-            <div className="card p-5 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="card p-0 overflow-hidden">
+              <div className="p-4 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-wrap items-center gap-2">
                 <div className="inline-flex rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden">
                   <button
                     type="button"
@@ -432,18 +432,16 @@ export const Library: React.FC = () => {
                   </button>
                 </div>
 
-                <div className="sm:ml-auto flex items-center gap-2">
+                <div className="text-xs text-slate-600 dark:text-slate-300">
+                  {loading ? 'Loading…' : `${items.length} item(s)`}
+                </div>
+
+                <div className="ml-auto flex items-center gap-2">
                   <button type="button" className="btn btn-secondary" onClick={() => void load(statusFilter)} disabled={loading}>
-                    {loading ? 'Loading…' : 'Refresh'}
-                  </button>
-                  <button type="button" className="btn btn-primary" onClick={openNew}>
-                    New draft
+                    Refresh
                   </button>
                 </div>
               </div>
-            </div>
-
-            <div className="card p-0 overflow-hidden">
               <div className="divide-y divide-slate-200/60 dark:divide-slate-700/40">
                 {items.length === 0 ? (
                   <div className="p-8 text-slate-500 dark:text-slate-400">{emptyState}</div>
@@ -462,13 +460,13 @@ export const Library: React.FC = () => {
                             {p.status === 'scheduled' && (
                               <span className="text-xs text-slate-600 dark:text-slate-300">Scheduled: {scheduledLabel}</span>
                             )}
-                          </div>
+          </div>
                           <div className="mt-2 text-sm text-slate-900 dark:text-slate-50 break-words">
                             {preview ? preview : <span className="text-slate-500 dark:text-slate-400">No content</span>}
                           </div>
                           {createdLabel && (
                             <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">Created: {createdLabel}</div>
-                          )}
+                        )}
                         </div>
 
                         <div className="flex items-center gap-2">
@@ -487,10 +485,10 @@ export const Library: React.FC = () => {
                           </button>
                         </div>
                       </div>
-                    );
-                  })
-                )}
-              </div>
+                );
+              })
+            )}
+          </div>
             </div>
           </div>
         </div>
