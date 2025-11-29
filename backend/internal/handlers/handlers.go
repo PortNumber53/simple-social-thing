@@ -322,6 +322,15 @@ type socialLibraryRow struct {
 	UpdatedAt    time.Time       `json:"updatedAt"`
 }
 
+type deleteSocialLibrariesRequest struct {
+	IDs []string `json:"ids"`
+}
+
+type deleteSocialLibrariesResponse struct {
+	OK      bool  `json:"ok"`
+	Deleted int64 `json:"deleted"`
+}
+
 func (h *Handler) ListSunoTracksForUser(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["userId"]
@@ -540,6 +549,61 @@ func (h *Handler) ListSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+// DeleteSocialLibrariesForUser deletes cached SocialLibraries rows by id for a given user.
+// This is meant for user-initiated cleanup from the Library page.
+func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	vars := mux.Vars(r)
+	userID := vars["userId"]
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	var req deleteSocialLibrariesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+
+	ids := make([]string, 0, len(req.IDs))
+	seen := map[string]bool{}
+	for _, id := range req.IDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		http.Error(w, "ids is required", http.StatusBadRequest)
+		return
+	}
+	if len(ids) > 200 {
+		http.Error(w, "too many ids (max 200)", http.StatusBadRequest)
+		return
+	}
+
+	res, err := h.db.Exec(`DELETE FROM public."SocialLibraries" WHERE user_id = $1 AND id = ANY($2)`, userID, pq.Array(ids))
+	if err != nil {
+		log.Printf("[Library][Delete] exec error userId=%s err=%v", userID, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	n, _ := res.RowsAffected()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(deleteSocialLibrariesResponse{OK: true, Deleted: n})
 }
 
 func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Request) {

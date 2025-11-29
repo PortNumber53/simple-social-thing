@@ -15,6 +15,10 @@ type LibraryItem = {
 };
 
 export const Library: React.FC = () => {
+  const asRecord = (v: unknown): Record<string, unknown> | null =>
+    v && typeof v === 'object' ? (v as Record<string, unknown>) : null;
+  const asNumber = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
   const [network, setNetwork] = useState<string>('');
   const [contentType, setContentType] = useState<string>('');
   const [from, setFrom] = useState<string>('');
@@ -27,6 +31,8 @@ export const Library: React.FC = () => {
   const [viewMode, setViewMode] = useState<'list' | 'gallery'>('list');
   const [syncing, setSyncing] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [deleting, setDeleting] = useState<boolean>(false);
 
   const normalizeText = (s: string) => s.trim().toLowerCase();
 
@@ -58,6 +64,23 @@ export const Library: React.FC = () => {
       return true;
     });
   }, [allItems, network, contentType, from, to, q]);
+
+  const selectedCount = selectedIds.size;
+
+  useEffect(() => {
+    // Prune selection as the dataset changes.
+    const present = new Set(allItems.map((it) => it.id));
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (present.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [allItems]);
 
   const loadAll = async () => {
     setLoading(true);
@@ -94,10 +117,13 @@ export const Library: React.FC = () => {
         setSyncStatus('Sync failed.');
         return;
       }
-      const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
-      const providers = obj && typeof obj.providers === 'object' && obj.providers ? (obj.providers as Record<string, any>) : null;
-      if (providers?.instagram) {
-        setSyncStatus(`Synced. Instagram fetched=${providers.instagram.fetched ?? 0} upserted=${providers.instagram.upserted ?? 0}`);
+      const obj = asRecord(data);
+      const providers = obj ? asRecord(obj.providers) : null;
+      const instagram = providers ? asRecord(providers.instagram) : null;
+      if (instagram) {
+        const fetched = asNumber(instagram.fetched) ?? 0;
+        const upserted = asNumber(instagram.upserted) ?? 0;
+        setSyncStatus(`Synced. Instagram fetched=${fetched} upserted=${upserted}`);
       } else {
         setSyncStatus('Synced.');
       }
@@ -110,18 +136,100 @@ export const Library: React.FC = () => {
     }
   };
 
+  const syncSelected = async () => {
+    if (selectedIds.size === 0) return;
+    const selectedItems = allItems.filter((it) => selectedIds.has(it.id));
+    const providers = Array.from(
+      new Set(selectedItems.map((it) => (it.network || '').trim().toLowerCase()).filter(Boolean)),
+    );
+    const qs = providers.length > 0 ? `?providers=${encodeURIComponent(providers.join(','))}` : '';
+
+    setSyncing(true);
+    setSyncStatus(`Refreshing ${selectedItems.length} item(s)…`);
+    setError(null);
+    try {
+      const res = await fetch(`/api/library/sync${qs}`, { method: 'POST', credentials: 'include' });
+      const data: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        setSyncStatus('Refresh failed.');
+        return;
+      }
+      const obj = asRecord(data);
+      const providersObj = obj ? asRecord(obj.providers) : null;
+      if (providersObj) {
+        const parts = Object.entries(providersObj).map(([k, v]) => {
+          const rr = asRecord(v);
+          const upserted = rr ? asNumber(rr.upserted) ?? 0 : 0;
+          return `${k}: +${upserted}`;
+        });
+        setSyncStatus(`Refreshed. ${parts.join(' · ')}`);
+      } else {
+        setSyncStatus('Refreshed.');
+      }
+      await loadAll();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSyncStatus(`Refresh failed: ${msg}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const selectAllFiltered = () => {
+    if (filteredItems.length === 0) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const it of filteredItems) next.add(it.id);
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const deleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    const ok = window.confirm(`Delete ${ids.length} selected library item(s)? This cannot be undone.`);
+    if (!ok) return;
+
+    setDeleting(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/library/delete', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      const data: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError('Failed to delete selected items.');
+        return;
+      }
+      const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+      const deleted = typeof obj?.deleted === 'number' ? obj!.deleted : null;
+      setSyncStatus(deleted !== null ? `Deleted ${deleted} item(s).` : 'Deleted.');
+      setAllItems((prev) => prev.filter((it) => !selectedIds.has(it.id)));
+      clearSelection();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || 'Failed to delete selected items.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   useEffect(() => {
     void loadAll();
     try {
       const stored = window.localStorage.getItem('libraryViewMode');
       if (stored === 'list' || stored === 'gallery') setViewMode(stored);
     } catch { /* ignore */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <Layout>
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto space-y-6">
         <header className="space-y-2">
           <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50">Library</h1>
           <p className="text-slate-600 dark:text-slate-400 text-sm">
@@ -245,6 +353,24 @@ export const Library: React.FC = () => {
                 {syncing ? 'Refreshing…' : 'Refresh'}
               </button>
               <button
+                onClick={syncSelected}
+                className="btn btn-secondary"
+                type="button"
+                disabled={syncing || selectedCount === 0}
+                title={selectedCount === 0 ? 'Select items in the gallery to refresh a subset' : 'Refresh selected items'}
+              >
+                {syncing ? 'Refreshing…' : `Refresh selected${selectedCount ? ` (${selectedCount})` : ''}`}
+              </button>
+              <button
+                onClick={deleteSelected}
+                className="btn bg-red-600 text-white hover:bg-red-700 active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                type="button"
+                disabled={deleting || syncing || selectedCount === 0}
+                title={selectedCount === 0 ? 'Select items in the gallery to delete' : 'Delete selected items'}
+              >
+                {deleting ? 'Deleting…' : `Delete selected${selectedCount ? ` (${selectedCount})` : ''}`}
+              </button>
+              <button
                 onClick={() => {
                   setNetwork('');
                   setContentType('');
@@ -257,9 +383,29 @@ export const Library: React.FC = () => {
               >
                 Reset
               </button>
+              <button
+                onClick={selectAllFiltered}
+                className="btn btn-secondary"
+                type="button"
+                disabled={filteredItems.length === 0}
+                title={filteredItems.length === 0 ? 'No items to select' : 'Select all filtered items'}
+              >
+                Select all
+              </button>
+              <button
+                onClick={clearSelection}
+                className="btn btn-ghost"
+                type="button"
+                disabled={selectedCount === 0}
+              >
+                Clear selection
+              </button>
               {loading && <span className="text-sm text-slate-600 dark:text-slate-300">Loading…</span>}
               {syncStatus && !loading && <span className="text-sm text-slate-600 dark:text-slate-300">{syncStatus}</span>}
               {error && <span className="text-sm text-red-600 dark:text-red-300">{error}</span>}
+              {selectedCount > 0 && !error && (
+                <span className="text-sm text-slate-600 dark:text-slate-300">{selectedCount} selected</span>
+              )}
             </div>
 
             <div className="sm:ml-auto">
@@ -346,7 +492,7 @@ export const Library: React.FC = () => {
             </table>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 [@media(min-width:2560px)]:grid-cols-10 [@media(min-width:3200px)]:grid-cols-12 gap-4">
             {filteredItems.length === 0 ? (
               <div className="card p-8 text-slate-500 dark:text-slate-400">
                 No library items yet. (Ingestion from networks will populate this gallery.)
@@ -355,19 +501,35 @@ export const Library: React.FC = () => {
               filteredItems.map((it) => {
                 const thumb = (it.thumbnailUrl || it.mediaUrl || '').trim();
                 const posted = it.postedAt ? new Date(it.postedAt).toLocaleDateString() : '';
-                const CardWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) =>
-                  it.permalinkUrl ? (
-                    <a href={it.permalinkUrl} target="_blank" rel="noreferrer" className="block">
-                      {children}
-                    </a>
-                  ) : (
-                    <div>{children}</div>
-                  );
+                const isSelected = selectedIds.has(it.id);
+                const isLink = !!it.permalinkUrl;
+                const openLink = () => {
+                  if (!it.permalinkUrl) return;
+                  window.open(it.permalinkUrl, '_blank', 'noopener,noreferrer');
+                };
 
                 return (
-                  <CardWrapper key={it.id}>
-                    <div className="card p-0 overflow-hidden hover:shadow-lg transition-shadow">
-                      <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
+                  <div
+                    key={it.id}
+                    className={[
+                      'card p-0 overflow-hidden hover:shadow-lg transition-shadow',
+                      isSelected ? 'ring-2 ring-primary-500' : '',
+                      isLink ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500' : '',
+                    ].join(' ')}
+                    role={isLink ? 'link' : undefined}
+                    tabIndex={isLink ? 0 : undefined}
+                    onClick={() => {
+                      if (isLink) openLink();
+                    }}
+                    onKeyDown={(e) => {
+                      if (!isLink) return;
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openLink();
+                      }
+                    }}
+                  >
+                    <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
                         {thumb ? (
                           <img src={thumb} alt={it.title || 'thumbnail'} className="w-full h-full object-cover" loading="lazy" />
                         ) : (
@@ -375,7 +537,30 @@ export const Library: React.FC = () => {
                             <span className="text-sm">No thumbnail</span>
                           </div>
                         )}
-                        <div className="absolute top-2 left-2 rounded-md bg-black/60 text-white text-xs px-2 py-1">
+                        <label
+                          className="absolute top-2 left-2 z-10 inline-flex items-center gap-2 rounded-md bg-white/85 dark:bg-slate-900/80 text-slate-900 dark:text-slate-100 text-xs px-2 py-1 border border-slate-200/70 dark:border-slate-700/60"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (checked) next.add(it.id);
+                                else next.delete(it.id);
+                                return next;
+                              });
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="h-4 w-4 rounded border-slate-300 dark:border-slate-600"
+                            aria-label={`Select ${it.title || it.permalinkUrl || it.id}`}
+                          />
+                        </label>
+                        <div className="absolute top-2 right-2 rounded-md bg-black/60 text-white text-xs px-2 py-1">
                           {it.network} · {it.contentType}
                         </div>
                       </div>
@@ -391,8 +576,7 @@ export const Library: React.FC = () => {
                           </span>
                         </div>
                       </div>
-                    </div>
-                  </CardWrapper>
+                  </div>
                 );
               })
             )}

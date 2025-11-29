@@ -607,6 +607,9 @@ export default {
       if (url.pathname === "/api/library/sync") {
         return handleLibrarySync(request, env);
       }
+      if (url.pathname === "/api/library/delete") {
+        return handleLibraryDelete(request, env);
+      }
 
       // Publishing: caption-only post fan-out (backend does per-provider posting)
       if (url.pathname === "/api/posts/publish") {
@@ -1310,7 +1313,9 @@ async function handleLibrarySync(request: Request, env: Env): Promise<Response> 
 	}
 
 	try {
-		const res = await fetch(`${backendOrigin}/api/social-libraries/sync/user/${encodeURIComponent(sid)}`, {
+		const url = new URL(request.url);
+		const qs = url.search || '';
+		const res = await fetch(`${backendOrigin}/api/social-libraries/sync/user/${encodeURIComponent(sid)}${qs}`, {
 			method: 'POST',
 			headers: { 'Accept': 'application/json' },
 		});
@@ -1324,6 +1329,69 @@ async function handleLibrarySync(request: Request, env: Env): Promise<Response> 
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		console.error('[LibrarySync] backend unreachable', { backendOrigin, message });
+		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+	}
+}
+
+async function handleLibraryDelete(request: Request, env: Env): Promise<Response> {
+	const backendOrigin = getBackendOrigin(env, request);
+	const cookie = request.headers.get('Cookie') || '';
+	let sid = getCookie(cookie, 'sid');
+	const requestUrl = request.url;
+	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
+	const headers = buildCorsHeaders(request);
+
+	if (request.method === 'OPTIONS') {
+		headers.set('Access-Control-Allow-Methods', 'POST,OPTIONS');
+		headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+		return new Response(null, { status: 204, headers });
+	}
+	if (request.method !== 'POST') return new Response(null, { status: 405, headers });
+
+	if (!sid && isLocal) {
+		sid = crypto.randomUUID();
+		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
+		// ensure user exists
+		try {
+			await fetch(`${backendOrigin}/api/users`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
+			});
+		} catch { void 0; }
+	}
+	if (!sid) {
+		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+	}
+
+	let parsed: unknown = null;
+	try { parsed = await request.json().catch(() => null); } catch { parsed = null; }
+	const body = asRecord(parsed) || {};
+	const idsRaw = body['ids'];
+	const ids = Array.isArray(idsRaw) ? idsRaw.filter((x) => typeof x === 'string').map((x) => x.trim()).filter(Boolean) : [];
+	if (ids.length === 0) {
+		return new Response(JSON.stringify({ ok: false, error: 'missing_ids' }), { status: 400, headers });
+	}
+	if (ids.length > 200) {
+		return new Response(JSON.stringify({ ok: false, error: 'too_many_ids' }), { status: 400, headers });
+	}
+
+	try {
+		const res = await fetch(`${backendOrigin}/api/social-libraries/delete/user/${encodeURIComponent(sid)}`, {
+			method: 'POST',
+			headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ids }),
+		});
+		const text = await res.text().catch(() => '');
+		if (!res.ok) {
+			console.error('[LibraryDelete] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+			return new Response(JSON.stringify({ ok: false, error: 'delete_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+		}
+		headers.set('Content-Type', 'application/json');
+		return new Response(text || '{"ok":true}', { status: 200, headers });
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error('[LibraryDelete] backend unreachable', { backendOrigin, message });
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
 }
