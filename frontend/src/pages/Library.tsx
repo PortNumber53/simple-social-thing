@@ -43,6 +43,30 @@ export const Library: React.FC = () => {
   const [selectedUploadIds, setSelectedUploadIds] = useState<Set<string>>(() => new Set());
   const [draftMediaIds, setDraftMediaIds] = useState<string[]>([]);
   const [dragOverDraftMedia, setDragOverDraftMedia] = useState(false);
+  const [lastUploadError, setLastUploadError] = useState<string | null>(null);
+
+  const formatUploadError = (e: unknown) => {
+    if (!e) return 'upload_failed';
+    if (typeof e === 'string') return e;
+    if (e instanceof Error) return e.message || 'upload_failed';
+    try {
+      return JSON.stringify(e);
+    } catch {
+      return String(e);
+    }
+  };
+
+  const fileUrlForId = (id: string) => `/api/local-library/uploads/file/${encodeURIComponent(id)}`;
+
+  const fallbackToLocalPreviewIfPossible = (u: UploadPreview) => {
+    // If remote URL fails to render but we still have the File in memory, fall back to an object URL preview.
+    if (!u?.file) return;
+    if (typeof u.url === 'string' && u.url.startsWith('blob:')) return;
+    try {
+      const localUrl = URL.createObjectURL(u.file);
+      setUploads((prev) => prev.map((x) => (x.id === u.id ? { ...x, url: localUrl } : x)));
+    } catch { /* ignore */ }
+  };
 
   const load = async (status: 'draft' | 'scheduled') => {
     setLoading(true);
@@ -111,6 +135,7 @@ export const Library: React.FC = () => {
         const xhr = new XMLHttpRequest();
         xhr.open('POST', '/api/local-library/uploads', true);
         xhr.withCredentials = true;
+        xhr.timeout = 2 * 60 * 1000; // 2 minutes per file
 
         xhr.upload.onloadstart = () => {
           setUploads((prev) => prev.map((u) => (u.id === tempId ? { ...u, progress: 1 } : u)));
@@ -125,11 +150,13 @@ export const Library: React.FC = () => {
           setUploads((prev) => prev.map((u) => (u.id === tempId ? { ...u, progress: pct } : u)));
         };
 
-        xhr.onerror = () => reject(new Error('upload_failed'));
+        xhr.onerror = () => reject(new Error('upload_failed_network'));
         xhr.onabort = () => reject(new Error('upload_aborted'));
+        xhr.ontimeout = () => reject(new Error('upload_timed_out'));
         xhr.onload = () => {
           if (xhr.status < 200 || xhr.status >= 300) {
-            reject(new Error(`upload_failed_${xhr.status}`));
+            const snippet = (xhr.responseText || '').slice(0, 500);
+            reject(new Error(`upload_failed_${xhr.status}${snippet ? `: ${snippet}` : ''}`));
             return;
           }
           let parsed: unknown = null;
@@ -143,10 +170,10 @@ export const Library: React.FC = () => {
           const kindRaw = typeof it?.kind === 'string' ? (it!.kind as string) : '';
           const kind: UploadPreview['kind'] = kindRaw === 'image' || kindRaw === 'video' || kindRaw === 'other' ? (kindRaw as any) : 'other';
           if (!id || !url) {
-            reject(new Error('upload_failed_bad_response'));
+            reject(new Error(`upload_failed_bad_response: ${(xhr.responseText || '').slice(0, 800)}`));
             return;
           }
-          resolve({ id, url, kind, filename: ensureFileName(id, file.name) });
+          resolve({ id, url: fileUrlForId(id), kind, filename: ensureFileName(id, file.name) });
         };
 
         const form = new FormData();
@@ -166,6 +193,7 @@ export const Library: React.FC = () => {
             url: real.url,
             filename: real.filename,
             kind: real.kind || u.kind,
+            file: u.file,
             uploading: false,
             progress: 100,
             error: null,
@@ -185,6 +213,7 @@ export const Library: React.FC = () => {
     };
 
     const markFailed = (tempId: string, message: string) => {
+      setLastUploadError(message || 'upload_failed');
       setUploads((prev) =>
         prev.map((u) => (u.id === tempId ? { ...u, uploading: false, error: message || 'upload_failed' } : u)),
       );
@@ -201,7 +230,7 @@ export const Library: React.FC = () => {
           const real = await uploadOneWithProgress(tempId, file);
           applyMapping(tempId, real);
         } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e);
+          const msg = formatUploadError(e);
           markFailed(tempId, msg);
         }
       };
@@ -288,14 +317,17 @@ export const Library: React.FC = () => {
         const res = await fetch('/api/local-library/uploads', { credentials: 'include' });
         const data: unknown = await res.json().catch(() => null);
         const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
-        const items = obj && Array.isArray(obj.items) ? (obj.items as any[]) : [];
+        const itemsUnknown = obj ? obj.items : null;
+        const items: unknown[] = Array.isArray(itemsUnknown) ? itemsUnknown : [];
         const next: UploadPreview[] = [];
-        for (const it of items) {
+        for (const raw of items) {
+          const it = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
           const id = typeof it?.id === 'string' ? it.id : (typeof it?.filename === 'string' ? it.filename : '');
-          const url = typeof it?.url === 'string' ? it.url : '';
-          const kind = (it?.kind === 'image' || it?.kind === 'video' || it?.kind === 'other') ? it.kind : 'other';
+          const filename = typeof it?.filename === 'string' ? it.filename : id;
+          const url = id ? fileUrlForId(id) : '';
+          const kind = it?.kind === 'image' || it?.kind === 'video' || it?.kind === 'other' ? it.kind : 'other';
           if (!id || !url) continue;
-          next.push({ id, url, filename: id, kind, uploading: false, error: null });
+          next.push({ id, url, filename, kind, uploading: false, error: null });
         }
         if (next.length > 0) {
           setUploads((prev) => {
@@ -612,9 +644,20 @@ export const Library: React.FC = () => {
                     <div key={u.id} className="card p-0 overflow-hidden">
                       <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
                         {u.kind === 'image' ? (
-                          <img src={u.url} alt={u.filename} className="w-full h-full object-cover" />
+                          <img
+                            src={u.url}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            onError={() => fallbackToLocalPreviewIfPossible(u)}
+                          />
                         ) : u.kind === 'video' ? (
-                          <video src={u.url} className="w-full h-full object-cover" muted playsInline />
+                          <video
+                            src={u.url}
+                            className="w-full h-full object-cover"
+                            muted
+                            playsInline
+                            onError={() => fallbackToLocalPreviewIfPossible(u)}
+                          />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-slate-400">
                             <span className="text-sm">File</span>
@@ -628,7 +671,12 @@ export const Library: React.FC = () => {
                         >
                           ×
                         </button>
-                        <div className="absolute bottom-2 left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate">
+                        <div
+                          className={[
+                            'absolute left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate',
+                            u.uploading || u.error ? 'bottom-9' : 'bottom-2',
+                          ].join(' ')}
+                        >
                           {u.filename}
                         </div>
                       </div>
@@ -691,6 +739,12 @@ export const Library: React.FC = () => {
               </div>
             </div>
 
+              {lastUploadError && (
+                <div className="rounded-lg border border-red-200/70 dark:border-red-900/50 bg-red-50/70 dark:bg-red-950/20 px-3 py-2 text-xs text-red-700 dark:text-red-200">
+                  Last upload error: <span className="font-mono">{lastUploadError}</span>
+                </div>
+              )}
+
               <div
                 className="rounded-lg border border-dashed border-slate-300/70 dark:border-slate-700/70 bg-slate-50/60 dark:bg-slate-900/20 p-4"
                 onDragOver={(e) => {
@@ -722,7 +776,7 @@ export const Library: React.FC = () => {
           </div>
 
               {uploads.length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-6 gap-3">
                   {uploads.map((u) => (
                     <div
                       key={u.id}
@@ -771,16 +825,28 @@ export const Library: React.FC = () => {
                     >
                       <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
                         {u.kind === 'image' ? (
-                          <img src={u.url} alt={u.filename} className="w-full h-full object-cover" />
+                          <img
+                            src={u.url}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            onError={() => fallbackToLocalPreviewIfPossible(u)}
+                            draggable={false}
+                          />
                         ) : u.kind === 'video' ? (
-                          <video src={u.url} className="w-full h-full object-cover" muted playsInline />
+                          <video
+                            src={u.url}
+                            className="w-full h-full object-cover"
+                            muted
+                            playsInline
+                            onError={() => fallbackToLocalPreviewIfPossible(u)}
+                          />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-slate-400">
                             <span className="text-sm">File</span>
                           </div>
                         )}
                         <label
-                          className="absolute top-2 left-2 z-10 inline-flex items-center gap-2 rounded-md bg-white/85 dark:bg-slate-900/80 text-slate-900 dark:text-slate-100 text-xs px-2 py-1 border border-slate-200/70 dark:border-slate-700/60"
+                          className="absolute top-2 left-2 z-10 inline-flex items-center justify-center rounded-md bg-white/85 dark:bg-slate-900/70 text-slate-900 dark:text-slate-100 border border-slate-200/70 dark:border-slate-700/60 p-1 shadow-sm"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <input
@@ -811,7 +877,7 @@ export const Library: React.FC = () => {
                         </button>
 
                         {u.uploading && (
-                          <div className="absolute inset-x-2 bottom-10">
+                          <div className="absolute inset-x-2 bottom-2">
                             <div className="h-2 rounded-full bg-black/30 overflow-hidden">
                               <div
                                 className="h-full bg-primary-500"
@@ -824,8 +890,8 @@ export const Library: React.FC = () => {
                           </div>
                         )}
                         {!u.uploading && u.error && (
-                          <div className="absolute inset-x-2 bottom-10 rounded-md bg-red-600/80 text-white text-[11px] px-2 py-1">
-                            Upload failed
+                          <div className="absolute inset-x-2 bottom-2 rounded-md bg-red-600/85 text-white text-[11px] px-2 py-1">
+                            Upload failed: <span className="font-mono">{(u.error || '').slice(0, 120)}</span>
                           </div>
                         )}
 

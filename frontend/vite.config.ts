@@ -20,6 +20,12 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           ws: true,
         },
+        // Media (uploaded assets) are served by the worker in dev and proxied to backend.
+        // Our API responses include `/media/...` URLs, so proxy them too.
+        '/media': {
+          target: 'http://localhost:18912',
+          changeOrigin: true,
+        },
       },
     },
     preview: {

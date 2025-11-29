@@ -629,6 +629,9 @@ export default {
       if (url.pathname === "/api/local-library/uploads/delete") {
         return handleLocalLibraryUploadsDelete(request, env);
       }
+      if (url.pathname.startsWith("/api/local-library/uploads/file/")) {
+        return handleLocalLibraryUploadsFile(request, env);
+      }
 
       // Publishing: caption-only post fan-out (backend does per-provider posting)
       if (url.pathname === "/api/posts/publish") {
@@ -1579,15 +1582,41 @@ async function handleLocalLibraryUploads(request: Request, env: Env): Promise<Re
       return new Response(text || '{"ok":true,"items":[]}', { status: 200, headers });
     }
 
-    // POST: upload multipart/form-data. Forward body and keep content-type boundary.
-    const contentType = request.headers.get('Content-Type') || request.headers.get('content-type') || '';
+    // POST: upload multipart/form-data.
+    // In dev/proxy environments, streaming the raw body through multiple hops can break multipart boundaries.
+    // Parse the incoming form and re-encode it so the runtime generates a correct boundary.
+    const ct = request.headers.get('Content-Type') || request.headers.get('content-type') || '';
+    let bodyToSend: BodyInit | null = request.body;
+    let headersToSend: Record<string, string> = { 'Accept': 'application/json' };
+    if (ct.includes('multipart/form-data')) {
+      const incoming = await request.formData();
+      const outgoing = new FormData();
+      for (const [k, v] of Array.from(incoming.entries())) {
+        if (typeof v === 'string') {
+          outgoing.append(k, v);
+        } else {
+          // v is a File/Blob
+          try {
+            // Preserve filename when possible
+            const maybeFile = v as unknown as { name?: unknown };
+            const name = typeof maybeFile?.name === 'string' ? maybeFile.name : 'file';
+            outgoing.append(k, v, name);
+          } catch {
+            outgoing.append(k, v);
+          }
+        }
+      }
+      bodyToSend = outgoing;
+      // IMPORTANT: do not set Content-Type for FormData; fetch will add the correct boundary.
+    } else if (ct) {
+      // Non-multipart fallback (shouldn't happen for uploads, but keep it safe).
+      headersToSend = { ...headersToSend, 'Content-Type': ct };
+    }
+
     const res = await fetch(`${backendOrigin}/api/uploads/user/${encodeURIComponent(sid)}`, {
       method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        ...(contentType ? { 'Content-Type': contentType } : {}),
-      },
-      body: request.body,
+      headers: headersToSend,
+      body: bodyToSend,
     });
     const text = await res.text().catch(() => '');
     if (!res.ok) {
@@ -1634,6 +1663,42 @@ async function handleLocalLibraryUploadsDelete(request: Request, env: Env): Prom
     const message = err instanceof Error ? err.message : String(err);
     console.error('[LocalLibraryUploadsDelete] backend unreachable', { backendOrigin, message });
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
+}
+
+async function handleLocalLibraryUploadsFile(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const headers = buildCorsHeaders(request);
+
+  if (request.method === 'OPTIONS') {
+    headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
+    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+    return new Response(null, { status: 204, headers });
+  }
+  if (request.method !== 'GET') return new Response(null, { status: 405, headers });
+
+  const sid = await ensureSid(request, env, headers);
+  if (!sid) return new Response(null, { status: 401, headers });
+
+  const path = new URL(request.url).pathname;
+  const id = decodeURIComponent(path.slice("/api/local-library/uploads/file/".length)).trim();
+  if (!id) return new Response(null, { status: 400, headers });
+
+  // Stream from backend's static media server (file path is scoped by sid).
+  const target = `${backendOrigin}/media/uploads/${encodeURIComponent(sid)}/${encodeURIComponent(id)}`;
+  try {
+    const res = await fetch(target, { method: 'GET', headers: { 'Accept': '*/*' } });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      console.error('[LocalLibraryUploadsFile] backend non-2xx', { backendOrigin, status: res.status, body: txt.slice(0, 400) });
+      return new Response(null, { status: res.status, headers });
+    }
+    // Pass through content headers.
+    return new Response(res.body, { status: 200, headers: res.headers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[LocalLibraryUploadsFile] backend unreachable', { backendOrigin, message });
+    return new Response(null, { status: 502, headers });
   }
 }
 
