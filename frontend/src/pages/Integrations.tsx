@@ -400,206 +400,241 @@ export const Integrations: React.FC = () => {
     setThStatus('Threads disconnected.');
     try { await fetch(`/api/integrations/threads/disconnect`, { method: 'POST', credentials: 'include' }); } catch { void 0; }
   };
+  const notices = [
+    { key: 'ig', msg: igStatus },
+    { key: 'tt', msg: ttStatus },
+    { key: 'fb', msg: fbStatus },
+    { key: 'yt', msg: ytStatus },
+    { key: 'pin', msg: pinStatus },
+    { key: 'th', msg: thStatus },
+  ].filter((n): n is { key: string; msg: string } => !!n.msg);
+
+  const noticeStyle = (msg: string) => {
+    const m = msg.toLowerCase();
+    if (m.includes('failed') || m.includes('error')) {
+      return 'bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-300';
+    }
+    if (m.includes('disconnected')) {
+      return 'bg-slate-100 text-slate-800 dark:bg-slate-800/40 dark:text-slate-200';
+    }
+    return 'bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300';
+  };
+
   return (
     <Layout>
-        <div className="max-w-5xl mx-auto space-y-8">
-        <header className="text-center space-y-3">
-          <h1 className="gradient-text text-4xl md:text-5xl font-extrabold leading-[1.15] inline-block pb-2">Integrations</h1>
-          <p className="text-slate-600 dark:text-slate-400 text-lg">
+      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto space-y-6 sm:space-y-8">
+        <header className="text-left sm:text-center space-y-2 sm:space-y-3">
+          <h1 className="gradient-text text-3xl sm:text-4xl md:text-5xl font-extrabold leading-[1.15] inline-block pb-1 sm:pb-2">
+            Integrations
+          </h1>
+          <p className="text-slate-600 dark:text-slate-400 text-base sm:text-lg max-w-prose sm:mx-auto">
             Connect your social accounts to schedule posts, manage messages, and get notifications.
           </p>
         </header>
 
-        {igStatus && (
-          <div className="max-w-xl mx-auto">
-            <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
-              {igStatus}
-            </div>
-          </div>
-        )}
-        {ttStatus && (
-          <div className="max-w-xl mx-auto">
-            <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
-              {ttStatus}
-            </div>
-          </div>
-        )}
-        {fbStatus && (
-          <div className="max-w-xl mx-auto">
-            <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
-              {fbStatus}
-            </div>
-          </div>
-        )}
-        {ytStatus && (
-          <div className="max-w-xl mx-auto">
-            <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
-              {ytStatus}
-            </div>
-          </div>
-        )}
-        {pinStatus && (
-          <div className="max-w-xl mx-auto">
-            <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
-              {pinStatus}
-            </div>
-          </div>
-        )}
-        {thStatus && (
-          <div className="max-w-xl mx-auto">
-            <div className="p-3 rounded-md bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm text-center">
-              {thStatus}
-            </div>
+        {notices.length > 0 && (
+          <div className="max-w-xl sm:mx-auto space-y-2">
+            {notices.map((n) => (
+              <div
+                key={n.key}
+                className={`p-3 rounded-md text-sm ${noticeStyle(n.msg)} ${notices.length === 1 ? 'text-left sm:text-center' : 'text-left'}`}
+              >
+                {n.msg}
+              </div>
+            ))}
           </div>
         )}
 
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="card p-6 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center shadow-lg">
+        <section className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-6">
+          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center shadow-lg flex-none">
               {/* Instagram-like glyph */}
               <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                 <path d="M7 2h10a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5zm0 2a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3H7zm5 3.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zm0 2a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zm5-1.75a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5z" />
               </svg>
             </div>
-            <div className="flex-1">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Instagram</h2>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Instagram</h2>
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
                 Connect Instagram to schedule posts, manage DMs and comments, and receive notifications.
               </p>
-              <div className="mt-4 flex gap-3">
+              <div className="mt-4 space-y-2">
                 {igAccount ? (
                   <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm">
+                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
                       Connected{igAccount.username ? ` as @${igAccount.username}` : ''}
                     </span>
-                    <button onClick={disconnectInstagram} className="btn btn-ghost">Disconnect</button>
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                      <button onClick={disconnectInstagram} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                      <a href="/help/instagram" className="btn btn-secondary w-full sm:w-auto">Learn more</a>
+                    </div>
                   </>
                 ) : (
-                  <button onClick={startInstagramAuth} className="btn btn-primary">Connect Instagram</button>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                    <button onClick={startInstagramAuth} className="btn btn-primary w-full sm:w-auto">
+                      Connect <span className="hidden sm:inline">Instagram</span>
+                    </button>
+                    <a href="/help/instagram" className="btn btn-secondary w-full sm:w-auto">Learn more</a>
+                  </div>
                 )}
-                <a href="/help/instagram" className="btn btn-secondary">Learn more</a>
               </div>
             </div>
           </div>
 
-          <div className="card p-6 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-400 flex items-center justify-center shadow-lg">
+          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-400 flex items-center justify-center shadow-lg flex-none">
               <span className="text-white text-lg font-bold">f</span>
             </div>
-            <div className="flex-1">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Facebook</h2>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Facebook</h2>
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
                 Connect Facebook pages to import posts into your Library.
               </p>
-              <div className="mt-4 flex flex-wrap gap-3 items-center">
+              <div className="mt-4 space-y-2">
                 {fbAccount ? (
                   <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm">
+                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
                       Connected{fbAccount.name ? ` as ${fbAccount.name}` : ''}
                     </span>
-                    <button onClick={disconnectFacebook} className="btn btn-ghost">Disconnect</button>
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                      <button onClick={disconnectFacebook} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                      <a href="https://developers.facebook.com/docs/facebook-login/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                        Learn more
+                      </a>
+                    </div>
                   </>
                 ) : (
-                  <button onClick={startFacebookAuth} className="btn btn-primary">Connect Facebook</button>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                    <button onClick={startFacebookAuth} className="btn btn-primary w-full sm:w-auto">
+                      Connect <span className="hidden sm:inline">Facebook</span>
+                    </button>
+                    <a href="https://developers.facebook.com/docs/facebook-login/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                      Learn more
+                    </a>
+                  </div>
                 )}
-                <a href="https://developers.facebook.com/docs/facebook-login/" target="_blank" rel="noreferrer" className="btn btn-secondary">
-                  Learn more
-                </a>
               </div>
             </div>
           </div>
 
-          <div className="card p-6 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-red-600 to-red-400 flex items-center justify-center shadow-lg">
+          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-red-600 to-red-400 flex items-center justify-center shadow-lg flex-none">
               <span className="text-white text-lg font-bold">▶</span>
             </div>
-            <div className="flex-1">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">YouTube</h2>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">YouTube</h2>
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
                 Connect YouTube to import your uploaded videos into the Library.
               </p>
-              <div className="mt-4 flex flex-wrap gap-3 items-center">
+              <div className="mt-4 space-y-2">
                 {ytAccount ? (
                   <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm">
+                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
                       Connected{ytAccount.name ? ` as ${ytAccount.name}` : ''}
                     </span>
-                    <button onClick={disconnectYouTube} className="btn btn-ghost">Disconnect</button>
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                      <button onClick={disconnectYouTube} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                      <a href="https://developers.google.com/youtube/v3/docs" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                        Learn more
+                      </a>
+                    </div>
                   </>
                 ) : (
-                  <button onClick={startYouTubeAuth} className="btn btn-primary">Connect YouTube</button>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                    <button onClick={startYouTubeAuth} className="btn btn-primary w-full sm:w-auto">
+                      Connect <span className="hidden sm:inline">YouTube</span>
+                    </button>
+                    <a href="https://developers.google.com/youtube/v3/docs" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                      Learn more
+                    </a>
+                  </div>
                 )}
-                <a href="https://developers.google.com/youtube/v3/docs" target="_blank" rel="noreferrer" className="btn btn-secondary">
-                  Learn more
-                </a>
               </div>
             </div>
           </div>
 
-          <div className="card p-6 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-rose-600 to-red-500 flex items-center justify-center shadow-lg">
+          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-rose-600 to-red-500 flex items-center justify-center shadow-lg flex-none">
               <span className="text-white text-lg font-bold">P</span>
             </div>
-            <div className="flex-1">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Pinterest</h2>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Pinterest</h2>
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
                 Connect Pinterest to import pins into the Library.
               </p>
-              <div className="mt-4 flex flex-wrap gap-3 items-center">
+              <div className="mt-4 space-y-2">
                 {pinAccount ? (
                   <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm">
+                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
                       Connected{pinAccount.name ? ` as ${pinAccount.name}` : ''}
                     </span>
-                    <button onClick={disconnectPinterest} className="btn btn-ghost">Disconnect</button>
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                      <button onClick={disconnectPinterest} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                      <a href="https://developers.pinterest.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                        Learn more
+                      </a>
+                    </div>
                   </>
                 ) : (
-                  <button onClick={startPinterestAuth} className="btn btn-primary">Connect Pinterest</button>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                    <button onClick={startPinterestAuth} className="btn btn-primary w-full sm:w-auto">
+                      Connect <span className="hidden sm:inline">Pinterest</span>
+                    </button>
+                    <a href="https://developers.pinterest.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                      Learn more
+                    </a>
+                  </div>
                 )}
-                <a href="https://developers.pinterest.com/" target="_blank" rel="noreferrer" className="btn btn-secondary">
-                  Learn more
-                </a>
               </div>
             </div>
           </div>
 
-          <div className="card p-6 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-slate-900 to-slate-500 flex items-center justify-center shadow-lg">
+          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-slate-900 to-slate-500 flex items-center justify-center shadow-lg flex-none">
               <span className="text-white text-lg font-bold">@</span>
             </div>
-            <div className="flex-1">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Threads</h2>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Threads</h2>
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
                 Connect Threads to import posts into the Library.
               </p>
-              <div className="mt-4 flex flex-wrap gap-3 items-center">
+              <div className="mt-4 space-y-2">
                 {thAccount ? (
                   <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm">
+                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
                       Connected{thAccount.name ? ` as ${thAccount.name}` : ''}
                     </span>
-                    <button onClick={disconnectThreads} className="btn btn-ghost">Disconnect</button>
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                      <button onClick={disconnectThreads} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                      <a href="https://developers.facebook.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                        Learn more
+                      </a>
+                    </div>
                   </>
                 ) : (
-                  <button onClick={startThreadsAuth} className="btn btn-primary">Connect Threads</button>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                    <button onClick={startThreadsAuth} className="btn btn-primary w-full sm:w-auto">
+                      Connect <span className="hidden sm:inline">Threads</span>
+                    </button>
+                    <a href="https://developers.facebook.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                      Learn more
+                    </a>
+                  </div>
                 )}
-                <a href="https://developers.facebook.com/" target="_blank" rel="noreferrer" className="btn btn-secondary">
-                  Learn more
-                </a>
               </div>
             </div>
           </div>
 
-          <div className="card p-6 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-black to-pink-500 flex items-center justify-center shadow-lg">
+          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-black to-pink-500 flex items-center justify-center shadow-lg flex-none">
               {/* TikTok-ish note icon */}
               <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                 <path d="M14.5 3a1 1 0 0 1 1 1c0 3.1 2.4 5.5 5.5 5.5a1 1 0 1 1 0 2c-1.8 0-3.5-.6-4.9-1.6V16a6 6 0 1 1-6-6 1 1 0 1 1 0 2 4 4 0 1 0 4 4V4a1 1 0 0 1 1-1z" />
               </svg>
             </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">TikTok</h2>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">TikTok</h2>
                 {ttAccount ? (
                   <span className="inline-flex items-center px-2 py-1 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-xs">
                     Connected
@@ -613,7 +648,7 @@ export const Integrations: React.FC = () => {
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
                 We’ll integrate TikTok so you can authenticate users, share content, publish posts, and receive webhooks.
               </p>
-              <div className="mt-3 text-sm text-slate-700 dark:text-slate-200">
+              <div className="mt-3 text-sm text-slate-700 dark:text-slate-200 hidden md:block">
                 <div className="font-medium text-slate-900 dark:text-slate-100 mb-1">Planned products</div>
                 <ul className="list-disc pl-5 space-y-1 text-slate-600 dark:text-slate-400">
                   <li><strong>Login Kit</strong> (OAuth)</li>
@@ -622,47 +657,73 @@ export const Integrations: React.FC = () => {
                   <li><strong>Webhooks</strong></li>
                 </ul>
               </div>
-              <div className="mt-4 flex flex-wrap gap-3 items-center">
+              <details className="mt-3 md:hidden rounded-lg border border-slate-200/60 dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/20">
+                <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-slate-900 dark:text-slate-100">
+                  Planned products
+                </summary>
+                <div className="px-3 pb-3">
+                  <ul className="list-disc pl-5 space-y-1 text-sm text-slate-600 dark:text-slate-400">
+                    <li><strong>Login Kit</strong> (OAuth)</li>
+                    <li><strong>Share Kit</strong></li>
+                    <li><strong>Content Posting API</strong></li>
+                    <li><strong>Webhooks</strong></li>
+                  </ul>
+                </div>
+              </details>
+              <div className="mt-4 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:gap-3">
                 {ttAccount ? (
                   <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm">
+                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
                       Connected{ttAccount.displayName ? ` as ${ttAccount.displayName}` : ''}
                     </span>
-                    <button onClick={disconnectTikTok} className="btn btn-ghost">Disconnect</button>
-                    <button onClick={enableTikTokVideoImport} className="btn btn-secondary" type="button">
-                      Enable video import
-                    </button>
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                      <button onClick={disconnectTikTok} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                      <button onClick={enableTikTokVideoImport} className="btn btn-secondary w-full sm:w-auto" type="button">
+                        Enable video import
+                      </button>
+                      <a
+                        href="https://developers.tiktok.com/"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn btn-secondary w-full col-span-2 sm:col-span-1 sm:w-auto"
+                      >
+                        TikTok developer docs
+                      </a>
+                    </div>
                     {ttScopes && (
-                      <span className={`text-xs ${ttScopes.hasVideoList ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'}`}>
+                      <span className={`text-xs ${ttScopes.hasVideoList ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'} break-words`}>
                         {ttScopes.hasVideoList ? 'Video import enabled' : 'Video import NOT enabled (needs video.list)'}
                       </span>
                     )}
                   </>
                 ) : (
-                  <button onClick={startTikTokAuth} className="btn btn-primary">
-                    Connect TikTok
-                  </button>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                    <button onClick={startTikTokAuth} className="btn btn-primary w-full sm:w-auto">
+                      Connect <span className="hidden sm:inline">TikTok</span>
+                    </button>
+                    <a
+                      href="https://developers.tiktok.com/"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-secondary w-full sm:w-auto"
+                    >
+                      <span className="sm:hidden">Docs</span>
+                      <span className="hidden sm:inline">TikTok developer docs</span>
+                    </a>
+                  </div>
                 )}
-                <a
-                  href="https://developers.tiktok.com/"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn btn-secondary"
-                >
-                  TikTok developer docs
-                </a>
               </div>
             </div>
           </div>
         </section>
 
         <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="card p-6 flex items-start gap-4">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-red-500 flex items-center justify-center shadow-lg">
+          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-amber-500 to-red-500 flex items-center justify-center shadow-lg flex-none">
               <span className="text-white text-lg font-bold">S</span>
             </div>
-            <div className="flex-1">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Suno (API key)</h2>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Suno (API key)</h2>
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
                 Your key is stored per-user in the backend (`UserSettings`).
               </p>
@@ -673,7 +734,7 @@ export const Integrations: React.FC = () => {
                   className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
                   placeholder="Enter your Suno API key"
                 />
-                <button onClick={saveSunoApiKey} className="btn btn-primary">Save key</button>
+                <button onClick={saveSunoApiKey} className="btn btn-primary w-full sm:w-auto">Save key</button>
                 {sunoStatus && (
                   <p className="text-sm text-slate-600 dark:text-slate-400">{sunoStatus}</p>
                 )}
@@ -682,7 +743,7 @@ export const Integrations: React.FC = () => {
           </div>
         </section>
 
-        </div>
+      </div>
     </Layout>
   );
 }
