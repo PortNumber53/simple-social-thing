@@ -36,6 +36,9 @@ export const Library: React.FC = () => {
   const uploadsRef = useRef<UploadPreview[]>([]);
   const [dragUploadId, setDragUploadId] = useState<string | null>(null);
   const [dragOverUploadId, setDragOverUploadId] = useState<string | null>(null);
+  const [selectedUploadIds, setSelectedUploadIds] = useState<Set<string>>(() => new Set());
+  const [draftMediaIds, setDraftMediaIds] = useState<string[]>([]);
+  const [dragOverDraftMedia, setDragOverDraftMedia] = useState(false);
 
   const load = async (status: 'draft' | 'scheduled') => {
     setLoading(true);
@@ -65,6 +68,7 @@ export const Library: React.FC = () => {
     setDraftText('');
     setDraftStatus('draft');
     setScheduledForLocal('');
+    setDraftMediaIds([]);
   };
 
   const addFiles = (files: FileList | File[] | null | undefined) => {
@@ -88,6 +92,7 @@ export const Library: React.FC = () => {
       for (const u of prev) URL.revokeObjectURL(u.url);
       return [];
     });
+    setSelectedUploadIds(new Set());
     if (uploadInputRef.current) uploadInputRef.current.value = '';
   };
 
@@ -97,6 +102,13 @@ export const Library: React.FC = () => {
       if (u) URL.revokeObjectURL(u.url);
       return prev.filter((x) => x.id !== id);
     });
+    setSelectedUploadIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setDraftMediaIds((prev) => prev.filter((x) => x !== id));
   };
 
   useEffect(() => {
@@ -123,6 +135,45 @@ export const Library: React.FC = () => {
     });
   };
 
+  const parseUploadIdsFromDataTransfer = (dt: DataTransfer): string[] => {
+    const raw = dt.getData('application/x-sst-upload-ids');
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) return parsed.filter((x) => typeof x === 'string') as string[];
+    } catch { /* ignore */ }
+    return [];
+  };
+
+  const attachUploadsToDraft = (ids: string[]) => {
+    if (!ids || ids.length === 0) return;
+    setDraftMediaIds((prev) => {
+      const seen = new Set(prev);
+      const next = [...prev];
+      for (const id of ids) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          next.push(id);
+        }
+      }
+      return next;
+    });
+  };
+
+  const removeDraftMedia = (id: string) => {
+    setDraftMediaIds((prev) => prev.filter((x) => x !== id));
+  };
+
+  const uploadById = useMemo(() => {
+    const m = new Map<string, UploadPreview>();
+    for (const u of uploads) m.set(u.id, u);
+    return m;
+  }, [uploads]);
+
+  const draftMedia = useMemo(() => {
+    return draftMediaIds.map((id) => uploadById.get(id)).filter((x): x is UploadPreview => !!x);
+  }, [draftMediaIds, uploadById]);
+
   const scrollToEditor = () => {
     const el = editorRef.current;
     if (!el) return;
@@ -148,6 +199,7 @@ export const Library: React.FC = () => {
     } else {
       setScheduledForLocal('');
     }
+    setDraftMediaIds([]); // local-only for now
     scrollToEditor();
   };
 
@@ -309,6 +361,92 @@ export const Library: React.FC = () => {
               </div>
             </div>
 
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Media</label>
+                <div className="flex items-center gap-2">
+                  {selectedUploadIds.size > 0 && (
+                    <button
+                      type="button"
+                      className="text-xs underline text-slate-600 dark:text-slate-300"
+                      onClick={() => attachUploadsToDraft(Array.from(selectedUploadIds))}
+                    >
+                      Add selected ({selectedUploadIds.size})
+                    </button>
+                  )}
+                  {draftMediaIds.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-xs underline text-slate-600 dark:text-slate-300"
+                      onClick={() => setDraftMediaIds([])}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div
+                className={[
+                  'rounded-lg border border-dashed p-3 text-sm',
+                  dragOverDraftMedia
+                    ? 'border-primary-500 bg-primary-50/60 dark:bg-primary-900/10'
+                    : 'border-slate-300/70 dark:border-slate-700/70 bg-slate-50/60 dark:bg-slate-900/20',
+                ].join(' ')}
+                onDragOver={(e) => {
+                  if (!e.dataTransfer.types.includes('application/x-sst-upload-ids')) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'copy';
+                  setDragOverDraftMedia(true);
+                }}
+                onDragLeave={() => setDragOverDraftMedia(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const ids = parseUploadIdsFromDataTransfer(e.dataTransfer);
+                  attachUploadsToDraft(ids.length > 0 ? ids : Array.from(selectedUploadIds));
+                  setDragOverDraftMedia(false);
+                }}
+              >
+                <div className="text-slate-700 dark:text-slate-200">
+                  Drop selected uploads here to attach them to this draft.
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Tip: select multiple thumbnails, then drag any one of them onto this area.
+                </div>
+              </div>
+
+              {draftMedia.length > 0 && (
+                <div className="grid grid-cols-2 gap-3">
+                  {draftMedia.map((u) => (
+                    <div key={u.id} className="card p-0 overflow-hidden">
+                      <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
+                        {u.kind === 'image' ? (
+                          <img src={u.url} alt={u.file.name} className="w-full h-full object-cover" />
+                        ) : u.kind === 'video' ? (
+                          <video src={u.url} className="w-full h-full object-cover" muted playsInline />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-slate-400">
+                            <span className="text-sm">File</span>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          className="absolute top-2 right-2 bg-slate-900/70 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs hover:bg-slate-900/80"
+                          aria-label={`Remove ${u.file.name}`}
+                          onClick={() => removeDraftMedia(u.id)}
+                        >
+                          ×
+                        </button>
+                        <div className="absolute bottom-2 left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate">
+                          {u.file.name}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" className="btn btn-primary" onClick={() => void save()} disabled={saving}>
                 {saving ? 'Saving…' : 'Save'}
@@ -370,7 +508,7 @@ export const Library: React.FC = () => {
                 onDrop={(e) => {
                   e.preventDefault();
                   // If we're dragging an existing thumbnail, ignore here (reorder handled on thumbnails).
-                  if (e.dataTransfer.types.includes('application/x-sst-upload-id')) return;
+                  if (e.dataTransfer.types.includes('application/x-sst-upload-ids')) return;
                   addFiles(e.dataTransfer.files);
                 }}
               >
@@ -404,12 +542,16 @@ export const Library: React.FC = () => {
                       ].join(' ')}
                       draggable
                       onDragStart={(e) => {
+                        const ids =
+                          selectedUploadIds.size > 0 && selectedUploadIds.has(u.id)
+                            ? Array.from(selectedUploadIds)
+                            : [u.id];
                         setDragUploadId(u.id);
                         setDragOverUploadId(null);
-                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.effectAllowed = ids.length > 1 ? 'copy' : 'move';
                         try {
-                          e.dataTransfer.setData('application/x-sst-upload-id', u.id);
-                          e.dataTransfer.setData('text/plain', u.id);
+                          e.dataTransfer.setData('application/x-sst-upload-ids', JSON.stringify(ids));
+                          e.dataTransfer.setData('text/plain', ids.join(','));
                         } catch { /* ignore */ }
                       }}
                       onDragEnd={() => {
@@ -427,9 +569,9 @@ export const Library: React.FC = () => {
                       }}
                       onDrop={(e) => {
                         e.preventDefault();
-                        const from = e.dataTransfer.getData('application/x-sst-upload-id') || dragUploadId;
-                        if (!from) return;
-                        reorderUploads(from, u.id);
+                        const ids = parseUploadIdsFromDataTransfer(e.dataTransfer);
+                        if (ids.length !== 1) return; // only reorder single-item drags
+                        reorderUploads(ids[0], u.id);
                         setDragOverUploadId(null);
                       }}
                       title="Drag to reorder"
@@ -444,14 +586,36 @@ export const Library: React.FC = () => {
                             <span className="text-sm">File</span>
                           </div>
                         )}
-              <button
-                type="button"
+                        <label
+                          className="absolute top-2 left-2 z-10 inline-flex items-center gap-2 rounded-md bg-white/85 dark:bg-slate-900/80 text-slate-900 dark:text-slate-100 text-xs px-2 py-1 border border-slate-200/70 dark:border-slate-700/60"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedUploadIds.has(u.id)}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setSelectedUploadIds((prev) => {
+                                const next = new Set(prev);
+                                if (checked) next.add(u.id);
+                                else next.delete(u.id);
+                                return next;
+                              });
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="h-4 w-4 rounded border-slate-300 dark:border-slate-600"
+                            aria-label={`Select ${u.file.name}`}
+                          />
+                        </label>
+
+                        <button
+                          type="button"
                           className="absolute top-2 right-2 bg-slate-900/70 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs hover:bg-slate-900/80"
                           aria-label={`Remove ${u.file.name}`}
                           onClick={() => removeUpload(u.id)}
-              >
+                        >
                           ×
-              </button>
+                        </button>
                         <div className="absolute bottom-2 left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate">
                           {u.file.name}
                         </div>
