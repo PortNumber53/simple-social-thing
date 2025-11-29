@@ -13,8 +13,11 @@ type LocalPost = {
 
 type UploadPreview = {
   id: string;
-  file: File;
+  file?: File;
   url: string;
+  filename: string;
+  uploading?: boolean;
+  error?: string | null;
   kind: 'image' | 'video' | 'other';
 };
 
@@ -75,31 +78,117 @@ export const Library: React.FC = () => {
     if (!files) return;
     const arr = Array.from(files);
     if (arr.length === 0) return;
+    const tempIds: string[] = [];
+    const tempUrlById = new Map<string, string>();
+    const form = new FormData();
+
     setUploads((prev) => {
       const next = [...prev];
       for (const f of arr) {
         const type = (f.type || '').toLowerCase();
         const kind: UploadPreview['kind'] =
           type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : 'other';
-        next.push({ id: crypto.randomUUID(), file: f, url: URL.createObjectURL(f), kind });
+        const tempId = crypto.randomUUID();
+        const localUrl = URL.createObjectURL(f);
+        tempIds.push(tempId);
+        tempUrlById.set(tempId, localUrl);
+        form.append('files', f, f.name);
+        next.push({ id: tempId, file: f, url: localUrl, filename: f.name, kind, uploading: true, error: null });
       }
       return next;
     });
+
+    // Upload in background; replace local object-URLs with server URLs once complete.
+    void (async () => {
+      try {
+        const res = await fetch('/api/local-library/uploads', { method: 'POST', credentials: 'include', body: form });
+        const data: unknown = await res.json().catch(() => null);
+        if (!res.ok || !data || typeof data !== 'object') {
+          setUploads((prev) =>
+            prev.map((u) => (tempIds.includes(u.id) ? { ...u, uploading: false, error: 'upload_failed' } : u)),
+          );
+          return;
+        }
+        const obj = data as Record<string, unknown>;
+        const items = Array.isArray(obj.items) ? (obj.items as any[]) : [];
+        const mapping = new Map<string, { id: string; url: string; contentType?: string; size?: number; kind?: string }>();
+        for (let i = 0; i < tempIds.length; i++) {
+          const it = items[i];
+          const id = typeof it?.id === 'string' ? it.id : (typeof it?.filename === 'string' ? it.filename : '');
+          const url = typeof it?.url === 'string' ? it.url : '';
+          if (!id || !url) continue;
+          mapping.set(tempIds[i], { id, url, contentType: it?.contentType, size: it?.size, kind: it?.kind });
+        }
+
+        // Swap ids + urls in state (and keep selection/attachments consistent).
+        if (mapping.size > 0) {
+          setUploads((prev) =>
+            prev.map((u) => {
+              const m = mapping.get(u.id);
+              if (!m) return u;
+              // revoke local preview blob url
+              const localUrl = tempUrlById.get(u.id);
+              if (localUrl) URL.revokeObjectURL(localUrl);
+              const kind = (m.kind === 'image' || m.kind === 'video' || m.kind === 'other') ? m.kind : u.kind;
+              return { id: m.id, url: m.url, filename: m.id, kind, uploading: false, error: null };
+            }),
+          );
+          setSelectedUploadIds((prev) => {
+            if (prev.size === 0) return prev;
+            const next = new Set<string>();
+            for (const id of prev) next.add(mapping.get(id)?.id ?? id);
+            return next;
+          });
+          setDraftMediaIds((prev) => prev.map((id) => mapping.get(id)?.id ?? id));
+          setDragUploadId((prev) => (prev ? mapping.get(prev)?.id ?? prev : prev));
+          setDragOverUploadId((prev) => (prev ? mapping.get(prev)?.id ?? prev : prev));
+        }
+      } catch {
+        setUploads((prev) =>
+          prev.map((u) => (tempIds.includes(u.id) ? { ...u, uploading: false, error: 'upload_failed' } : u)),
+        );
+      }
+    })();
   };
 
   const clearUploads = () => {
+    const idsToDelete = uploads.map((u) => u.id);
+    void (async () => {
+      if (idsToDelete.length === 0) return;
+      try {
+        await fetch('/api/local-library/uploads/delete', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: idsToDelete }),
+        });
+      } catch { /* ignore */ }
+    })();
     setUploads((prev) => {
-      for (const u of prev) URL.revokeObjectURL(u.url);
+      for (const u of prev) {
+        if (typeof u.url === 'string' && u.url.startsWith('blob:')) URL.revokeObjectURL(u.url);
+      }
       return [];
     });
     setSelectedUploadIds(new Set());
+    setDraftMediaIds([]);
     if (uploadInputRef.current) uploadInputRef.current.value = '';
   };
 
   const removeUpload = (id: string) => {
+    void (async () => {
+      try {
+        await fetch('/api/local-library/uploads/delete', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: [id] }),
+        });
+      } catch { /* ignore */ }
+    })();
     setUploads((prev) => {
       const u = prev.find((x) => x.id === id);
-      if (u) URL.revokeObjectURL(u.url);
+      if (u && typeof u.url === 'string' && u.url.startsWith('blob:')) URL.revokeObjectURL(u.url);
       return prev.filter((x) => x.id !== id);
     });
     setSelectedUploadIds((prev) => {
@@ -118,8 +207,42 @@ export const Library: React.FC = () => {
   useEffect(() => {
     return () => {
       // Cleanup object URLs on unmount.
-      for (const u of uploadsRef.current) URL.revokeObjectURL(u.url);
+      for (const u of uploadsRef.current) {
+        if (typeof u.url === 'string' && u.url.startsWith('blob:')) URL.revokeObjectURL(u.url);
+      }
     };
+  }, []);
+
+  useEffect(() => {
+    // Load existing uploaded files from backend so uploads persist across reloads.
+    void (async () => {
+      try {
+        const res = await fetch('/api/local-library/uploads', { credentials: 'include' });
+        const data: unknown = await res.json().catch(() => null);
+        const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+        const items = obj && Array.isArray(obj.items) ? (obj.items as any[]) : [];
+        const next: UploadPreview[] = [];
+        for (const it of items) {
+          const id = typeof it?.id === 'string' ? it.id : (typeof it?.filename === 'string' ? it.filename : '');
+          const url = typeof it?.url === 'string' ? it.url : '';
+          const kind = (it?.kind === 'image' || it?.kind === 'video' || it?.kind === 'other') ? it.kind : 'other';
+          if (!id || !url) continue;
+          next.push({ id, url, filename: id, kind, uploading: false, error: null });
+        }
+        if (next.length > 0) {
+          setUploads((prev) => {
+            if (prev.length === 0) return next;
+            const seen = new Set(prev.map((u) => u.id));
+            const merged = [...prev];
+            for (const u of next) {
+              if (!seen.has(u.id)) merged.push(u);
+            }
+            return merged;
+          });
+        }
+      } catch { /* ignore */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const reorderUploads = (fromId: string, toId: string) => {
@@ -421,7 +544,7 @@ export const Library: React.FC = () => {
                     <div key={u.id} className="card p-0 overflow-hidden">
                       <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
                         {u.kind === 'image' ? (
-                          <img src={u.url} alt={u.file.name} className="w-full h-full object-cover" />
+                          <img src={u.url} alt={u.filename} className="w-full h-full object-cover" />
                         ) : u.kind === 'video' ? (
                           <video src={u.url} className="w-full h-full object-cover" muted playsInline />
                         ) : (
@@ -432,13 +555,13 @@ export const Library: React.FC = () => {
                         <button
                           type="button"
                           className="absolute top-2 right-2 bg-slate-900/70 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs hover:bg-slate-900/80"
-                          aria-label={`Remove ${u.file.name}`}
+                          aria-label={`Remove ${u.filename}`}
                           onClick={() => removeDraftMedia(u.id)}
                         >
                           ×
                         </button>
                         <div className="absolute bottom-2 left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate">
-                          {u.file.name}
+                          {u.filename}
                         </div>
                       </div>
                     </div>
@@ -578,7 +701,7 @@ export const Library: React.FC = () => {
                     >
                       <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
                         {u.kind === 'image' ? (
-                          <img src={u.url} alt={u.file.name} className="w-full h-full object-cover" />
+                          <img src={u.url} alt={u.filename} className="w-full h-full object-cover" />
                         ) : u.kind === 'video' ? (
                           <video src={u.url} className="w-full h-full object-cover" muted playsInline />
                         ) : (
@@ -604,20 +727,20 @@ export const Library: React.FC = () => {
                             }}
                             onClick={(e) => e.stopPropagation()}
                             className="h-4 w-4 rounded border-slate-300 dark:border-slate-600"
-                            aria-label={`Select ${u.file.name}`}
+                            aria-label={`Select ${u.filename}`}
                           />
                         </label>
 
                         <button
                           type="button"
                           className="absolute top-2 right-2 bg-slate-900/70 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs hover:bg-slate-900/80"
-                          aria-label={`Remove ${u.file.name}`}
+                          aria-label={`Remove ${u.filename}`}
                           onClick={() => removeUpload(u.id)}
                         >
                           ×
                         </button>
                         <div className="absolute bottom-2 left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate">
-                          {u.file.name}
+                          {u.filename}
                         </div>
                       </div>
                     </div>
