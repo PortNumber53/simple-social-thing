@@ -331,6 +331,16 @@ type deleteSocialLibrariesResponse struct {
 	Deleted int64 `json:"deleted"`
 }
 
+type createOrUpdatePostRequest struct {
+	// Optional. If empty on create, the server will generate one.
+	ID *string `json:"id,omitempty"`
+
+	Content      *string    `json:"content,omitempty"`
+	Status       *string    `json:"status,omitempty"`
+	ScheduledFor *time.Time `json:"scheduledFor,omitempty"`
+	PublishedAt  *time.Time `json:"publishedAt,omitempty"`
+}
+
 func (h *Handler) ListSunoTracksForUser(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["userId"]
@@ -686,6 +696,218 @@ func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 	log.Printf("[LibrarySync] done userId=%s dur=%dms", userID, resp.DurationMs)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// ListPostsForUser returns local posts (draft/scheduled/published) for a given user.
+func (h *Handler) ListPostsForUser(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := strings.TrimSpace(vars["userId"])
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	limit := 200
+
+	posts := []models.Post{}
+	var rows *sql.Rows
+	var err error
+	if status != "" {
+		rows, err = h.db.Query(
+			`SELECT id, COALESCE("teamId",'') as "teamId", "userId", content, status, "scheduledFor", "publishedAt", "createdAt", "updatedAt"
+			 FROM public."Posts"
+			 WHERE "userId" = $1 AND status = $2
+			 ORDER BY "createdAt" DESC
+			 LIMIT $3`,
+			userID, status, limit,
+		)
+	} else {
+		rows, err = h.db.Query(
+			`SELECT id, COALESCE("teamId",'') as "teamId", "userId", content, status, "scheduledFor", "publishedAt", "createdAt", "updatedAt"
+			 FROM public."Posts"
+			 WHERE "userId" = $1
+			 ORDER BY "createdAt" DESC
+			 LIMIT $2`,
+			userID, limit,
+		)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var p models.Post
+		if err := rows.Scan(&p.ID, &p.TeamID, &p.UserID, &p.Content, &p.Status, &p.ScheduledFor, &p.PublishedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		posts = append(posts, p)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(posts)
+}
+
+// CreatePostForUser creates a local post for a user (draft/scheduled metadata only).
+func (h *Handler) CreatePostForUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	vars := mux.Vars(r)
+	userID := strings.TrimSpace(vars["userId"])
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	var req createOrUpdatePostRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+
+	id := ""
+	if req.ID != nil {
+		id = strings.TrimSpace(*req.ID)
+	}
+	if id == "" {
+		id = randHex(16)
+	}
+
+	status := "draft"
+	if req.Status != nil {
+		status = strings.TrimSpace(*req.Status)
+	}
+	if status == "" {
+		status = "draft"
+	}
+	if status != "draft" && status != "scheduled" && status != "published" {
+		http.Error(w, "invalid status", http.StatusBadRequest)
+		return
+	}
+	if status == "scheduled" && req.ScheduledFor == nil {
+		http.Error(w, "scheduledFor is required when status=scheduled", http.StatusBadRequest)
+		return
+	}
+
+	var out models.Post
+	query := `
+		INSERT INTO public."Posts" (id, "teamId", "userId", content, status, "scheduledFor", "publishedAt", "createdAt", "updatedAt")
+		VALUES ($1, NULL, $2, $3, $4, $5, $6, NOW(), NOW())
+		RETURNING id, COALESCE("teamId",''), "userId", content, status, "scheduledFor", "publishedAt", "createdAt", "updatedAt"
+	`
+	err := h.db.QueryRow(query, id, userID, req.Content, status, req.ScheduledFor, req.PublishedAt).
+		Scan(&out.ID, &out.TeamID, &out.UserID, &out.Content, &out.Status, &out.ScheduledFor, &out.PublishedAt, &out.CreatedAt, &out.UpdatedAt)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// UpdatePostForUser updates a local post for a given user.
+func (h *Handler) UpdatePostForUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	vars := mux.Vars(r)
+	userID := strings.TrimSpace(vars["userId"])
+	postID := strings.TrimSpace(vars["postId"])
+	if userID == "" || postID == "" {
+		http.Error(w, "userId and postId are required", http.StatusBadRequest)
+		return
+	}
+
+	var req createOrUpdatePostRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Status != nil {
+		s := strings.TrimSpace(*req.Status)
+		if s == "" {
+			http.Error(w, "invalid status", http.StatusBadRequest)
+			return
+		}
+		if s != "draft" && s != "scheduled" && s != "published" {
+			http.Error(w, "invalid status", http.StatusBadRequest)
+			return
+		}
+		if s == "scheduled" && req.ScheduledFor == nil {
+			http.Error(w, "scheduledFor is required when status=scheduled", http.StatusBadRequest)
+			return
+		}
+	}
+
+	var out models.Post
+	query := `
+		UPDATE public."Posts"
+		SET
+			content = COALESCE($3, content),
+			status = COALESCE($4, status),
+			"scheduledFor" = COALESCE($5, "scheduledFor"),
+			"publishedAt" = COALESCE($6, "publishedAt"),
+			"updatedAt" = NOW()
+		WHERE id = $1 AND "userId" = $2
+		RETURNING id, COALESCE("teamId",''), "userId", content, status, "scheduledFor", "publishedAt", "createdAt", "updatedAt"
+	`
+	err := h.db.QueryRow(query, postID, userID, req.Content, req.Status, req.ScheduledFor, req.PublishedAt).
+		Scan(&out.ID, &out.TeamID, &out.UserID, &out.Content, &out.Status, &out.ScheduledFor, &out.PublishedAt, &out.CreatedAt, &out.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// DeletePostForUser deletes a local post for a given user.
+func (h *Handler) DeletePostForUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	vars := mux.Vars(r)
+	userID := strings.TrimSpace(vars["userId"])
+	postID := strings.TrimSpace(vars["postId"])
+	if userID == "" || postID == "" {
+		http.Error(w, "userId and postId are required", http.StatusBadRequest)
+		return
+	}
+
+	res, err := h.db.Exec(`DELETE FROM public."Posts" WHERE id = $1 AND "userId" = $2`, postID, userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 type publishPostRequest struct {
