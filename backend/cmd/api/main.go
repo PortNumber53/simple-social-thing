@@ -98,6 +98,12 @@ func main() {
 	// Publishing job status
 	r.HandleFunc("/api/social-posts/publish-jobs/{jobId}", h.GetPublishJob).Methods("GET")
 
+	// Local content library (draft/scheduled posts stored in DB)
+	r.HandleFunc("/api/posts/user/{userId}", h.ListPostsForUser).Methods("GET")
+	r.HandleFunc("/api/posts/user/{userId}", h.CreatePostForUser).Methods("POST")
+	r.HandleFunc("/api/posts/{postId}/user/{userId}", h.UpdatePostForUser).Methods("PUT")
+	r.HandleFunc("/api/posts/{postId}/user/{userId}", h.DeletePostForUser).Methods("DELETE")
+
 	// Team endpoints
 	r.HandleFunc("/api/teams", h.CreateTeam).Methods("POST")
 	r.HandleFunc("/api/teams/{id}", h.GetTeam).Methods("GET")

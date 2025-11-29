@@ -611,6 +611,14 @@ export default {
         return handleLibraryDelete(request, env);
       }
 
+      // Local Library: draft + scheduled content stored in our DB (Posts table)
+      if (url.pathname === "/api/local-library/items") {
+        return handleLocalLibraryItems(request, env);
+      }
+      if (url.pathname.startsWith("/api/local-library/items/")) {
+        return handleLocalLibraryItem(request, env);
+      }
+
       // Publishing: caption-only post fan-out (backend does per-provider posting)
       if (url.pathname === "/api/posts/publish") {
         return handlePostsPublish(request, env);
@@ -1394,6 +1402,142 @@ async function handleLibraryDelete(request: Request, env: Env): Promise<Response
 		console.error('[LibraryDelete] backend unreachable', { backendOrigin, message });
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
+}
+
+async function ensureSid(request: Request, env: Env, headers: Headers): Promise<string | null> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const cookie = request.headers.get('Cookie') || '';
+  let sid = getCookie(cookie, 'sid');
+  const requestUrl = request.url;
+  const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
+
+  if (!sid && isLocal) {
+    sid = crypto.randomUUID();
+    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
+    // ensure user exists
+    try {
+      await fetch(`${backendOrigin}/api/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
+      });
+    } catch { void 0; }
+  }
+  return sid || null;
+}
+
+async function handleLocalLibraryItems(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const headers = buildCorsHeaders(request);
+
+  if (request.method === 'OPTIONS') {
+    headers.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+    return new Response(null, { status: 204, headers });
+  }
+  if (request.method !== 'GET' && request.method !== 'POST') return new Response(null, { status: 405, headers });
+
+  const sid = await ensureSid(request, env, headers);
+  if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+  try {
+    const url = new URL(request.url);
+    const qs = url.search || '';
+
+    if (request.method === 'GET') {
+      const res = await fetch(`${backendOrigin}/api/posts/user/${encodeURIComponent(sid)}${qs}`, {
+        headers: { 'Accept': 'application/json' },
+      });
+      const text = await res.text().catch(() => '');
+      if (!res.ok) {
+        console.error('[LocalLibraryItems] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+        return new Response(JSON.stringify({ ok: false, error: 'list_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+      }
+      headers.set('Content-Type', 'application/json');
+      return new Response(text || '[]', { status: 200, headers });
+    }
+
+    // POST: create
+    let parsed: unknown = null;
+    try { parsed = await request.json().catch(() => null); } catch { parsed = null; }
+    const body = asRecord(parsed) || {};
+    // ensure we always have an id (backend can generate too, but worker keeps it deterministic for clients)
+    if (!getString(body['id'])) body['id'] = crypto.randomUUID();
+
+    const res = await fetch(`${backendOrigin}/api/posts/user/${encodeURIComponent(sid)}`, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      console.error('[LocalLibraryItems] backend non-2xx (create)', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+      return new Response(JSON.stringify({ ok: false, error: 'create_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+    }
+    headers.set('Content-Type', 'application/json');
+    return new Response(text || '{"ok":true}', { status: 200, headers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[LocalLibraryItems] backend unreachable', { backendOrigin, message });
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
+}
+
+async function handleLocalLibraryItem(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const headers = buildCorsHeaders(request);
+
+  if (request.method === 'OPTIONS') {
+    headers.set('Access-Control-Allow-Methods', 'PUT,DELETE,OPTIONS');
+    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+    return new Response(null, { status: 204, headers });
+  }
+  if (request.method !== 'PUT' && request.method !== 'DELETE') return new Response(null, { status: 405, headers });
+
+  const sid = await ensureSid(request, env, headers);
+  if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+  const path = new URL(request.url).pathname;
+  const id = decodeURIComponent(path.slice("/api/local-library/items/".length)).trim();
+  if (!id) return new Response(JSON.stringify({ ok: false, error: 'missing_id' }), { status: 400, headers });
+
+  try {
+    if (request.method === 'DELETE') {
+      const res = await fetch(`${backendOrigin}/api/posts/${encodeURIComponent(id)}/user/${encodeURIComponent(sid)}`, {
+        method: 'DELETE',
+        headers: { 'Accept': 'application/json' },
+      });
+      const text = await res.text().catch(() => '');
+      if (!res.ok) {
+        console.error('[LocalLibraryItem] backend non-2xx (delete)', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+        return new Response(JSON.stringify({ ok: false, error: 'delete_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+      }
+      headers.set('Content-Type', 'application/json');
+      return new Response(text || '{"ok":true}', { status: 200, headers });
+    }
+
+    // PUT: update
+    let parsed: unknown = null;
+    try { parsed = await request.json().catch(() => null); } catch { parsed = null; }
+    const body = asRecord(parsed) || {};
+
+    const res = await fetch(`${backendOrigin}/api/posts/${encodeURIComponent(id)}/user/${encodeURIComponent(sid)}`, {
+      method: 'PUT',
+      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      console.error('[LocalLibraryItem] backend non-2xx (update)', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+      return new Response(JSON.stringify({ ok: false, error: 'update_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+    }
+    headers.set('Content-Type', 'application/json');
+    return new Response(text || '{"ok":true}', { status: 200, headers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[LocalLibraryItem] backend unreachable', { backendOrigin, message });
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
 }
 
 async function handleSunoSync(request: Request, env: Env): Promise<Response> {
