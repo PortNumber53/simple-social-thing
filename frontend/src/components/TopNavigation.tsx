@@ -5,8 +5,11 @@ import { useNavigate } from 'react-router-dom';
 export const TopNavigation: React.FC = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false); // desktop account dropdown
+  const [mobileOpen, setMobileOpen] = useState(false); // mobile hamburger menu
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const mobileMenuRef = useRef<HTMLDivElement | null>(null);
+  const mobileButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const navItemBase =
     "inline-flex items-center h-10 px-3 rounded-md text-sm font-medium transition-colors";
@@ -17,14 +20,27 @@ export const TopNavigation: React.FC = () => {
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
-      if (!menuRef.current) return;
-      if (!menuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (menuOpen && menuRef.current && !menuRef.current.contains(target)) setMenuOpen(false);
+      if (mobileOpen) {
+        const inPanel = mobileMenuRef.current && mobileMenuRef.current.contains(target);
+        const inButton = mobileButtonRef.current && mobileButtonRef.current.contains(target);
+        if (!inPanel && !inButton) setMobileOpen(false);
+      }
+    };
+    const onDocKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
         setMenuOpen(false);
+        setMobileOpen(false);
       }
     };
     document.addEventListener('click', onDocClick);
-    return () => document.removeEventListener('click', onDocClick);
-  }, []);
+    document.addEventListener('keydown', onDocKeyDown);
+    return () => {
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('keydown', onDocKeyDown);
+    };
+  }, [menuOpen, mobileOpen]);
 
   const handleLogout = () => {
     logout();
@@ -33,7 +49,7 @@ export const TopNavigation: React.FC = () => {
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-700/50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo/Brand */}
           <a href="/" className="flex items-center gap-3 group">
@@ -95,9 +111,38 @@ export const TopNavigation: React.FC = () => {
 
           {/* User Menu */}
           <div className="flex items-center gap-4">
+            {/* Mobile hamburger */}
+            <button
+              ref={mobileButtonRef}
+              type="button"
+              className="md:hidden inline-flex items-center justify-center rounded-lg p-2 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+              aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+              aria-expanded={mobileOpen}
+              onClick={() => setMobileOpen((v) => !v)}
+            >
+              {mobileOpen ? (
+                <svg className="w-5 h-5 text-slate-700 dark:text-slate-200" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path
+                    fillRule="evenodd"
+                    d="M4.22 4.22a.75.75 0 011.06 0L10 8.94l4.72-4.72a.75.75 0 111.06 1.06L11.06 10l4.72 4.72a.75.75 0 11-1.06 1.06L10 11.06l-4.72 4.72a.75.75 0 11-1.06-1.06L8.94 10 4.22 5.28a.75.75 0 010-1.06z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5 text-slate-700 dark:text-slate-200" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path
+                    fillRule="evenodd"
+                    d="M3 5.75A.75.75 0 013.75 5h12.5a.75.75 0 010 1.5H3.75A.75.75 0 013 5.75zm0 4.25A.75.75 0 013.75 9.25h12.5a.75.75 0 010 1.5H3.75A.75.75 0 013 10zm0 4.25a.75.75 0 01.75-.75h12.5a.75.75 0 010 1.5H3.75a.75.75 0 01-.75-.75z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              )}
+            </button>
+
+            {/* Desktop account dropdown */}
             {user && (
               <div
-                className="relative"
+                className="relative hidden md:block"
                 ref={menuRef}
                 onMouseEnter={() => setMenuOpen(true)}
                 onMouseLeave={() => setMenuOpen(false)}
@@ -153,6 +198,109 @@ export const TopNavigation: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Mobile menu panel */}
+      {mobileOpen && (
+        <div className="md:hidden">
+          {/* Backdrop */}
+          <div className="fixed inset-0 top-16 bg-black/20" aria-hidden="true" />
+
+          <div
+            ref={mobileMenuRef}
+            className="fixed top-16 left-0 right-0 border-b border-slate-200/60 dark:border-slate-700/50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl"
+          >
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 space-y-2">
+              {user ? (
+                <>
+                  <div className="flex items-center gap-3 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/40 border border-slate-200/60 dark:border-slate-700/50">
+                    <img
+                      src={user.imageUrl || 'https://via.placeholder.com/150'}
+                      alt={user.name}
+                      className="w-9 h-9 rounded-full ring-2 ring-primary-400"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.src = 'https://via.placeholder.com/150';
+                      }}
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">{user.name}</div>
+                      <div className="text-xs text-slate-600 dark:text-slate-300">Account</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <a href="/dashboard" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
+                      Dashboard
+                    </a>
+                    <a href="/library" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
+                      Library
+                    </a>
+                    <a href="/reports" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
+                      Reports
+                    </a>
+                    <a href="/integrations" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
+                      Integrations
+                    </a>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/50 overflow-hidden">
+                    <div className="px-3 py-2 text-xs font-semibold tracking-wide text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40">
+                      Content
+                    </div>
+                    <div className="p-2 grid grid-cols-1 gap-1">
+                      <a href="/content/posts" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
+                        Posts
+                      </a>
+                      <a href="/content/videos" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
+                        Videos
+                      </a>
+                      <a href="/content/music" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
+                        Music
+                      </a>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <a href="/account/profile" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
+                      Profile
+                    </a>
+                    <a href="/account/settings" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
+                      Settings
+                    </a>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileOpen(false);
+                      handleLogout();
+                    }}
+                    className="w-full inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-medium bg-red-600 text-white hover:bg-red-700 active:scale-95 transition-all duration-200"
+                  >
+                    Log out
+                  </button>
+                </>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <a href="/" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemPublicColors} justify-start w-full`}>
+                    Home
+                  </a>
+                  <a href="/features" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemPublicColors} justify-start w-full`}>
+                    Features
+                  </a>
+                  <a href="/contact" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemPublicColors} justify-start w-full`}>
+                    Contact
+                  </a>
+                  <a href="/pricing" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemPublicColors} justify-start w-full`}>
+                    Pricing
+                  </a>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </nav>
   );
 };
