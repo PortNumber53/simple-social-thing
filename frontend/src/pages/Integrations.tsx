@@ -488,7 +488,7 @@ export const Integrations: React.FC = () => {
             <div className="flex-1 min-w-0">
               <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Facebook</h2>
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
-                Connect Facebook pages to import posts into your Library.
+                Connect Facebook pages to import posts into Published.
               </p>
               <div className="mt-4 space-y-2">
                 {fbAccount ? (
@@ -524,7 +524,7 @@ export const Integrations: React.FC = () => {
             <div className="flex-1 min-w-0">
               <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">YouTube</h2>
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
-                Connect YouTube to import your uploaded videos into the Library.
+                Connect YouTube to import your uploaded videos into Published.
               </p>
               <div className="mt-4 space-y-2">
                 {ytAccount ? (
@@ -560,7 +560,7 @@ export const Integrations: React.FC = () => {
             <div className="flex-1 min-w-0">
               <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Pinterest</h2>
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
-                Connect Pinterest to import pins into the Library.
+                Connect Pinterest to import pins into Published.
               </p>
               <div className="mt-4 space-y-2">
                 {pinAccount ? (
@@ -596,7 +596,7 @@ export const Integrations: React.FC = () => {
             <div className="flex-1 min-w-0">
               <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Threads</h2>
               <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
-                Connect Threads to import posts into the Library.
+                Connect Threads to import posts into Published.
               </p>
               <div className="mt-4 space-y-2">
                 {thAccount ? (

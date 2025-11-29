@@ -81,7 +81,8 @@ export const TopNavigation: React.FC = () => {
                   <div className="absolute left-0 top-full mt-0 w-48 rounded-md bg-white dark:bg-slate-900 shadow-lg ring-1 ring-black/5 dark:ring-white/10 opacity-0 pointer-events-none translate-y-1 group-hover:translate-y-0 group-hover:opacity-100 group-hover:pointer-events-auto transition duration-150">
                     <a href="/content/posts" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-t-md">Posts</a>
                     <a href="/content/videos" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800">Videos</a>
-                    <a href="/content/music" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-b-md">Music</a>
+                    <a href="/content/music" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800">Music</a>
+                    <a href="/content/published" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-b-md">Published</a>
                   </div>
                 </div>
                 <a href="/reports" className={`${navItemBase} ${navItemColors}`}>
@@ -257,6 +258,9 @@ export const TopNavigation: React.FC = () => {
                       </a>
                       <a href="/content/music" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
                         Music
+                      </a>
+                      <a href="/content/published" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
+                        Published
                       </a>
                     </div>
                   </div>
