@@ -268,15 +268,18 @@ export const ContentPosts: React.FC = () => {
 
 	return (
 		<Layout headerPaddingClass="pt-24">
-			<div className="max-w-5xl mx-auto space-y-8">
+			<div className="w-full max-w-7xl 2xl:max-w-none mx-auto space-y-8">
 				<header className="space-y-2">
 					<h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50">Publish Post</h1>
 					<p className="text-slate-600 dark:text-slate-400 text-sm">
             Choose which connected networks to publish to.
 					</p>
 				</header>
-				<div className="bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-6 space-y-6">
-          <div className="space-y-3">
+				<div className="bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-6">
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+            {/* Left sidebar: networks selection */}
+            <aside className="xl:col-span-4 space-y-6 xl:sticky xl:top-28 self-start">
+              <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
               <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Networks</label>
               <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
@@ -312,7 +315,7 @@ export const ContentPosts: React.FC = () => {
                 No connected networks yet. Go to <a href="/integrations" className="underline">Integrations</a> to connect.
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-2">
                 {connectedProviders.map((p) => (
                   p === 'facebook' ? (
                     <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm">
@@ -413,7 +416,11 @@ export const ContentPosts: React.FC = () => {
             <p className="text-xs text-slate-500 dark:text-slate-400">
               Note: publishing support is incremental. Currently the backend supports caption-only publishing for Facebook Pages; other networks may report <span className="font-mono">not_supported_yet</span>.
             </p>
-          </div>
+              </div>
+            </aside>
+
+            {/* Main: post content */}
+            <section className="xl:col-span-8 space-y-6">
 					<div className="space-y-2">
 						<label className="text-sm font-medium text-slate-700 dark:text-slate-200">Caption</label>
 						<textarea
@@ -494,6 +501,8 @@ export const ContentPosts: React.FC = () => {
               </div>
             </div>
           )}
+            </section>
+          </div>
 				</div>
 			</div>
 		</Layout>

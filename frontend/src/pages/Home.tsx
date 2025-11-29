@@ -7,7 +7,7 @@ export const Home: React.FC = () => {
   const { isAuthenticated } = useAuth();
   return (
     <Layout headerPaddingClass="pt-32 md:pt-36">
-      <div className="w-full max-w-5xl mx-auto space-y-8 animate-fade-in">
+      <div className="w-full max-w-7xl 2xl:max-w-screen-2xl mx-auto space-y-8 animate-fade-in">
 
         {/* Hero Section */}
         <div className="text-center space-y-6 mb-12">

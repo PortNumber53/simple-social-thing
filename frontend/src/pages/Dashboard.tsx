@@ -14,7 +14,7 @@ export const Dashboard: React.FC = () => {
       
       {/* Main Content - with padding for fixed nav and status bar */}
       <main className="pt-20 pb-14 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
+        <div className="w-full max-w-7xl 2xl:max-w-none mx-auto">
           {/* Welcome Section */}
           <div className="mb-8 animate-fade-in">
             <h1 className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-slate-100 mb-2">

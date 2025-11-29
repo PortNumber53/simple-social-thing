@@ -28,7 +28,7 @@ export const Settings: React.FC = () => {
 
   return (
     <Layout>
-      <div className="max-w-4xl mx-auto pt-6">
+      <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
         <div className="mb-8 animate-fade-in">
           <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-2">Settings</h1>
           <p className="text-lg text-slate-600 dark:text-slate-400">Customize your application preferences</p>
