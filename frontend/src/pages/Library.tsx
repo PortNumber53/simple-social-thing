@@ -17,6 +17,7 @@ type UploadPreview = {
   url: string;
   filename: string;
   uploading?: boolean;
+  progress?: number; // 0..100 while uploading
   error?: string | null;
   kind: 'image' | 'video' | 'other';
 };
@@ -78,9 +79,7 @@ export const Library: React.FC = () => {
     if (!files) return;
     const arr = Array.from(files);
     if (arr.length === 0) return;
-    const tempIds: string[] = [];
     const tempUrlById = new Map<string, string>();
-    const form = new FormData();
 
     setUploads((prev) => {
       const next = [...prev];
@@ -88,66 +87,132 @@ export const Library: React.FC = () => {
         const type = (f.type || '').toLowerCase();
         const kind: UploadPreview['kind'] =
           type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : 'other';
-        const tempId = crypto.randomUUID();
+        const tempId = `temp_${crypto.randomUUID()}`;
         const localUrl = URL.createObjectURL(f);
-        tempIds.push(tempId);
         tempUrlById.set(tempId, localUrl);
-        form.append('files', f, f.name);
-        next.push({ id: tempId, file: f, url: localUrl, filename: f.name, kind, uploading: true, error: null });
+        next.push({
+          id: tempId,
+          file: f,
+          url: localUrl,
+          filename: f.name,
+          kind,
+          uploading: true,
+          progress: 0,
+          error: null,
+        });
       }
       return next;
     });
 
-    // Upload in background; replace local object-URLs with server URLs once complete.
-    void (async () => {
-      try {
-        const res = await fetch('/api/local-library/uploads', { method: 'POST', credentials: 'include', body: form });
-        const data: unknown = await res.json().catch(() => null);
-        if (!res.ok || !data || typeof data !== 'object') {
-          setUploads((prev) =>
-            prev.map((u) => (tempIds.includes(u.id) ? { ...u, uploading: false, error: 'upload_failed' } : u)),
-          );
-          return;
-        }
-        const obj = data as Record<string, unknown>;
-        const items = Array.isArray(obj.items) ? (obj.items as any[]) : [];
-        const mapping = new Map<string, { id: string; url: string; contentType?: string; size?: number; kind?: string }>();
-        for (let i = 0; i < tempIds.length; i++) {
-          const it = items[i];
-          const id = typeof it?.id === 'string' ? it.id : (typeof it?.filename === 'string' ? it.filename : '');
-          const url = typeof it?.url === 'string' ? it.url : '';
-          if (!id || !url) continue;
-          mapping.set(tempIds[i], { id, url, contentType: it?.contentType, size: it?.size, kind: it?.kind });
-        }
+    const ensureFileName = (id: string, fallback: string) => {
+      const fn = (fallback || '').trim();
+      return fn ? fn : id;
+    };
 
-        // Swap ids + urls in state (and keep selection/attachments consistent).
-        if (mapping.size > 0) {
-          setUploads((prev) =>
-            prev.map((u) => {
-              const m = mapping.get(u.id);
-              if (!m) return u;
-              // revoke local preview blob url
-              const localUrl = tempUrlById.get(u.id);
-              if (localUrl) URL.revokeObjectURL(localUrl);
-              const kind = (m.kind === 'image' || m.kind === 'video' || m.kind === 'other') ? m.kind : u.kind;
-              return { id: m.id, url: m.url, filename: m.id, kind, uploading: false, error: null };
-            }),
-          );
-          setSelectedUploadIds((prev) => {
-            if (prev.size === 0) return prev;
-            const next = new Set<string>();
-            for (const id of prev) next.add(mapping.get(id)?.id ?? id);
-            return next;
-          });
-          setDraftMediaIds((prev) => prev.map((id) => mapping.get(id)?.id ?? id));
-          setDragUploadId((prev) => (prev ? mapping.get(prev)?.id ?? prev : prev));
-          setDragOverUploadId((prev) => (prev ? mapping.get(prev)?.id ?? prev : prev));
+    const uploadOneWithProgress = (tempId: string, file: File): Promise<{ id: string; url: string; kind: UploadPreview['kind']; filename: string }> => {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/local-library/uploads', true);
+        xhr.withCredentials = true;
+
+        xhr.upload.onprogress = (evt) => {
+          if (!evt.lengthComputable) return;
+          const pct = Math.max(0, Math.min(100, Math.round((evt.loaded / evt.total) * 100)));
+          setUploads((prev) => prev.map((u) => (u.id === tempId ? { ...u, progress: pct } : u)));
+        };
+
+        xhr.onerror = () => reject(new Error('upload_failed'));
+        xhr.onabort = () => reject(new Error('upload_aborted'));
+        xhr.onload = () => {
+          if (xhr.status < 200 || xhr.status >= 300) {
+            reject(new Error(`upload_failed_${xhr.status}`));
+            return;
+          }
+          let parsed: unknown = null;
+          try { parsed = JSON.parse(xhr.responseText || 'null'); } catch { parsed = null; }
+          const obj = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+          const itemsAny = obj?.items;
+          const first = Array.isArray(itemsAny) && itemsAny.length > 0 ? itemsAny[0] : null;
+          const it = first && typeof first === 'object' ? (first as Record<string, unknown>) : null;
+          const id = typeof it?.id === 'string' ? (it!.id as string) : (typeof it?.filename === 'string' ? (it!.filename as string) : '');
+          const url = typeof it?.url === 'string' ? (it!.url as string) : '';
+          const kindRaw = typeof it?.kind === 'string' ? (it!.kind as string) : '';
+          const kind: UploadPreview['kind'] = kindRaw === 'image' || kindRaw === 'video' || kindRaw === 'other' ? (kindRaw as any) : 'other';
+          if (!id || !url) {
+            reject(new Error('upload_failed_bad_response'));
+            return;
+          }
+          resolve({ id, url, kind, filename: ensureFileName(id, file.name) });
+        };
+
+        const form = new FormData();
+        form.append('files', file, file.name);
+        xhr.send(form);
+      });
+    };
+
+    const applyMapping = (tempId: string, real: { id: string; url: string; kind: UploadPreview['kind']; filename: string }) => {
+      setUploads((prev) =>
+        prev.map((u) => {
+          if (u.id !== tempId) return u;
+          const localUrl = tempUrlById.get(tempId);
+          if (localUrl) URL.revokeObjectURL(localUrl);
+          return {
+            id: real.id,
+            url: real.url,
+            filename: real.filename,
+            kind: real.kind || u.kind,
+            uploading: false,
+            progress: 100,
+            error: null,
+          };
+        }),
+      );
+      setSelectedUploadIds((prev) => {
+        if (!prev.has(tempId)) return prev;
+        const next = new Set(prev);
+        next.delete(tempId);
+        next.add(real.id);
+        return next;
+      });
+      setDraftMediaIds((prev) => prev.map((id) => (id === tempId ? real.id : id)));
+      setDragUploadId((prev) => (prev === tempId ? real.id : prev));
+      setDragOverUploadId((prev) => (prev === tempId ? real.id : prev));
+    };
+
+    const markFailed = (tempId: string, message: string) => {
+      setUploads((prev) =>
+        prev.map((u) => (u.id === tempId ? { ...u, uploading: false, error: message || 'upload_failed' } : u)),
+      );
+    };
+
+    // Upload each file (per-file progress). Limit concurrency to keep UI responsive.
+    const concurrency = 3;
+    // Build a stable list of the temp ids we just created (in the same order as `arr`).
+    const createdTempIds = Array.from(tempUrlById.keys());
+
+    void (async () => {
+      let i = 0;
+      const runOne = async (tempId: string, file: File) => {
+        try {
+          const real = await uploadOneWithProgress(tempId, file);
+          applyMapping(tempId, real);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          markFailed(tempId, msg);
         }
-      } catch {
-        setUploads((prev) =>
-          prev.map((u) => (tempIds.includes(u.id) ? { ...u, uploading: false, error: 'upload_failed' } : u)),
-        );
-      }
+      };
+
+      const workers = Array.from({ length: Math.min(concurrency, createdTempIds.length) }).map(async () => {
+        while (i < createdTempIds.length) {
+          const my = i++;
+          const tempId = createdTempIds[my];
+          const file = arr[my];
+          if (!tempId || !file) continue;
+          await runOne(tempId, file);
+        }
+      });
+      await Promise.all(workers);
     })();
   };
 
@@ -662,9 +727,11 @@ export const Library: React.FC = () => {
                         'card p-0 overflow-hidden',
                         dragOverUploadId === u.id && dragUploadId && dragUploadId !== u.id ? 'ring-2 ring-primary-500' : '',
                         dragUploadId === u.id ? 'opacity-60' : '',
+                        selectedUploadIds.has(u.id) ? 'ring-2 ring-primary-500' : '',
                       ].join(' ')}
-                      draggable
+                      draggable={!u.uploading && !u.error}
                       onDragStart={(e) => {
+                        if (u.uploading || u.error) return;
                         const ids =
                           selectedUploadIds.size > 0 && selectedUploadIds.has(u.id)
                             ? Array.from(selectedUploadIds)
@@ -739,6 +806,26 @@ export const Library: React.FC = () => {
                         >
                           ×
                         </button>
+
+                        {u.uploading && (
+                          <div className="absolute inset-x-2 bottom-10">
+                            <div className="h-2 rounded-full bg-black/30 overflow-hidden">
+                              <div
+                                className="h-full bg-primary-500"
+                                style={{ width: `${Math.max(0, Math.min(100, u.progress ?? 0))}%` }}
+                              />
+                            </div>
+                            <div className="mt-1 text-[11px] text-white/90 drop-shadow">
+                              Uploading… {Math.max(0, Math.min(100, u.progress ?? 0))}%
+                            </div>
+                          </div>
+                        )}
+                        {!u.uploading && u.error && (
+                          <div className="absolute inset-x-2 bottom-10 rounded-md bg-red-600/80 text-white text-[11px] px-2 py-1">
+                            Upload failed
+                          </div>
+                        )}
+
                         <div className="absolute bottom-2 left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate">
                           {u.filename}
                         </div>
