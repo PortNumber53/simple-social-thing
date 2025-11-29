@@ -80,29 +80,26 @@ export const Library: React.FC = () => {
     const arr = Array.from(files);
     if (arr.length === 0) return;
     const tempUrlById = new Map<string, string>();
-
-    setUploads((prev) => {
-      const next = [...prev];
-      for (const f of arr) {
-        const type = (f.type || '').toLowerCase();
-        const kind: UploadPreview['kind'] =
-          type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : 'other';
-        const tempId = `temp_${crypto.randomUUID()}`;
-        const localUrl = URL.createObjectURL(f);
-        tempUrlById.set(tempId, localUrl);
-        next.push({
-          id: tempId,
-          file: f,
-          url: localUrl,
-          filename: f.name,
-          kind,
-          uploading: true,
-          progress: 0,
-          error: null,
-        });
-      }
-      return next;
+    const temps = arr.map((f) => {
+      const type = (f.type || '').toLowerCase();
+      const kind: UploadPreview['kind'] =
+        type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : 'other';
+      const tempId = `temp_${crypto.randomUUID()}`;
+      const localUrl = URL.createObjectURL(f);
+      tempUrlById.set(tempId, localUrl);
+      return {
+        id: tempId,
+        file: f,
+        url: localUrl,
+        filename: f.name,
+        kind,
+        uploading: true,
+        progress: 0,
+        error: null,
+      } as UploadPreview;
     });
+
+    setUploads((prev) => [...temps, ...prev]);
 
     const ensureFileName = (id: string, fallback: string) => {
       const fn = (fallback || '').trim();
@@ -115,9 +112,16 @@ export const Library: React.FC = () => {
         xhr.open('POST', '/api/local-library/uploads', true);
         xhr.withCredentials = true;
 
+        xhr.upload.onloadstart = () => {
+          setUploads((prev) => prev.map((u) => (u.id === tempId ? { ...u, progress: 1 } : u)));
+        };
         xhr.upload.onprogress = (evt) => {
-          if (!evt.lengthComputable) return;
-          const pct = Math.max(0, Math.min(100, Math.round((evt.loaded / evt.total) * 100)));
+          // Some environments report lengthComputable=false for uploads; fall back to file size.
+          const total = evt.lengthComputable && evt.total > 0 ? evt.total : (file.size || 0);
+          const pct =
+            total > 0
+              ? Math.max(0, Math.min(100, Math.round((evt.loaded / total) * 100)))
+              : 1;
           setUploads((prev) => prev.map((u) => (u.id === tempId ? { ...u, progress: pct } : u)));
         };
 
@@ -188,8 +192,7 @@ export const Library: React.FC = () => {
 
     // Upload each file (per-file progress). Limit concurrency to keep UI responsive.
     const concurrency = 3;
-    // Build a stable list of the temp ids we just created (in the same order as `arr`).
-    const createdTempIds = Array.from(tempUrlById.keys());
+    const createdTempIds = temps.map((t) => t.id);
 
     void (async () => {
       let i = 0;
