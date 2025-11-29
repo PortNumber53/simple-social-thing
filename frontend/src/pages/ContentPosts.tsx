@@ -53,6 +53,14 @@ export const ContentPosts: React.FC = () => {
   const didInit = useRef(false);
   const facebookProviderRef = useRef<HTMLInputElement | null>(null);
 
+  // Allow linking into the publisher with a pre-filled caption (used by the new local Library page).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const c = params.get('caption');
+    if (c && caption.trim() === '') setCaption(c);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const postableFacebookPages = useMemo(() => facebookPages.filter((p) => p.canPost), [facebookPages]);
   const postableFacebookPageIds = useMemo(() => postableFacebookPages.map((p) => p.id), [postableFacebookPages]);
 

@@ -8,6 +8,7 @@ import { ContentMusic } from './pages/ContentMusic';
 import { ContentPosts } from './pages/ContentPosts';
 import { ContentVideos } from './pages/ContentVideos';
 import { Library } from './pages/Library';
+import { ContentPublished } from './pages/ContentPublished';
 import { PrivacyPolicy } from './pages/PrivacyPolicy';
 import { TermsOfService } from './pages/TermsOfService';
 import { UserDataDeletion } from './pages/UserDataDeletion';
@@ -47,6 +48,14 @@ function App() {
           element={
             <ProtectedRoute fallback={<Navigate to="/" replace />}>
               <ContentVideos />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/content/published"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+              <ContentPublished />
             </ProtectedRoute>
           }
         />
