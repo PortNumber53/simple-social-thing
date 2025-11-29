@@ -104,6 +104,11 @@ func main() {
 	r.HandleFunc("/api/posts/{postId}/user/{userId}", h.UpdatePostForUser).Methods("PUT")
 	r.HandleFunc("/api/posts/{postId}/user/{userId}", h.DeletePostForUser).Methods("DELETE")
 
+	// Local uploads for drafts/publishing (stored under /media/uploads/<userId>/)
+	r.HandleFunc("/api/uploads/user/{userId}", h.ListUploadsForUser).Methods("GET")
+	r.HandleFunc("/api/uploads/user/{userId}", h.UploadUploadsForUser).Methods("POST")
+	r.HandleFunc("/api/uploads/delete/user/{userId}", h.DeleteUploadsForUser).Methods("POST")
+
 	// Team endpoints
 	r.HandleFunc("/api/teams", h.CreateTeam).Methods("POST")
 	r.HandleFunc("/api/teams/{id}", h.GetTeam).Methods("GET")

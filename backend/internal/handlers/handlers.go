@@ -341,6 +341,34 @@ type createOrUpdatePostRequest struct {
 	PublishedAt  *time.Time `json:"publishedAt,omitempty"`
 }
 
+type uploadItem struct {
+	ID          string `json:"id"`
+	Filename    string `json:"filename"`
+	URL         string `json:"url"`
+	ContentType string `json:"contentType,omitempty"`
+	Size        int    `json:"size,omitempty"`
+	Kind        string `json:"kind,omitempty"` // image | video | other
+}
+
+type uploadsListResponse struct {
+	OK    bool         `json:"ok"`
+	Items []uploadItem `json:"items"`
+}
+
+type uploadsUploadResponse struct {
+	OK    bool         `json:"ok"`
+	Items []uploadItem `json:"items"`
+}
+
+type deleteUploadsRequest struct {
+	IDs []string `json:"ids"`
+}
+
+type deleteUploadsResponse struct {
+	OK      bool  `json:"ok"`
+	Deleted int64 `json:"deleted"`
+}
+
 func (h *Handler) ListSunoTracksForUser(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := vars["userId"]
@@ -908,6 +936,260 @@ func (h *Handler) DeletePostForUser(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func uploadKind(contentType string, filename string) string {
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	if strings.HasPrefix(ct, "image/") {
+		return "image"
+	}
+	if strings.HasPrefix(ct, "video/") {
+		return "video"
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext != "" {
+		if byExt := mime.TypeByExtension(ext); byExt != "" {
+			byExt = strings.ToLower(byExt)
+			if strings.HasPrefix(byExt, "image/") {
+				return "image"
+			}
+			if strings.HasPrefix(byExt, "video/") {
+				return "video"
+			}
+		}
+	}
+	return "other"
+}
+
+// ListUploadsForUser lists files under media/uploads/<userId>/ for use as local draft media.
+func (h *Handler) ListUploadsForUser(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := strings.TrimSpace(vars["userId"])
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	dir := filepath.Join("media", "uploads", userID)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// If directory doesn't exist yet, return empty list.
+		if os.IsNotExist(err) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(uploadsListResponse{OK: true, Items: []uploadItem{}})
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	items := make([]uploadItem, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		fn := e.Name()
+		if fn == "" {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(fn))
+		ct := ""
+		if ext != "" {
+			ct = mime.TypeByExtension(ext)
+		}
+		kind := uploadKind(ct, fn)
+		size := 0
+		if info, err := e.Info(); err == nil {
+			if info.Size() > 0 && info.Size() < 1<<31 {
+				size = int(info.Size())
+			}
+		}
+		items = append(items, uploadItem{
+			ID:          fn,
+			Filename:    fn,
+			URL:         fmt.Sprintf("/media/uploads/%s/%s", userID, fn),
+			ContentType: ct,
+			Size:        size,
+			Kind:        kind,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(uploadsListResponse{OK: true, Items: items})
+}
+
+// UploadUploadsForUser accepts multipart files and stores them under media/uploads/<userId>/.
+// Field name supported: files (preferred) or media (fallback).
+func (h *Handler) UploadUploadsForUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	vars := mux.Vars(r)
+	userID := strings.TrimSpace(vars["userId"])
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	ct := r.Header.Get("Content-Type")
+	if !strings.Contains(ct, "multipart/form-data") {
+		http.Error(w, "expected multipart/form-data", http.StatusBadRequest)
+		return
+	}
+
+	// 50MB total parsing limit.
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if r.MultipartForm == nil || r.MultipartForm.File == nil {
+		http.Error(w, "missing files", http.StatusBadRequest)
+		return
+	}
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 {
+		files = r.MultipartForm.File["media"]
+	}
+	if len(files) == 0 {
+		http.Error(w, "missing files", http.StatusBadRequest)
+		return
+	}
+	if len(files) > 30 {
+		http.Error(w, "too many files (max 30)", http.StatusBadRequest)
+		return
+	}
+
+	media := make([]uploadedMedia, 0, len(files))
+	orig := make([]map[string]any, 0, len(files))
+	const maxPerFile = 25 << 20 // 25MB per file
+	for _, fh := range files {
+		if fh == nil {
+			continue
+		}
+		f, err := fh.Open()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		b, err := io.ReadAll(io.LimitReader(f, maxPerFile+1))
+		_ = f.Close()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(b) > maxPerFile {
+			http.Error(w, "file too large (max 25MB per file)", http.StatusBadRequest)
+			return
+		}
+		contentType := strings.TrimSpace(fh.Header.Get("Content-Type"))
+		if contentType == "" {
+			contentType = http.DetectContentType(b)
+		}
+		media = append(media, uploadedMedia{Filename: fh.Filename, ContentType: contentType, Bytes: b})
+		orig = append(orig, map[string]any{"name": fh.Filename, "contentType": contentType, "size": len(b)})
+	}
+
+	rel, _, err := saveUploadedMedia(userID, media)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	items := make([]uploadItem, 0, len(rel))
+	for i, p := range rel {
+		fn := filepath.Base(p)
+		info := orig[min(i, len(orig)-1)]
+		ctype, _ := info["contentType"].(string)
+		szAny := info["size"]
+		sz := 0
+		if n, ok := szAny.(int); ok {
+			sz = n
+		}
+		items = append(items, uploadItem{
+			ID:          fn,
+			Filename:    fn,
+			URL:         p,
+			ContentType: ctype,
+			Size:        sz,
+			Kind:        uploadKind(ctype, fn),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(uploadsUploadResponse{OK: true, Items: items})
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// DeleteUploadsForUser deletes uploaded files by id (filename) under media/uploads/<userId>/.
+func (h *Handler) DeleteUploadsForUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	vars := mux.Vars(r)
+	userID := strings.TrimSpace(vars["userId"])
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+
+	var req deleteUploadsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json body", http.StatusBadRequest)
+		return
+	}
+
+	seen := map[string]bool{}
+	ids := make([]string, 0, len(req.IDs))
+	for _, id := range req.IDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		// Disallow any path separators / traversal.
+		if id != filepath.Base(id) || strings.Contains(id, "..") || strings.Contains(id, "/") || strings.Contains(id, "\\") {
+			continue
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		http.Error(w, "ids is required", http.StatusBadRequest)
+		return
+	}
+	if len(ids) > 200 {
+		http.Error(w, "too many ids (max 200)", http.StatusBadRequest)
+		return
+	}
+
+	dir := filepath.Join("media", "uploads", userID)
+	var deleted int64 = 0
+	for _, id := range ids {
+		path := filepath.Join(dir, id)
+		// Only delete if within dir.
+		clean := filepath.Clean(path)
+		if !strings.HasPrefix(clean, filepath.Clean(dir)+string(filepath.Separator)) {
+			continue
+		}
+		if err := os.Remove(clean); err == nil {
+			deleted++
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(deleteUploadsResponse{OK: true, Deleted: deleted})
 }
 
 type publishPostRequest struct {

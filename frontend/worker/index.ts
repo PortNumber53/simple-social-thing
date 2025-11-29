@@ -301,6 +301,11 @@ export default {
       return handleOAuthCallback(request, env);
     }
 
+    // Proxy public media from backend (uploaded assets under /media/)
+    if (url.pathname.startsWith("/media/")) {
+      return handleMediaProxy(request, env);
+    }
+
     // Handle other API routes
     if (url.pathname.startsWith("/api/")) {
       // Facebook Webhook callback (Meta Webhooks product)
@@ -617,6 +622,12 @@ export default {
       }
       if (url.pathname.startsWith("/api/local-library/items/")) {
         return handleLocalLibraryItem(request, env);
+      }
+      if (url.pathname === "/api/local-library/uploads") {
+        return handleLocalLibraryUploads(request, env);
+      }
+      if (url.pathname === "/api/local-library/uploads/delete") {
+        return handleLocalLibraryUploadsDelete(request, env);
       }
 
       // Publishing: caption-only post fan-out (backend does per-provider posting)
@@ -1537,6 +1548,113 @@ async function handleLocalLibraryItem(request: Request, env: Env): Promise<Respo
     const message = err instanceof Error ? err.message : String(err);
     console.error('[LocalLibraryItem] backend unreachable', { backendOrigin, message });
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
+}
+
+async function handleLocalLibraryUploads(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const headers = buildCorsHeaders(request);
+
+  if (request.method === 'OPTIONS') {
+    headers.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+    return new Response(null, { status: 204, headers });
+  }
+  if (request.method !== 'GET' && request.method !== 'POST') return new Response(null, { status: 405, headers });
+
+  const sid = await ensureSid(request, env, headers);
+  if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+  try {
+    if (request.method === 'GET') {
+      const res = await fetch(`${backendOrigin}/api/uploads/user/${encodeURIComponent(sid)}`, {
+        headers: { 'Accept': 'application/json' },
+      });
+      const text = await res.text().catch(() => '');
+      if (!res.ok) {
+        console.error('[LocalLibraryUploads] backend non-2xx (list)', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+        return new Response(JSON.stringify({ ok: false, error: 'list_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+      }
+      headers.set('Content-Type', 'application/json');
+      return new Response(text || '{"ok":true,"items":[]}', { status: 200, headers });
+    }
+
+    // POST: upload multipart/form-data. Forward body and keep content-type boundary.
+    const contentType = request.headers.get('Content-Type') || request.headers.get('content-type') || '';
+    const res = await fetch(`${backendOrigin}/api/uploads/user/${encodeURIComponent(sid)}`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        ...(contentType ? { 'Content-Type': contentType } : {}),
+      },
+      body: request.body,
+    });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      console.error('[LocalLibraryUploads] backend non-2xx (upload)', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+      return new Response(JSON.stringify({ ok: false, error: 'upload_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+    }
+    headers.set('Content-Type', 'application/json');
+    return new Response(text || '{"ok":true,"items":[]}', { status: 200, headers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[LocalLibraryUploads] backend unreachable', { backendOrigin, message });
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
+}
+
+async function handleLocalLibraryUploadsDelete(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const headers = buildCorsHeaders(request);
+
+  if (request.method === 'OPTIONS') {
+    headers.set('Access-Control-Allow-Methods', 'POST,OPTIONS');
+    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
+    return new Response(null, { status: 204, headers });
+  }
+  if (request.method !== 'POST') return new Response(null, { status: 405, headers });
+
+  const sid = await ensureSid(request, env, headers);
+  if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+  try {
+    const res = await fetch(`${backendOrigin}/api/uploads/delete/user/${encodeURIComponent(sid)}`, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      body: await request.text().catch(() => '{}'),
+    });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      console.error('[LocalLibraryUploadsDelete] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+      return new Response(JSON.stringify({ ok: false, error: 'delete_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+    }
+    headers.set('Content-Type', 'application/json');
+    return new Response(text || '{"ok":true}', { status: 200, headers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[LocalLibraryUploadsDelete] backend unreachable', { backendOrigin, message });
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
+}
+
+async function handleMediaProxy(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const url = new URL(request.url);
+  const target = `${backendOrigin}${url.pathname}${url.search || ''}`;
+  try {
+    const res = await fetch(target, {
+      method: request.method,
+      headers: request.headers,
+    });
+    // Pass-through response (including range requests for video).
+    return new Response(res.body, {
+      status: res.status,
+      headers: res.headers,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[MediaProxy] backend unreachable', { backendOrigin, message });
+    return new Response('media_unreachable', { status: 502 });
   }
 }
 
