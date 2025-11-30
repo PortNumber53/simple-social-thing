@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Layout } from '../components/Layout';
 import { StatusBar } from '../components/StatusBar';
+import { AlertBanner } from '../components/AlertBanner';
 
 export const Settings: React.FC = () => {
   const [emailNotifications, setEmailNotifications] = useState(true);
@@ -17,7 +18,7 @@ export const Settings: React.FC = () => {
     try {
       // TODO: Implement API call to save settings
       await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-      
+
       setMessage({ type: 'success', text: 'Settings saved successfully!' });
     } catch {
       setMessage({ type: 'error', text: 'Failed to save settings. Please try again.' });
@@ -35,24 +36,14 @@ export const Settings: React.FC = () => {
         </div>
 
         {message && (
-          <div className={`mb-6 p-4 rounded-lg animate-slide-down ${
-            message.type === 'success'
-              ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-200'
-              : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
-          }`}>
-            <div className="flex items-center gap-2">
-              {message.type === 'success' ? (
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              ) : (
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              )}
-              <span>{message.text}</span>
-            </div>
-          </div>
+          <AlertBanner
+            variant={message.type === 'success' ? 'success' : 'error'}
+            className="mb-6 animate-slide-down"
+            dismissible
+            onDismiss={() => setMessage(null)}
+          >
+            {message.text}
+          </AlertBanner>
         )}
 
         <div className="space-y-6">

@@ -43,13 +43,13 @@ func New(db *sql.DB) *Handler {
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var user models.User
-	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := decodeJSON(r, &user); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -67,42 +67,38 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	err := h.db.QueryRow(query, user.ID, user.Email, user.Name, user.ImageURL).
 		Scan(&user.ID, &user.Email, &user.Name, &user.ImageURL, &user.CreatedAt)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(user)
+	writeJSON(w, http.StatusOK, user)
 }
 
 func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id := vars["id"]
+	id := pathVar(r, "id")
 
 	var user models.User
 	query := `SELECT id, email, name, "imageUrl", "createdAt" FROM public."Users" WHERE id = $1`
 
 	err := h.db.QueryRow(query, id).Scan(&user.ID, &user.Email, &user.Name, &user.ImageURL, &user.CreatedAt)
 	if err == sql.ErrNoRows {
-		http.Error(w, "User not found", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "User not found")
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(user)
+	writeJSON(w, http.StatusOK, user)
 }
 
 func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id := vars["id"]
+	id := pathVar(r, "id")
 
 	var user models.User
-	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := decodeJSON(r, &user); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -116,16 +112,15 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	err := h.db.QueryRow(query, id, user.Email, user.Name, user.ImageURL).
 		Scan(&user.ID, &user.Email, &user.Name, &user.ImageURL, &user.CreatedAt)
 	if err == sql.ErrNoRows {
-		http.Error(w, "User not found", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "User not found")
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(user)
+	writeJSON(w, http.StatusOK, user)
 }
 
 func (h *Handler) CreateSocialConnection(w http.ResponseWriter, r *http.Request) {
@@ -152,8 +147,7 @@ func (h *Handler) CreateSocialConnection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(conn)
+	writeJSON(w, http.StatusOK, conn)
 }
 
 func (h *Handler) GetUserSocialConnections(w http.ResponseWriter, r *http.Request) {
@@ -179,14 +173,13 @@ func (h *Handler) GetUserSocialConnections(w http.ResponseWriter, r *http.Reques
 		connections = append(connections, conn)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(connections)
+	writeJSON(w, http.StatusOK, connections)
 }
 
 func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	var team models.Team
-	if err := json.NewDecoder(r.Body).Decode(&team); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := decodeJSON(r, &team); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -203,8 +196,7 @@ func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(team)
+	writeJSON(w, http.StatusOK, team)
 }
 
 func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
@@ -224,8 +216,7 @@ func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(team)
+	writeJSON(w, http.StatusOK, team)
 }
 
 func (h *Handler) GetUserTeams(w http.ResponseWriter, r *http.Request) {
@@ -256,8 +247,7 @@ func (h *Handler) GetUserTeams(w http.ResponseWriter, r *http.Request) {
 		teams = append(teams, team)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(teams)
+	writeJSON(w, http.StatusOK, teams)
 }
 
 type sunoStoreRequest struct {
@@ -415,8 +405,7 @@ func (h *Handler) ListSunoTracksForUser(w http.ResponseWriter, r *http.Request) 
 		out = append(out, row)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) ListSocialLibrariesForUser(w http.ResponseWriter, r *http.Request) {
@@ -585,28 +574,25 @@ func (h *Handler) ListSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 		out = append(out, row)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	writeJSON(w, http.StatusOK, out)
 }
 
 // DeleteSocialLibrariesForUser deletes cached SocialLibraries rows by id for a given user.
 // This is meant for user-initiated cleanup from the Library page.
 func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
-	vars := mux.Vars(r)
-	userID := vars["userId"]
+	userID := pathVar(r, "userId")
 	if userID == "" {
-		http.Error(w, "userId is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "userId is required")
 		return
 	}
 
 	var req deleteSocialLibrariesRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json body", http.StatusBadRequest)
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 
@@ -624,35 +610,32 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 		ids = append(ids, id)
 	}
 	if len(ids) == 0 {
-		http.Error(w, "ids is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "ids is required")
 		return
 	}
 	if len(ids) > 200 {
-		http.Error(w, "too many ids (max 200)", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "too many ids (max 200)")
 		return
 	}
 
 	res, err := h.db.Exec(`DELETE FROM public."SocialLibraries" WHERE user_id = $1 AND id = ANY($2)`, userID, pq.Array(ids))
 	if err != nil {
 		log.Printf("[Library][Delete] exec error userId=%s err=%v", userID, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	n, _ := res.RowsAffected()
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(deleteSocialLibrariesResponse{OK: true, Deleted: n})
+	writeJSON(w, http.StatusOK, deleteSocialLibrariesResponse{OK: true, Deleted: n})
 }
 
 func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	vars := mux.Vars(r)
-	userID := vars["userId"]
+	userID := pathVar(r, "userId")
 	if userID == "" {
-		http.Error(w, "userId is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "userId is required")
 		return
 	}
 
@@ -722,8 +705,7 @@ func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 
 	resp.DurationMs = time.Since(start).Milliseconds()
 	log.Printf("[LibrarySync] done userId=%s dur=%dms", userID, resp.DurationMs)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ListPostsForUser returns local posts (draft/scheduled/published) for a given user.
@@ -779,27 +761,24 @@ func (h *Handler) ListPostsForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(posts)
+	writeJSON(w, http.StatusOK, posts)
 }
 
 // CreatePostForUser creates a local post for a user (draft/scheduled metadata only).
 func (h *Handler) CreatePostForUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
-	vars := mux.Vars(r)
-	userID := strings.TrimSpace(vars["userId"])
+	userID := strings.TrimSpace(pathVar(r, "userId"))
 	if userID == "" {
-		http.Error(w, "userId is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "userId is required")
 		return
 	}
 
 	var req createOrUpdatePostRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json body", http.StatusBadRequest)
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 
@@ -819,11 +798,11 @@ func (h *Handler) CreatePostForUser(w http.ResponseWriter, r *http.Request) {
 		status = "draft"
 	}
 	if status != "draft" && status != "scheduled" && status != "published" {
-		http.Error(w, "invalid status", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid status")
 		return
 	}
 	if status == "scheduled" && req.ScheduledFor == nil {
-		http.Error(w, "scheduledFor is required when status=scheduled", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "scheduledFor is required when status=scheduled")
 		return
 	}
 
@@ -836,47 +815,44 @@ func (h *Handler) CreatePostForUser(w http.ResponseWriter, r *http.Request) {
 	err := h.db.QueryRow(query, id, userID, req.Content, status, req.ScheduledFor, req.PublishedAt).
 		Scan(&out.ID, &out.TeamID, &out.UserID, &out.Content, &out.Status, &out.ScheduledFor, &out.PublishedAt, &out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	writeJSON(w, http.StatusOK, out)
 }
 
 // UpdatePostForUser updates a local post for a given user.
 func (h *Handler) UpdatePostForUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPut) {
 		return
 	}
 
-	vars := mux.Vars(r)
-	userID := strings.TrimSpace(vars["userId"])
-	postID := strings.TrimSpace(vars["postId"])
+	userID := strings.TrimSpace(pathVar(r, "userId"))
+	postID := strings.TrimSpace(pathVar(r, "postId"))
 	if userID == "" || postID == "" {
-		http.Error(w, "userId and postId are required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "userId and postId are required")
 		return
 	}
 
 	var req createOrUpdatePostRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json body", http.StatusBadRequest)
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 
 	if req.Status != nil {
 		s := strings.TrimSpace(*req.Status)
 		if s == "" {
-			http.Error(w, "invalid status", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "invalid status")
 			return
 		}
 		if s != "draft" && s != "scheduled" && s != "published" {
-			http.Error(w, "invalid status", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "invalid status")
 			return
 		}
 		if s == "scheduled" && req.ScheduledFor == nil {
-			http.Error(w, "scheduledFor is required when status=scheduled", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "scheduledFor is required when status=scheduled")
 			return
 		}
 	}
@@ -897,45 +873,41 @@ func (h *Handler) UpdatePostForUser(w http.ResponseWriter, r *http.Request) {
 		Scan(&out.ID, &out.TeamID, &out.UserID, &out.Content, &out.Status, &out.ScheduledFor, &out.PublishedAt, &out.CreatedAt, &out.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	writeJSON(w, http.StatusOK, out)
 }
 
 // DeletePostForUser deletes a local post for a given user.
 func (h *Handler) DeletePostForUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodDelete) {
 		return
 	}
 
-	vars := mux.Vars(r)
-	userID := strings.TrimSpace(vars["userId"])
-	postID := strings.TrimSpace(vars["postId"])
+	userID := strings.TrimSpace(pathVar(r, "userId"))
+	postID := strings.TrimSpace(pathVar(r, "postId"))
 	if userID == "" || postID == "" {
-		http.Error(w, "userId and postId are required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "userId and postId are required")
 		return
 	}
 
 	res, err := h.db.Exec(`DELETE FROM public."Posts" WHERE id = $1 AND "userId" = $2`, postID, userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		http.Error(w, "not found", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func uploadKind(contentType string, filename string) string {
@@ -975,8 +947,7 @@ func (h *Handler) ListUploadsForUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// If directory doesn't exist yet, return empty list.
 		if os.IsNotExist(err) {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(uploadsListResponse{OK: true, Items: []uploadItem{}})
+			writeJSON(w, http.StatusOK, uploadsListResponse{OK: true, Items: []uploadItem{}})
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1014,38 +985,35 @@ func (h *Handler) ListUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(uploadsListResponse{OK: true, Items: items})
+	writeJSON(w, http.StatusOK, uploadsListResponse{OK: true, Items: items})
 }
 
 // UploadUploadsForUser accepts multipart files and stores them under media/uploads/<userId>/.
 // Field name supported: files (preferred) or media (fallback).
 func (h *Handler) UploadUploadsForUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
-	vars := mux.Vars(r)
-	userID := strings.TrimSpace(vars["userId"])
+	userID := strings.TrimSpace(pathVar(r, "userId"))
 	if userID == "" {
-		http.Error(w, "userId is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "userId is required")
 		return
 	}
 
 	ct := r.Header.Get("Content-Type")
 	if !strings.Contains(ct, "multipart/form-data") {
-		http.Error(w, "expected multipart/form-data", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "expected multipart/form-data")
 		return
 	}
 
 	// 50MB total parsing limit.
 	if err := r.ParseMultipartForm(50 << 20); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if r.MultipartForm == nil || r.MultipartForm.File == nil {
-		http.Error(w, "missing files", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "missing files")
 		return
 	}
 	files := r.MultipartForm.File["files"]
@@ -1053,11 +1021,11 @@ func (h *Handler) UploadUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		files = r.MultipartForm.File["media"]
 	}
 	if len(files) == 0 {
-		http.Error(w, "missing files", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "missing files")
 		return
 	}
 	if len(files) > 30 {
-		http.Error(w, "too many files (max 30)", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "too many files (max 30)")
 		return
 	}
 
@@ -1070,17 +1038,17 @@ func (h *Handler) UploadUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		}
 		f, err := fh.Open()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		b, err := io.ReadAll(io.LimitReader(f, maxPerFile+1))
 		_ = f.Close()
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		if len(b) > maxPerFile {
-			http.Error(w, "file too large (max 25MB per file)", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "file too large (max 25MB per file)")
 			return
 		}
 		contentType := strings.TrimSpace(fh.Header.Get("Content-Type"))
@@ -1117,8 +1085,7 @@ func (h *Handler) UploadUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(uploadsUploadResponse{OK: true, Items: items})
+	writeJSON(w, http.StatusOK, uploadsUploadResponse{OK: true, Items: items})
 }
 
 func min(a, b int) int {
@@ -1130,21 +1097,19 @@ func min(a, b int) int {
 
 // DeleteUploadsForUser deletes uploaded files by id (filename) under media/uploads/<userId>/.
 func (h *Handler) DeleteUploadsForUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
-	vars := mux.Vars(r)
-	userID := strings.TrimSpace(vars["userId"])
+	userID := strings.TrimSpace(pathVar(r, "userId"))
 	if userID == "" {
-		http.Error(w, "userId is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "userId is required")
 		return
 	}
 
 	var req deleteUploadsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json body", http.StatusBadRequest)
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 
@@ -1166,11 +1131,11 @@ func (h *Handler) DeleteUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		ids = append(ids, id)
 	}
 	if len(ids) == 0 {
-		http.Error(w, "ids is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "ids is required")
 		return
 	}
 	if len(ids) > 200 {
-		http.Error(w, "too many ids (max 200)", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "too many ids (max 200)")
 		return
 	}
 
@@ -1188,8 +1153,7 @@ func (h *Handler) DeleteUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(deleteUploadsResponse{OK: true, Deleted: deleted})
+	writeJSON(w, http.StatusOK, deleteUploadsResponse{OK: true, Deleted: deleted})
 }
 
 type publishPostRequest struct {
@@ -1225,25 +1189,23 @@ type publishJob struct {
 // PublishSocialPostForUser publishes a caption-only post to one or more connected networks.
 // For now, only Facebook Page posts are implemented; other providers return not_supported.
 func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	vars := mux.Vars(r)
-	userID := vars["userId"]
+	userID := pathVar(r, "userId")
 	if userID == "" {
-		http.Error(w, "userId is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "userId is required")
 		return
 	}
 
 	req, mediaFiles, err := parsePublishPostRequest(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	caption := strings.TrimSpace(req.Caption)
 	if caption == "" {
-		http.Error(w, "caption is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "caption is required")
 		return
 	}
 	// Ensure caption is valid UTF-8 (Postgres + downstream APIs).
@@ -1312,32 +1274,29 @@ func (h *Handler) PublishSocialPostForUser(w http.ResponseWriter, r *http.Reques
 		"durationMs": time.Since(start).Milliseconds(),
 		"results":    results,
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // EnqueuePublishJobForUser enqueues a publishing job and returns immediately.
 // The background job will execute the publishing fan-out and persist results back to Postgres.
 func (h *Handler) EnqueuePublishJobForUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	vars := mux.Vars(r)
-	userID := vars["userId"]
+	userID := pathVar(r, "userId")
 	if userID == "" {
-		http.Error(w, "userId is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "userId is required")
 		return
 	}
 
 	reqObj, mediaFiles, err := parsePublishPostRequest(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	caption := strings.TrimSpace(reqObj.Caption)
 	if caption == "" {
-		http.Error(w, "caption is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "caption is required")
 		return
 	}
 	caption = strings.ReplaceAll(caption, "\x00", "")
@@ -1348,7 +1307,7 @@ func (h *Handler) EnqueuePublishJobForUser(w http.ResponseWriter, r *http.Reques
 	// Store uploaded media immediately so the background job can reference it.
 	relMedia, saveDetails, err := saveUploadedMedia(userID, mediaFiles)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -1374,7 +1333,7 @@ func (h *Handler) EnqueuePublishJobForUser(w http.ResponseWriter, r *http.Reques
 		  ($1, $2, 'queued', $3, $4, $5::jsonb, $6, $6)
 	`, jobID, userID, pq.Array(reqObj.Providers), caption, string(reqJSON), now)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -1387,19 +1346,17 @@ func (h *Handler) EnqueuePublishJobForUser(w http.ResponseWriter, r *http.Reques
 		"status": "queued",
 		"saved":  saveDetails["saved"],
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // GetPublishJob returns the current job status + result (if finished).
 func (h *Handler) GetPublishJob(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
-	jobID := mux.Vars(r)["jobId"]
+	jobID := pathVar(r, "jobId")
 	if strings.TrimSpace(jobID) == "" {
-		http.Error(w, "jobId is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "jobId is required")
 		return
 	}
 
@@ -1425,10 +1382,10 @@ func (h *Handler) GetPublishJob(w http.ResponseWriter, r *http.Request) {
 	`, jobID)
 	if err := row.Scan(&userID, &status, pq.Array(&providers), &caption, &reqJSON, &resJSON, &errText, &createdAt, &startedAt, &finishedAt, &updatedAt); err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "not_found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not_found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -1448,8 +1405,7 @@ func (h *Handler) GetPublishJob(w http.ResponseWriter, r *http.Request) {
 	}
 	resp["result"] = json.RawMessage(resJSON)
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRequest, relMedia []string, origin string) {
@@ -3010,8 +2966,7 @@ func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[Suno][Store] stored id=%s file=%s userId=%s", id, filePath, req.UserID)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(sunoStoreResponse{
+	writeJSON(w, http.StatusOK, sunoStoreResponse{
 		OK:       true,
 		ID:       id,
 		FilePath: filePath,
@@ -3022,8 +2977,7 @@ func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
 // We currently accept and log the payload for observability and return 200 quickly.
 // Docs: https://docs.sunoapi.org/suno-api/generate-music (Music Generation Callbacks)
 func (h *Handler) SunoMusicCallback(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MB cap
@@ -3171,8 +3125,7 @@ func (h *Handler) CreateSunoTask(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[Suno][CreateTask] created id=%s taskId=%s userId=%s", id, req.TaskID, req.UserID)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(sunoCreateTaskResponse{
+	writeJSON(w, http.StatusOK, sunoCreateTaskResponse{
 		OK: true,
 		ID: id,
 	})
@@ -3246,8 +3199,7 @@ func (h *Handler) UpdateSunoTrack(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[Suno][UpdateTrack] updated id=%s status=%s", trackID, req.Status)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true}`))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (h *Handler) GetUserSetting(w http.ResponseWriter, r *http.Request) {
@@ -3261,9 +3213,7 @@ func (h *Handler) GetUserSetting(w http.ResponseWriter, r *http.Request) {
 	err := h.db.QueryRow(query, userID, settingKey).Scan(&raw)
 	if err == sql.ErrNoRows {
 		log.Printf("[UserSettings][Get] not found userId=%s key=%s", userID, settingKey)
-		w.WriteHeader(http.StatusNotFound)
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"error":"not_found"}`))
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "not_found"})
 		return
 	}
 	if err != nil {
@@ -3272,8 +3222,7 @@ func (h *Handler) GetUserSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(fmt.Sprintf(`{"key":"%s","value":%s}`, settingKey, string(raw))))
+	writeJSON(w, http.StatusOK, map[string]any{"key": settingKey, "value": json.RawMessage(raw)})
 }
 
 func (h *Handler) UpsertUserSetting(w http.ResponseWriter, r *http.Request) {
@@ -3310,8 +3259,7 @@ func (h *Handler) UpsertUserSetting(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[UserSettings][Upsert] success userId=%s key=%s", userID, settingKey)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true}`))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (h *Handler) GetUserSettings(w http.ResponseWriter, r *http.Request) {
@@ -3343,6 +3291,5 @@ func (h *Handler) GetUserSettings(w http.ResponseWriter, r *http.Request) {
 		out[k] = json.RawMessage(raw)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "data": out})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": out})
 }

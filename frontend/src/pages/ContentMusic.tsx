@@ -1,5 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Layout } from '../components/Layout';
+import { apiJson } from '../lib/api';
+import { safeStorage } from '../lib/safeStorage';
+import { usePolling } from '../lib/usePolling';
 
 type SunoTrack = {
 	id: string;
@@ -26,47 +29,38 @@ export const ContentMusic: React.FC = () => {
 	const [syncLoading, setSyncLoading] = useState<boolean>(false);
 	const [syncText, setSyncText] = useState<string | null>(null);
 	const [cachedCredits, setCachedCredits] = useState<number | null>(() => {
-		try {
-			const raw = localStorage.getItem('user_settings');
-			if (!raw) return null;
-			const parsed = JSON.parse(raw) as any;
-			const sc = parsed?.suno_credits;
-			if (typeof sc === 'number') return sc;
-			if (sc && typeof sc === 'object') {
-				if (typeof sc.availableCredits === 'number') return sc.availableCredits;
-				if (typeof sc.available === 'number') return sc.available;
-			}
-			return null;
-		} catch {
-			return null;
-		}
+    const st = safeStorage();
+    const parsed = st.getJSON<any>('user_settings');
+    const sc = parsed?.suno_credits;
+    if (typeof sc === 'number') return sc;
+    if (sc && typeof sc === 'object') {
+      if (typeof sc.availableCredits === 'number') return sc.availableCredits;
+      if (typeof sc.available === 'number') return sc.available;
+    }
+    return null;
 	});
 
 	const hasPending = useMemo(() => tracks.some((t) => (t.status || '').toLowerCase() === 'pending'), [tracks]);
 
-	const loadTracks = async () => {
+	const loadTracks = useCallback(async () => {
 		setTracksLoading(true);
 		try {
-			const res = await fetch(`/api/integrations/suno/tracks`, { credentials: 'include' });
-			const data: unknown = await res.json().catch(() => null);
-			if (Array.isArray(data)) {
-				setTracks(data as SunoTrack[]);
-			} else {
-				// ignore non-array errors
-			}
+      const res = await apiJson<unknown>(`/api/integrations/suno/tracks`);
+      const data: unknown = res.ok ? res.data : null;
+      if (Array.isArray(data)) setTracks(data as SunoTrack[]);
 		} finally {
 			setTracksLoading(false);
 		}
-	};
+	}, []);
 
 	const checkCredits = async () => {
 		setCreditsLoading(true);
 		setCreditsText(null);
 		try {
-			const res = await fetch(`/api/integrations/suno/credits`, { credentials: 'include' });
-			const data: unknown = await res.json().catch(() => null);
+			const res = await apiJson<any>(`/api/integrations/suno/credits`);
+			const data: unknown = res.ok ? res.data : res.data;
 			if (!res.ok) {
-				const err = data && typeof data === 'object' && 'error' in data ? String((data as { error?: unknown }).error) : res.statusText;
+				const err = data && typeof data === 'object' && 'error' in data ? String((data as { error?: unknown }).error) : res.error.message;
 				setCreditsText(`Failed to fetch credits: ${err}`);
 				return;
 			}
@@ -83,12 +77,10 @@ export const ContentMusic: React.FC = () => {
 				balancePart = `available=${availableCredits}`;
 				setCachedCredits(availableCredits);
 				// Update browser cache (best effort) so initial renders can use it.
-				try {
-					const raw = localStorage.getItem('user_settings');
-					const obj = raw ? JSON.parse(raw) : {};
-					obj.suno_credits = { ...(obj.suno_credits || {}), availableCredits, fetchedAt: new Date().toISOString() };
-					localStorage.setItem('user_settings', JSON.stringify(obj));
-				} catch { void 0; }
+        const st = safeStorage();
+        const prev = st.getJSON<any>('user_settings') || {};
+        prev.suno_credits = { ...(prev.suno_credits || {}), availableCredits, fetchedAt: new Date().toISOString() };
+        st.setJSON('user_settings', prev);
 			} else if (typeof availableCredits === 'string' && availableCredits.trim() !== '') {
 				balancePart = `available=${availableCredits}`;
 			}
@@ -113,10 +105,10 @@ export const ContentMusic: React.FC = () => {
 		setSyncLoading(true);
 		setSyncText(null);
 		try {
-			const res = await fetch(`/api/integrations/suno/sync`, { method: 'POST', credentials: 'include' });
-			const data: any = await res.json().catch(() => null);
+			const res = await apiJson<any>(`/api/integrations/suno/sync`, { method: 'POST' });
+			const data: any = res.ok ? res.data : res.data;
 			if (!res.ok || !data?.ok) {
-				const err = data?.error ? String(data.error) : res.statusText;
+				const err = data?.error ? String(data.error) : (res.ok ? 'unknown_error' : res.error.message);
 				setSyncText(`Sync failed: ${err}`);
 				return;
 			}
@@ -135,28 +127,23 @@ export const ContentMusic: React.FC = () => {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	useEffect(() => {
-		if (!hasPending) return;
-		const id = window.setInterval(() => void loadTracks(), 5000);
-		return () => window.clearInterval(id);
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [hasPending]);
+  usePolling({ enabled: hasPending, intervalMs: 5000, tick: loadTracks });
 
 	const generate = async () => {
 		setStatus('Generating with Suno...');
 		setFilePath(null);
 		try {
-			const res = await fetch(`/api/integrations/suno/generate`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				credentials: 'include',
-				body: JSON.stringify({ prompt, model }),
-			});
-			const data = await res.json().catch(() => ({}));
+      const res = await apiJson<any>(`/api/integrations/suno/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, model }),
+      });
+			const data: any = res.ok ? res.data : res.data;
 			if (!res.ok || !data?.ok) {
-				const detail = data?.details ? ` (${String(data.details).slice(0,200)})` : '';
-				const status = data?.status ? ` [${data.status}]` : '';
-				setStatus(`Suno failed: ${data?.error || res.statusText}${status}${detail}`);
+				const detail = data?.details ? ` (${String(data.details).slice(0, 200)})` : '';
+				const st = data?.status ? ` [${data.status}]` : '';
+				const msg = data?.error ? String(data.error) : (res.ok ? 'unknown_error' : res.error.message);
+				setStatus(`Suno failed: ${msg}${st}${detail}`);
 				return;
 			}
 			const taskId = data?.suno?.taskId ? String(data.suno.taskId) : null;

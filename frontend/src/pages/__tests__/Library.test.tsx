@@ -1,4 +1,3 @@
-import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -128,7 +127,7 @@ describe('Library', () => {
       return new Response(JSON.stringify([]), { status: 200 });
     });
     const uploadsHeader = screen.getByText('Uploads');
-    const uploadsCard = uploadsHeader.closest('.card');
+    const uploadsCard = uploadsHeader.closest('.card') as HTMLElement | null;
     if (!uploadsCard) throw new Error('missing uploads card');
     await u.click(within(uploadsCard).getByRole('button', { name: /^Clear$/i }));
   });
