@@ -16,6 +16,10 @@
 coverage.*
 *.coverprofile
 profile.cov
+*.cover
+
+# Frontend coverage output (Vitest)
+frontend/coverage/
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
