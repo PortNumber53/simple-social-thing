@@ -1,4 +1,9 @@
 import postgres from 'postgres';
+import { buildCorsHeaders, buildSidCookie, getCookie } from './lib/http';
+import { withCors } from './lib/cors';
+import { requireSid } from './lib/sid';
+
+export { buildCorsHeaders, buildSidCookie, getCookie };
 
 interface Env {
   GOOGLE_CLIENT_ID: string;
@@ -177,39 +182,7 @@ async function sqlDeleteSocial(sql: NonNullable<SqlClient>, userId: string, prov
   `;
 }
 
-// --- Generic cookie helpers ---
-export function getCookie(cookieHeader: string, name: string): string | null {
-  const parts = cookieHeader.split(/;\s*/);
-  for (const p of parts) {
-    const idx = p.indexOf('=');
-    if (idx === -1) continue;
-    const k = p.slice(0, idx);
-    if (k === name) return decodeURIComponent(p.slice(idx + 1));
-  }
-  return null;
-}
-
-export function buildSidCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
-	const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
-	const url = requestUrl ? new URL(requestUrl) : null;
-	const parts = [
-		`sid=${encodeURIComponent(value)}`,
-		`Path=/`,
-		`HttpOnly`,
-		`SameSite=Lax`,
-	];
-	if (maxAgeSeconds > 0) {
-		parts.push(`Max-Age=${maxAgeSeconds}`);
-	} else {
-		parts.push('Max-Age=0');
-	}
-	// Local dev: cookie must be visible to both :18910 and :18912 → set Domain=localhost
-	if (url && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
-		parts.push('Domain=localhost');
-	}
-	if (isHttps) parts.push('Secure');
-	return parts.join('; ');
-}
+// --- Generic cookie helpers are in ./lib/http.ts (re-exported above) ---
 
 async function persistSocialConnection(
   _env: Env,
@@ -670,6 +643,10 @@ export default {
 
 async function handleSunoGenerate(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendOrigin(env, request);
+	const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
+	if (preflight) return preflight;
+	if (request.method !== 'POST') return new Response(null, { status: 405, headers });
+
 	let body: unknown = null;
 	try {
 		if (request.headers.get('content-type')?.includes('application/json')) {
@@ -682,31 +659,15 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 	const prompt = getString(bodyObj?.['prompt']) ?? 'New song from Simple Social Thing';
 	const model = getString(bodyObj?.['model']) ?? 'V4';
 
-	const cookie = request.headers.get('Cookie') || '';
-	let sid = getCookie(cookie, 'sid');
-	const requestUrl = request.url;
-	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
-	const headers = buildCorsHeaders(request);
-	if (!sid && isLocal) {
-		sid = crypto.randomUUID();
-		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
-		// ensure user exists in Go backend to satisfy FK on SunoTracks.user_id
-		try {
-			await fetch(`${backendOrigin}/api/users`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-			});
-		} catch { void 0; }
-	}
+	const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
 	if (!sid) {
-		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+		return Response.json({ ok: false, error: 'unauthenticated' }, { status: 401, headers });
 	}
 
 	const perUserKey = sid ? await fetchUserSunoKey(backendOrigin, sid) : null;
 	const useMock = env.USE_MOCK_AUTH === 'true';
 	if (!useMock && !perUserKey) {
-		return new Response(JSON.stringify({ ok: false, error: 'missing_suno_api_key' }), { status: 400, headers });
+		return Response.json({ ok: false, error: 'missing_suno_api_key' }, { status: 400, headers });
 	}
 	const sunoApiKey = perUserKey || '';
 
@@ -740,7 +701,7 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 		});
 		if (!sunoRes.ok) {
 			const errText = await sunoRes.text().catch(() => '');
-			return Response.json({ ok: false, error: 'suno_generate_failed', status: sunoRes.status, details: errText }, { status: 502 });
+			return Response.json({ ok: false, error: 'suno_generate_failed', status: sunoRes.status, details: errText }, { status: 502, headers });
 		}
 
 		// Response is { code, msg, data: { taskId } }
@@ -749,7 +710,7 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 		const dataObj = startObj ? asRecord(startObj['data']) : null;
 		taskId = dataObj ? getString(dataObj['taskId']) : null;
 		if (!taskId) {
-			return Response.json({ ok: false, error: 'suno_missing_task_id', raw: sunoStart }, { status: 502 });
+			return Response.json({ ok: false, error: 'suno_missing_task_id', raw: sunoStart }, { status: 502, headers });
 		}
 
 		// Create a pending track row in backend (so UI can render it right away).
@@ -797,7 +758,7 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 						});
 					} catch { void 0; }
 				}
-				return Response.json({ ok: false, error: 'suno_generation_failed', taskId, details: recData }, { status: 502 });
+				return Response.json({ ok: false, error: 'suno_generation_failed', taskId, details: recData }, { status: 502, headers });
 			}
 
 			// Exponential backoff: 2s, 4s, 6s, 8s, then 10s max
@@ -806,7 +767,7 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 		}
 
 		if (!audioUrl) {
-			return Response.json({ ok: false, error: 'suno_no_audio_after_poll', details: { taskId, lastStatus } }, { status: 504 });
+			return Response.json({ ok: false, error: 'suno_no_audio_after_poll', details: { taskId, lastStatus } }, { status: 504, headers });
 		}
 	}
 
@@ -1098,39 +1059,19 @@ async function handleTikTokWebhook(request: Request, env: Env): Promise<Response
 
 async function handleSunoCredits(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendOrigin(env, request);
-	const cookie = request.headers.get('Cookie') || '';
-	let sid = getCookie(cookie, 'sid');
-	const requestUrl = request.url;
-	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
-	const headers = buildCorsHeaders(request);
-
-	if (request.method === 'OPTIONS') {
-		headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
-		headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
-		return new Response(null, { status: 204, headers });
-	}
+	const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
+	if (preflight) return preflight;
 	if (request.method !== 'GET') return new Response(null, { status: 405, headers });
 
-	if (!sid && isLocal) {
-		sid = crypto.randomUUID();
-		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
-		// ensure user exists
-		try {
-			await fetch(`${backendOrigin}/api/users`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-			});
-		} catch { void 0; }
-	}
+	const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
 	if (!sid) {
-		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+		return Response.json({ ok: false, error: 'unauthenticated' }, { status: 401, headers });
 	}
 
 	const perUserKey = await fetchUserSunoKey(backendOrigin, sid);
 	const sunoApiKey = perUserKey || '';
 	if (!sunoApiKey) {
-		return new Response(JSON.stringify({ ok: false, error: 'missing_suno_api_key' }), { status: 400, headers });
+		return Response.json({ ok: false, error: 'missing_suno_api_key' }, { status: 400, headers });
 	}
 
 	try {
@@ -1151,7 +1092,7 @@ async function handleSunoCredits(request: Request, env: Env): Promise<Response> 
 		}
 
 		if (!res.ok) {
-			return new Response(JSON.stringify({ ok: false, error: 'suno_credits_failed', status: res.status, details: data }), { status: 502, headers });
+			return Response.json({ ok: false, error: 'suno_credits_failed', status: res.status, details: data }, { status: 502, headers });
 		}
 
 		const availableCredits = extractCreditsNumber(data);
@@ -1168,43 +1109,22 @@ async function handleSunoCredits(request: Request, env: Env): Promise<Response> 
 			} catch { void 0; }
 		}
 
-		headers.set('Content-Type', 'application/json');
-		return new Response(JSON.stringify({ ok: true, credits: data, availableCredits }), { status: 200, headers });
+		return Response.json({ ok: true, credits: data, availableCredits }, { status: 200, headers });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		return new Response(JSON.stringify({ ok: false, error: 'suno_unreachable', details: { message } }), { status: 502, headers });
+		return Response.json({ ok: false, error: 'suno_unreachable', details: { message } }, { status: 502, headers });
 	}
 }
 
 async function handleUserSettingsBundle(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendOrigin(env, request);
-	const cookie = request.headers.get('Cookie') || '';
-	let sid = getCookie(cookie, 'sid');
-	const requestUrl = request.url;
-	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
-	const headers = buildCorsHeaders(request);
-
-	if (request.method === 'OPTIONS') {
-		headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
-		headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
-		return new Response(null, { status: 204, headers });
-	}
+	const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
+	if (preflight) return preflight;
 	if (request.method !== 'GET') return new Response(null, { status: 405, headers });
 
-	if (!sid && isLocal) {
-		sid = crypto.randomUUID();
-		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
-		// ensure user exists
-		try {
-			await fetch(`${backendOrigin}/api/users`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-			});
-		} catch { void 0; }
-	}
+	const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
 	if (!sid) {
-		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+		return Response.json({ ok: false, error: 'unauthenticated' }, { status: 401, headers });
 	}
 
 	try {
@@ -1214,7 +1134,7 @@ async function handleUserSettingsBundle(request: Request, env: Env): Promise<Res
 		const text = await res.text().catch(() => '');
 		if (!res.ok) {
 			console.error('[UserSettingsBundle] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800) });
-			return new Response(JSON.stringify({ ok: false, error: 'settings_fetch_failed', status: res.status }), { status: 502, headers });
+			return Response.json({ ok: false, error: 'settings_fetch_failed', status: res.status }, { status: 502, headers });
 		}
 		let parsed: unknown = null;
 		try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
@@ -1244,44 +1164,23 @@ async function handleUserSettingsBundle(request: Request, env: Env): Promise<Res
 			delete (data as Record<string, unknown>)['threads_oauth'];
 		}
 
-		headers.set('Content-Type', 'application/json');
-		return new Response(JSON.stringify({ ok: true, data: data ?? {} }), { status: 200, headers });
+		return Response.json({ ok: true, data: data ?? {} }, { status: 200, headers });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		console.error('[UserSettingsBundle] backend unreachable', { backendOrigin, message });
-		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+		return Response.json({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }, { status: 502, headers });
 	}
 }
 
 async function handleLibraryItems(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendOrigin(env, request);
-	const cookie = request.headers.get('Cookie') || '';
-	let sid = getCookie(cookie, 'sid');
-	const requestUrl = request.url;
-	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
-	const headers = buildCorsHeaders(request);
-
-	if (request.method === 'OPTIONS') {
-		headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
-		headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
-		return new Response(null, { status: 204, headers });
-	}
+	const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
+	if (preflight) return preflight;
 	if (request.method !== 'GET') return new Response(null, { status: 405, headers });
 
-	if (!sid && isLocal) {
-		sid = crypto.randomUUID();
-		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
-		// ensure user exists in backend
-		try {
-			await fetch(`${backendOrigin}/api/users`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-			});
-		} catch { void 0; }
-	}
+	const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
 	if (!sid) {
-		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+		return Response.json({ ok: false, error: 'unauthenticated' }, { status: 401, headers });
 	}
 
 	try {
@@ -1418,40 +1317,15 @@ async function handleLibraryDelete(request: Request, env: Env): Promise<Response
 	}
 }
 
-async function ensureSid(request: Request, env: Env, headers: Headers): Promise<string | null> {
-  const backendOrigin = getBackendOrigin(env, request);
-  const cookie = request.headers.get('Cookie') || '';
-  let sid = getCookie(cookie, 'sid');
-  const requestUrl = request.url;
-  const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
-
-  if (!sid && isLocal) {
-    sid = crypto.randomUUID();
-    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
-    // ensure user exists
-    try {
-      await fetch(`${backendOrigin}/api/users`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-      });
-    } catch { void 0; }
-  }
-  return sid || null;
-}
+// ensureSid extracted to ./lib/sid.ts (use requireSid)
 
 async function handleLocalLibraryItems(request: Request, env: Env): Promise<Response> {
   const backendOrigin = getBackendOrigin(env, request);
-  const headers = buildCorsHeaders(request);
-
-  if (request.method === 'OPTIONS') {
-    headers.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
-    return new Response(null, { status: 204, headers });
-  }
+  const { headers, preflight } = withCors(request, { methods: 'GET,POST,OPTIONS' });
+  if (preflight) return preflight;
   if (request.method !== 'GET' && request.method !== 'POST') return new Response(null, { status: 405, headers });
 
-  const sid = await ensureSid(request, env, headers);
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
   if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
 
   try {
@@ -1499,16 +1373,11 @@ async function handleLocalLibraryItems(request: Request, env: Env): Promise<Resp
 
 async function handleLocalLibraryItem(request: Request, env: Env): Promise<Response> {
   const backendOrigin = getBackendOrigin(env, request);
-  const headers = buildCorsHeaders(request);
-
-  if (request.method === 'OPTIONS') {
-    headers.set('Access-Control-Allow-Methods', 'PUT,DELETE,OPTIONS');
-    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
-    return new Response(null, { status: 204, headers });
-  }
+  const { headers, preflight } = withCors(request, { methods: 'PUT,DELETE,OPTIONS' });
+  if (preflight) return preflight;
   if (request.method !== 'PUT' && request.method !== 'DELETE') return new Response(null, { status: 405, headers });
 
-  const sid = await ensureSid(request, env, headers);
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
   if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
 
   const path = new URL(request.url).pathname;
@@ -1556,16 +1425,11 @@ async function handleLocalLibraryItem(request: Request, env: Env): Promise<Respo
 
 async function handleLocalLibraryUploads(request: Request, env: Env): Promise<Response> {
   const backendOrigin = getBackendOrigin(env, request);
-  const headers = buildCorsHeaders(request);
-
-  if (request.method === 'OPTIONS') {
-    headers.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
-    return new Response(null, { status: 204, headers });
-  }
+  const { headers, preflight } = withCors(request, { methods: 'GET,POST,OPTIONS' });
+  if (preflight) return preflight;
   if (request.method !== 'GET' && request.method !== 'POST') return new Response(null, { status: 405, headers });
 
-  const sid = await ensureSid(request, env, headers);
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
   if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
 
   try {
@@ -1634,16 +1498,11 @@ async function handleLocalLibraryUploads(request: Request, env: Env): Promise<Re
 
 async function handleLocalLibraryUploadsDelete(request: Request, env: Env): Promise<Response> {
   const backendOrigin = getBackendOrigin(env, request);
-  const headers = buildCorsHeaders(request);
-
-  if (request.method === 'OPTIONS') {
-    headers.set('Access-Control-Allow-Methods', 'POST,OPTIONS');
-    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
-    return new Response(null, { status: 204, headers });
-  }
+  const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
+  if (preflight) return preflight;
   if (request.method !== 'POST') return new Response(null, { status: 405, headers });
 
-  const sid = await ensureSid(request, env, headers);
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
   if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
 
   try {
@@ -1668,16 +1527,11 @@ async function handleLocalLibraryUploadsDelete(request: Request, env: Env): Prom
 
 async function handleLocalLibraryUploadsFile(request: Request, env: Env): Promise<Response> {
   const backendOrigin = getBackendOrigin(env, request);
-  const headers = buildCorsHeaders(request);
-
-  if (request.method === 'OPTIONS') {
-    headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
-    headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
-    return new Response(null, { status: 204, headers });
-  }
+  const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
+  if (preflight) return preflight;
   if (request.method !== 'GET') return new Response(null, { status: 405, headers });
 
-  const sid = await ensureSid(request, env, headers);
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
   if (!sid) return new Response(null, { status: 401, headers });
 
   const path = new URL(request.url).pathname;
@@ -1992,18 +1846,7 @@ async function handleSunoApiKey(request: Request, env: Env): Promise<Response> {
 	return new Response(null, { status: 405, headers });
 }
 
-export function buildCorsHeaders(request: Request): Headers {
-	const origin = request.headers.get('Origin');
-	const headers = new Headers();
-	if (origin) {
-		headers.set('Access-Control-Allow-Origin', origin);
-		headers.set('Vary', 'Origin');
-		headers.set('Access-Control-Allow-Credentials', 'true');
-	} else {
-		headers.set('Access-Control-Allow-Origin', '*');
-	}
-	return headers;
-}
+// buildCorsHeaders moved to ./lib/http.ts (re-exported above)
 
 async function fetchUserSunoKey(backendOrigin: string, userId: string): Promise<string | null> {
 	try {

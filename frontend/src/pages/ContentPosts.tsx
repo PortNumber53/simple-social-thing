@@ -1,6 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { useIntegrations } from '../contexts/IntegrationsContext';
+import { apiJson } from '../lib/api';
+import { useJobWebSocket } from '../lib/useJobWebSocket';
+import { ProviderPicker } from '../components/ProviderPicker';
+import { FacebookPagePicker } from '../components/FacebookPagePicker';
+import { MediaPicker } from '../components/MediaPicker';
 
 interface MediaPreview {
 	id: string;
@@ -52,6 +57,33 @@ export const ContentPosts: React.FC = () => {
   const [fbExpanded, setFbExpanded] = useState(true);
   const didInit = useRef(false);
   const facebookProviderRef = useRef<HTMLInputElement | null>(null);
+  const onJobMessage = useCallback((msg: any) => {
+    try {
+      const job = msg?.job;
+      const st = typeof job?.status === 'string' ? job.status : null;
+      if (st) setStatus(`Publish job ${st}...`);
+
+      // Backend job status response includes `result` (JSON) when finished.
+      const result = job?.result;
+      if (result && typeof result === 'object' && (result as any).results) {
+        setResults(result as PublishResponse);
+        const rmap = (result as any).results;
+        const anyFail = rmap && typeof rmap === 'object' && Object.values(rmap).some((r: any) => !r?.ok);
+        if (st === 'failed' || anyFail) setStatus('Publish completed with errors. Expand Results for details.');
+        if (st === 'completed' && !anyFail) setStatus('Publish completed successfully.');
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useJobWebSocket({
+    jobId,
+    enabled: !!jobId,
+    path: (id) => `/api/posts/publish/ws?jobId=${encodeURIComponent(id)}`,
+    onMessage: onJobMessage,
+    onError: () => setStatus('Publish started, but realtime updates failed (websocket error).'),
+  });
 
   // Allow linking into the publisher with a pre-filled caption (used by the new local Library page).
   useEffect(() => {
@@ -191,41 +223,17 @@ export const ContentPosts: React.FC = () => {
         return fd;
       })() : JSON.stringify({ caption, providers: selectedProviders, facebookPageIds });
 
-      const res = await fetch('/api/posts/publish', {
+      const res = await apiJson<PublishResponse>('/api/posts/publish', {
         method: 'POST',
         // IMPORTANT: don't set Content-Type for FormData; browser will set boundary.
         headers: hasMedia ? undefined : { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body,
       });
-      const data: PublishResponse = await res.json().catch(() => ({}));
+      const data: PublishResponse = (res.ok ? res.data : res.data) || {};
       // Async path: we get back a jobId quickly. Then subscribe over WS for progress + final result.
       if (data?.jobId) {
         setJobId(data.jobId);
         setStatus(`Publishing in background (job ${data.jobId})...`);
-        const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const wsUrl = `${proto}://${window.location.host}/api/posts/publish/ws?jobId=${encodeURIComponent(data.jobId)}`;
-        const ws = new WebSocket(wsUrl);
-        ws.onmessage = (ev) => {
-          try {
-            const msg = JSON.parse(ev.data as string);
-            const job = msg?.job;
-            const st = typeof job?.status === 'string' ? job.status : null;
-            if (st) setStatus(`Publish job ${st}...`);
-
-            // Backend job status response includes `result` (JSON) when finished.
-            const result = job?.result;
-            if (result && typeof result === 'object' && (result as any).results) {
-              setResults(result as PublishResponse);
-              const rmap = (result as any).results;
-              const anyFail = rmap && typeof rmap === 'object' && Object.values(rmap).some((r: any) => !r?.ok);
-              if (st === 'failed' || anyFail) setStatus('Publish completed with errors. Expand Results for details.');
-              if (st === 'completed' && !anyFail) setStatus('Publish completed successfully.');
-            }
-          } catch { void 0; }
-        };
-        ws.onerror = () => setStatus('Publish started, but realtime updates failed (websocket error).');
-        // don't block: request already enqueued
         return;
       }
 
@@ -234,7 +242,7 @@ export const ContentPosts: React.FC = () => {
       const resultMap = data?.results && typeof data.results === 'object' ? data.results : null;
       const anyFail = !!resultMap && Object.values(resultMap).some((r) => !r?.ok);
       if (!res.ok) {
-        setStatus(`Publish failed: ${data.error || 'Unknown error'}`);
+        setStatus(`Publish failed: ${data.error || res.error.message || 'Unknown error'}`);
       } else if (anyFail) {
         setStatus('Publish completed with errors. Expand Results for details.');
       } else {
@@ -274,6 +282,25 @@ export const ContentPosts: React.FC = () => {
     });
   };
 
+  const toggleAllConnected = (checked: boolean) => {
+    const next: Record<string, boolean> = { ...selected };
+    for (const p of connectedProviders) {
+      // Only allow selecting publish-supported providers when toggling "all"
+      next[p] = checked && PUBLISH_SUPPORTED[p] === true;
+    }
+    setSelected(next);
+    if (connectedProviders.includes('facebook')) {
+      // When selecting all providers, also select all postable Facebook pages.
+      if (checked) {
+        const fbNext: Record<string, boolean> = {};
+        for (const id of postableFacebookPageIds) fbNext[id] = true;
+        setFbSelected(fbNext);
+      } else {
+        setFbSelected({});
+      }
+    }
+  };
+
 	return (
 		<Layout headerPaddingClass="pt-24">
 			<div className="w-full max-w-7xl 2xl:max-w-none mx-auto space-y-8">
@@ -288,142 +315,33 @@ export const ContentPosts: React.FC = () => {
             {/* Left sidebar: networks selection */}
             <aside className="xl:col-span-4 space-y-6 xl:sticky xl:top-28 self-start">
               <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <label className="text-sm font-medium text-slate-700 dark:text-slate-200">Networks</label>
-              <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={selectAll}
-                  onChange={(e) => {
-                    const v = e.target.checked;
-                    setSelectAll(v);
-                    const next: Record<string, boolean> = { ...selected };
-                    for (const p of connectedProviders) {
-                      // Only allow selecting publish-supported providers when toggling "all"
-                      next[p] = v && PUBLISH_SUPPORTED[p] === true;
-                    }
-                    setSelected(next);
-                    if (connectedProviders.includes('facebook')) {
-                      // When selecting all providers, also select all postable Facebook pages.
-                      if (v) {
-                        const fbNext: Record<string, boolean> = {};
-                        for (const id of postableFacebookPageIds) fbNext[id] = true;
-                        setFbSelected(fbNext);
-                      } else {
-                        setFbSelected({});
-                      }
-                    }
-                  }}
+                <ProviderPicker
+                  connectedProviders={connectedProviders}
+                  selected={selected}
+                  setSelected={setSelected}
+                  selectAll={selectAll}
+                  setSelectAll={setSelectAll}
+                  publishSupported={PUBLISH_SUPPORTED}
+                  providerLabels={PROVIDER_LABELS}
+                  facebookProviderRef={facebookProviderRef}
+                  facebookChecked={!!selected.facebook && (fbAllSelected || fbSomeSelected || fbTotalCount === 0)}
+                  onFacebookToggleAll={setFacebookSelectedAll}
+                  facebookCountLabel={fbTotalCount > 0 ? `${fbSelectedCount}/${fbTotalCount}` : undefined}
+                  onToggleAllConnected={toggleAllConnected}
                 />
-                Post to all connected
-              </label>
-            </div>
-            {connectedProviders.length === 0 ? (
-              <div className="text-sm text-slate-500 dark:text-slate-300">
-                No connected networks yet. Go to <a href="/integrations" className="underline">Integrations</a> to connect.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-2">
-                {connectedProviders.map((p) => (
-                  p === 'facebook' ? (
-                    <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm">
-                      <input
-                        ref={facebookProviderRef}
-                        type="checkbox"
-                        checked={!!selected.facebook && (fbAllSelected || fbSomeSelected || fbTotalCount === 0)}
-                        onChange={(e) => setFacebookSelectedAll(e.target.checked)}
-                      />
-                      <span className="text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p] || p}</span>
-                      {fbTotalCount > 0 && (
-                        <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">
-                          {fbSelectedCount}/{fbTotalCount}
-                        </span>
-                      )}
-                    </label>
-                  ) : (
-                    <label
-                      key={p}
-                      className={`flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm ${
-                        PUBLISH_SUPPORTED[p] !== true ? 'opacity-60' : ''
-                      }`}
-                      title={PUBLISH_SUPPORTED[p] === true ? '' : 'Publishing not supported yet'}
-                    >
-                      <input
-                        type="checkbox"
-                        disabled={PUBLISH_SUPPORTED[p] !== true}
-                        checked={!!selected[p] && PUBLISH_SUPPORTED[p] === true}
-                        onChange={(e) => setSelected((prev) => ({ ...prev, [p]: e.target.checked }))}
-                      />
-                      <span className="text-slate-800 dark:text-slate-100">{PROVIDER_LABELS[p] || p}</span>
-                      {PUBLISH_SUPPORTED[p] !== true && (
-                        <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">coming soon</span>
-                      )}
-                    </label>
-                  )
-                ))}
-              </div>
-            )}
 
-            {connectedProviders.includes('facebook') && selected.facebook && (
-              <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4 bg-white/60 dark:bg-slate-900/20">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-medium text-slate-700 dark:text-slate-200">Facebook Pages</div>
-                  <button
-                    type="button"
-                    className="text-xs underline text-slate-600 dark:text-slate-300"
-                    onClick={() => setFbExpanded((v) => !v)}
-                  >
-                    {fbExpanded ? 'Hide pages' : 'Choose pages'}
-                  </button>
-                </div>
-                {fbExpanded && (
-                  <div className="mt-3 space-y-2">
-                    {facebookPages.length === 0 ? (
-                      <div className="text-sm text-slate-500 dark:text-slate-300">
-                        No pages found (or you need to reconnect Facebook so we can read your page list/tasks).
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {facebookPages.map((pg) => {
-                          const disabled = !pg.canPost;
-                          return (
-                            <label
-                              key={pg.id}
-                              className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
-                                disabled
-                                  ? 'border-slate-200 dark:border-slate-700 opacity-60'
-                                  : 'border-slate-200 dark:border-slate-700'
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                disabled={disabled}
-                                checked={!!fbSelected[pg.id]}
-                                onChange={(e) => toggleFacebookPage(pg.id, e.target.checked)}
-                              />
-                              <div className="min-w-0">
-                                <div className="text-slate-800 dark:text-slate-100 truncate">
-                                  {pg.name || pg.id}
-                                </div>
-                                <div className="text-xs text-slate-500 dark:text-slate-400">
-                                  {disabled ? 'Not postable with your current role' : 'Will post to this page'}
-                                </div>
-                              </div>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    )}
-                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                      Tip: if everything is disabled, reconnect Facebook and ensure your user has Page permissions that include creating content.
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Note: publishing support is incremental. Currently the backend supports caption-only publishing for Facebook Pages; other networks may report <span className="font-mono">not_supported_yet</span>.
-            </p>
+                <FacebookPagePicker
+                  visible={connectedProviders.includes('facebook') && !!selected.facebook}
+                  expanded={fbExpanded}
+                  setExpanded={setFbExpanded}
+                  pages={facebookPages}
+                  selectedById={fbSelected}
+                  onTogglePage={toggleFacebookPage}
+                />
+
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Note: publishing support is incremental. Currently the backend supports caption-only publishing for Facebook Pages; other networks may report <span className="font-mono">not_supported_yet</span>.
+                </p>
               </div>
             </aside>
 
@@ -438,27 +356,15 @@ export const ContentPosts: React.FC = () => {
 							className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400"
 						/>
 					</div>
-					<div className="space-y-3">
-						<label className="text-sm font-medium text-slate-700 dark:text-slate-200">Media (images)</label>
-						<input type="file" accept="image/*,video/*" multiple onChange={(e) => onFiles(e.target.files)} />
-						{media.length > 0 && (
-							<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-								{media.map((m) => (
-									<div key={m.id} className="relative group rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700">
-										<img src={m.url} alt="preview" className="w-full h-32 object-cover" />
-										<button
-											onClick={() => removeMedia(m.id)}
-											type="button"
-											className="absolute top-2 right-2 bg-slate-900/70 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-										>
-											×
-										</button>
-									</div>
-								))}
-							</div>
-						)}
-						<p className="text-xs text-slate-500 dark:text-slate-400">Tip: upload 2+ images to make a carousel.</p>
-					</div>
+          <MediaPicker
+            label="Media (images)"
+            accept="image/*,video/*"
+            multiple
+            onFiles={onFiles}
+            items={media.map((m) => ({ id: m.id, url: m.url }))}
+            onRemove={removeMedia}
+            helperText="Tip: upload 2+ images to make a carousel."
+          />
 					<div className="flex gap-3 items-center">
 						<button onClick={submit} className="btn btn-primary" disabled={isSubmitting || connectedProviders.length === 0}>
               {isSubmitting ? 'Publishing…' : 'Publish'}

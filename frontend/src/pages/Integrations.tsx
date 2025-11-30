@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { useIntegrations } from '../contexts/IntegrationsContext';
+import { IntegrationCard } from '../components/IntegrationCard';
 
 type SunoApiKeyResponse = { ok?: boolean; value?: { apiKey?: unknown } };
 type ProviderStatusResponse = {
@@ -446,195 +447,180 @@ export const Integrations: React.FC = () => {
         )}
 
         <section className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-6">
-          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center shadow-lg flex-none">
-              {/* Instagram-like glyph */}
-              <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                <path d="M7 2h10a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5zm0 2a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3H7zm5 3.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zm0 2a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zm5-1.75a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5z" />
-              </svg>
-            </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Instagram</h2>
-              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
-                Connect Instagram to schedule posts, manage DMs and comments, and receive notifications.
-              </p>
-              <div className="mt-4 space-y-2">
-                {igAccount ? (
-                  <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
-                      Connected{igAccount.username ? ` as @${igAccount.username}` : ''}
-                    </span>
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                      <button onClick={disconnectInstagram} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
-                      <a href="/help/instagram" className="btn btn-secondary w-full sm:w-auto">Learn more</a>
-                    </div>
-                  </>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                    <button onClick={startInstagramAuth} className="btn btn-primary w-full sm:w-auto">
-                      Connect <span className="hidden sm:inline">Instagram</span>
-                    </button>
-                    <a href="/help/instagram" className="btn btn-secondary w-full sm:w-auto">Learn more</a>
-                  </div>
-                )}
+          <IntegrationCard
+            icon={
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-pink-500 to-purple-500 flex items-center justify-center shadow-lg">
+                <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <path d="M7 2h10a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5zm0 2a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3H7zm5 3.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zm0 2a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zm5-1.75a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5z" />
+                </svg>
               </div>
-            </div>
-          </div>
-
-          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-400 flex items-center justify-center shadow-lg flex-none">
-              <span className="text-white text-lg font-bold">f</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Facebook</h2>
-              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
-                Connect Facebook pages to import posts into Published.
-              </p>
-              <div className="mt-4 space-y-2">
-                {fbAccount ? (
-                  <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
-                      Connected{fbAccount.name ? ` as ${fbAccount.name}` : ''}
-                    </span>
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                      <button onClick={disconnectFacebook} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
-                      <a href="https://developers.facebook.com/docs/facebook-login/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
-                        Learn more
-                      </a>
-                    </div>
-                  </>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                    <button onClick={startFacebookAuth} className="btn btn-primary w-full sm:w-auto">
-                      Connect <span className="hidden sm:inline">Facebook</span>
-                    </button>
-                    <a href="https://developers.facebook.com/docs/facebook-login/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
-                      Learn more
-                    </a>
-                  </div>
-                )}
+            }
+            title="Instagram"
+            description="Connect Instagram to schedule posts, manage DMs and comments, and receive notifications."
+          >
+            {igAccount ? (
+              <>
+                <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
+                  Connected{igAccount.username ? ` as @${igAccount.username}` : ''}
+                </span>
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                  <button onClick={disconnectInstagram} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                  <a href="/help/instagram" className="btn btn-secondary w-full sm:w-auto">Learn more</a>
+                </div>
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                <button onClick={startInstagramAuth} className="btn btn-primary w-full sm:w-auto">
+                  Connect <span className="hidden sm:inline">Instagram</span>
+                </button>
+                <a href="/help/instagram" className="btn btn-secondary w-full sm:w-auto">Learn more</a>
               </div>
-            </div>
-          </div>
+            )}
+          </IntegrationCard>
 
-          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-red-600 to-red-400 flex items-center justify-center shadow-lg flex-none">
-              <span className="text-white text-lg font-bold">▶</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">YouTube</h2>
-              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
-                Connect YouTube to import your uploaded videos into Published.
-              </p>
-              <div className="mt-4 space-y-2">
-                {ytAccount ? (
-                  <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
-                      Connected{ytAccount.name ? ` as ${ytAccount.name}` : ''}
-                    </span>
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                      <button onClick={disconnectYouTube} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
-                      <a href="https://developers.google.com/youtube/v3/docs" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
-                        Learn more
-                      </a>
-                    </div>
-                  </>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                    <button onClick={startYouTubeAuth} className="btn btn-primary w-full sm:w-auto">
-                      Connect <span className="hidden sm:inline">YouTube</span>
-                    </button>
-                    <a href="https://developers.google.com/youtube/v3/docs" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
-                      Learn more
-                    </a>
-                  </div>
-                )}
+          <IntegrationCard
+            icon={
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-400 flex items-center justify-center shadow-lg">
+                <span className="text-white text-lg font-bold">f</span>
               </div>
-            </div>
-          </div>
-
-          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-rose-600 to-red-500 flex items-center justify-center shadow-lg flex-none">
-              <span className="text-white text-lg font-bold">P</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Pinterest</h2>
-              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
-                Connect Pinterest to import pins into Published.
-              </p>
-              <div className="mt-4 space-y-2">
-                {pinAccount ? (
-                  <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
-                      Connected{pinAccount.name ? ` as ${pinAccount.name}` : ''}
-                    </span>
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                      <button onClick={disconnectPinterest} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
-                      <a href="https://developers.pinterest.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
-                        Learn more
-                      </a>
-                    </div>
-                  </>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                    <button onClick={startPinterestAuth} className="btn btn-primary w-full sm:w-auto">
-                      Connect <span className="hidden sm:inline">Pinterest</span>
-                    </button>
-                    <a href="https://developers.pinterest.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
-                      Learn more
-                    </a>
-                  </div>
-                )}
+            }
+            title="Facebook"
+            description="Connect Facebook pages to import posts into Published."
+          >
+            {fbAccount ? (
+              <>
+                <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
+                  Connected{fbAccount.name ? ` as ${fbAccount.name}` : ''}
+                </span>
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                  <button onClick={disconnectFacebook} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                  <a href="https://developers.facebook.com/docs/facebook-login/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                    Learn more
+                  </a>
+                </div>
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                <button onClick={startFacebookAuth} className="btn btn-primary w-full sm:w-auto">
+                  Connect <span className="hidden sm:inline">Facebook</span>
+                </button>
+                <a href="https://developers.facebook.com/docs/facebook-login/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                  Learn more
+                </a>
               </div>
-            </div>
-          </div>
+            )}
+          </IntegrationCard>
 
-          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-slate-900 to-slate-500 flex items-center justify-center shadow-lg flex-none">
-              <span className="text-white text-lg font-bold">@</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Threads</h2>
-              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
-                Connect Threads to import posts into Published.
-              </p>
-              <div className="mt-4 space-y-2">
-                {thAccount ? (
-                  <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
-                      Connected{thAccount.name ? ` as ${thAccount.name}` : ''}
-                    </span>
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                      <button onClick={disconnectThreads} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
-                      <a href="https://developers.facebook.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
-                        Learn more
-                      </a>
-                    </div>
-                  </>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                    <button onClick={startThreadsAuth} className="btn btn-primary w-full sm:w-auto">
-                      Connect <span className="hidden sm:inline">Threads</span>
-                    </button>
-                    <a href="https://developers.facebook.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
-                      Learn more
-                    </a>
-                  </div>
-                )}
+          <IntegrationCard
+            icon={
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-red-600 to-red-400 flex items-center justify-center shadow-lg">
+                <span className="text-white text-lg font-bold">▶</span>
               </div>
-            </div>
-          </div>
+            }
+            title="YouTube"
+            description="Connect YouTube to import your uploaded videos into Published."
+          >
+            {ytAccount ? (
+              <>
+                <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
+                  Connected{ytAccount.name ? ` as ${ytAccount.name}` : ''}
+                </span>
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                  <button onClick={disconnectYouTube} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                  <a href="https://developers.google.com/youtube/v3/docs" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                    Learn more
+                  </a>
+                </div>
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                <button onClick={startYouTubeAuth} className="btn btn-primary w-full sm:w-auto">
+                  Connect <span className="hidden sm:inline">YouTube</span>
+                </button>
+                <a href="https://developers.google.com/youtube/v3/docs" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                  Learn more
+                </a>
+              </div>
+            )}
+          </IntegrationCard>
 
-          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-black to-pink-500 flex items-center justify-center shadow-lg flex-none">
-              {/* TikTok-ish note icon */}
-              <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                <path d="M14.5 3a1 1 0 0 1 1 1c0 3.1 2.4 5.5 5.5 5.5a1 1 0 1 1 0 2c-1.8 0-3.5-.6-4.9-1.6V16a6 6 0 1 1-6-6 1 1 0 1 1 0 2 4 4 0 1 0 4 4V4a1 1 0 0 1 1-1z" />
-              </svg>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">TikTok</h2>
+          <IntegrationCard
+            icon={
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-rose-600 to-red-500 flex items-center justify-center shadow-lg">
+                <span className="text-white text-lg font-bold">P</span>
+              </div>
+            }
+            title="Pinterest"
+            description="Connect Pinterest to import pins into Published."
+          >
+            {pinAccount ? (
+              <>
+                <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
+                  Connected{pinAccount.name ? ` as ${pinAccount.name}` : ''}
+                </span>
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                  <button onClick={disconnectPinterest} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                  <a href="https://developers.pinterest.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                    Learn more
+                  </a>
+                </div>
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                <button onClick={startPinterestAuth} className="btn btn-primary w-full sm:w-auto">
+                  Connect <span className="hidden sm:inline">Pinterest</span>
+                </button>
+                <a href="https://developers.pinterest.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                  Learn more
+                </a>
+              </div>
+            )}
+          </IntegrationCard>
+
+          <IntegrationCard
+            icon={
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-slate-900 to-slate-500 flex items-center justify-center shadow-lg">
+                <span className="text-white text-lg font-bold">@</span>
+              </div>
+            }
+            title="Threads"
+            description="Connect Threads to import posts into Published."
+          >
+            {thAccount ? (
+              <>
+                <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
+                  Connected{thAccount.name ? ` as ${thAccount.name}` : ''}
+                </span>
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                  <button onClick={disconnectThreads} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                  <a href="https://developers.facebook.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                    Learn more
+                  </a>
+                </div>
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                <button onClick={startThreadsAuth} className="btn btn-primary w-full sm:w-auto">
+                  Connect <span className="hidden sm:inline">Threads</span>
+                </button>
+                <a href="https://developers.facebook.com/" target="_blank" rel="noreferrer" className="btn btn-secondary w-full sm:w-auto">
+                  Learn more
+                </a>
+              </div>
+            )}
+          </IntegrationCard>
+
+          <IntegrationCard
+            icon={
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-black to-pink-500 flex items-center justify-center shadow-lg">
+                <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <path d="M14.5 3a1 1 0 0 1 1 1c0 3.1 2.4 5.5 5.5 5.5a1 1 0 1 1 0 2c-1.8 0-3.5-.6-4.9-1.6V16a6 6 0 1 1-6-6 1 1 0 1 1 0 2 4 4 0 1 0 4 4V4a1 1 0 0 1 1-1z" />
+                </svg>
+              </div>
+            }
+            title={
+              <span className="inline-flex items-center gap-2 flex-wrap">
+                <span>TikTok</span>
                 {ttAccount ? (
                   <span className="inline-flex items-center px-2 py-1 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-xs">
                     Connected
@@ -644,103 +630,100 @@ export const Integrations: React.FC = () => {
                     Login Kit
                   </span>
                 )}
-              </div>
-              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
-                We’ll integrate TikTok so you can authenticate users, share content, publish posts, and receive webhooks.
-              </p>
-              <div className="mt-3 text-sm text-slate-700 dark:text-slate-200 hidden md:block">
-                <div className="font-medium text-slate-900 dark:text-slate-100 mb-1">Planned products</div>
-                <ul className="list-disc pl-5 space-y-1 text-slate-600 dark:text-slate-400">
+              </span>
+            }
+            description="We’ll integrate TikTok so you can authenticate users, share content, publish posts, and receive webhooks."
+          >
+            <div className="text-sm text-slate-700 dark:text-slate-200 hidden md:block">
+              <div className="font-medium text-slate-900 dark:text-slate-100 mb-1">Planned products</div>
+              <ul className="list-disc pl-5 space-y-1 text-slate-600 dark:text-slate-400">
+                <li><strong>Login Kit</strong> (OAuth)</li>
+                <li><strong>Share Kit</strong></li>
+                <li><strong>Content Posting API</strong></li>
+                <li><strong>Webhooks</strong></li>
+              </ul>
+            </div>
+            <details className="md:hidden rounded-lg border border-slate-200/60 dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/20">
+              <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-slate-900 dark:text-slate-100">
+                Planned products
+              </summary>
+              <div className="px-3 pb-3">
+                <ul className="list-disc pl-5 space-y-1 text-sm text-slate-600 dark:text-slate-400">
                   <li><strong>Login Kit</strong> (OAuth)</li>
                   <li><strong>Share Kit</strong></li>
                   <li><strong>Content Posting API</strong></li>
                   <li><strong>Webhooks</strong></li>
                 </ul>
               </div>
-              <details className="mt-3 md:hidden rounded-lg border border-slate-200/60 dark:border-slate-700/50 bg-white/50 dark:bg-slate-900/20">
-                <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-slate-900 dark:text-slate-100">
-                  Planned products
-                </summary>
-                <div className="px-3 pb-3">
-                  <ul className="list-disc pl-5 space-y-1 text-sm text-slate-600 dark:text-slate-400">
-                    <li><strong>Login Kit</strong> (OAuth)</li>
-                    <li><strong>Share Kit</strong></li>
-                    <li><strong>Content Posting API</strong></li>
-                    <li><strong>Webhooks</strong></li>
-                  </ul>
+            </details>
+
+            {ttAccount ? (
+              <>
+                <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
+                  Connected{ttAccount.displayName ? ` as ${ttAccount.displayName}` : ''}
+                </span>
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                  <button onClick={disconnectTikTok} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
+                  <button onClick={enableTikTokVideoImport} className="btn btn-secondary w-full sm:w-auto" type="button">
+                    Enable video import
+                  </button>
+                  <a
+                    href="https://developers.tiktok.com/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn btn-secondary w-full col-span-2 sm:col-span-1 sm:w-auto"
+                  >
+                    TikTok developer docs
+                  </a>
                 </div>
-              </details>
-              <div className="mt-4 flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:gap-3">
-                {ttAccount ? (
-                  <>
-                    <span className="inline-flex items-center px-3 py-2 rounded-md bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300 text-sm max-w-full break-words">
-                      Connected{ttAccount.displayName ? ` as ${ttAccount.displayName}` : ''}
-                    </span>
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                      <button onClick={disconnectTikTok} className="btn btn-ghost w-full sm:w-auto">Disconnect</button>
-                      <button onClick={enableTikTokVideoImport} className="btn btn-secondary w-full sm:w-auto" type="button">
-                        Enable video import
-                      </button>
-                      <a
-                        href="https://developers.tiktok.com/"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="btn btn-secondary w-full col-span-2 sm:col-span-1 sm:w-auto"
-                      >
-                        TikTok developer docs
-                      </a>
-                    </div>
-                    {ttScopes && (
-                      <span className={`text-xs ${ttScopes.hasVideoList ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'} break-words`}>
-                        {ttScopes.hasVideoList ? 'Video import enabled' : 'Video import NOT enabled (needs video.list)'}
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
-                    <button onClick={startTikTokAuth} className="btn btn-primary w-full sm:w-auto">
-                      Connect <span className="hidden sm:inline">TikTok</span>
-                    </button>
-                    <a
-                      href="https://developers.tiktok.com/"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="btn btn-secondary w-full sm:w-auto"
-                    >
-                      <span className="sm:hidden">Docs</span>
-                      <span className="hidden sm:inline">TikTok developer docs</span>
-                    </a>
-                  </div>
+                {ttScopes && (
+                  <span className={`text-xs ${ttScopes.hasVideoList ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'} break-words`}>
+                    {ttScopes.hasVideoList ? 'Video import enabled' : 'Video import NOT enabled (needs video.list)'}
+                  </span>
                 )}
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
+                <button onClick={startTikTokAuth} className="btn btn-primary w-full sm:w-auto">
+                  Connect <span className="hidden sm:inline">TikTok</span>
+                </button>
+                <a
+                  href="https://developers.tiktok.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-secondary w-full sm:w-auto"
+                >
+                  <span className="sm:hidden">Docs</span>
+                  <span className="hidden sm:inline">TikTok developer docs</span>
+                </a>
               </div>
-            </div>
-          </div>
+            )}
+          </IntegrationCard>
         </section>
 
         <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="card p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-amber-500 to-red-500 flex items-center justify-center shadow-lg flex-none">
-              <span className="text-white text-lg font-bold">S</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-slate-100">Suno (API key)</h2>
-              <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">
-                Your key is stored per-user in the backend (`UserSettings`).
-              </p>
-              <div className="mt-4 space-y-3">
-                <input
-                  value={sunoApiKey}
-                  onChange={(e) => setSunoApiKey(e.target.value)}
-                  className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                  placeholder="Enter your Suno API key"
-                />
-                <button onClick={saveSunoApiKey} className="btn btn-primary w-full sm:w-auto">Save key</button>
-                {sunoStatus && (
-                  <p className="text-sm text-slate-600 dark:text-slate-400">{sunoStatus}</p>
-                )}
+          <IntegrationCard
+            icon={
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-amber-500 to-red-500 flex items-center justify-center shadow-lg">
+                <span className="text-white text-lg font-bold">S</span>
               </div>
+            }
+            title="Suno (API key)"
+            description="Your key is stored per-user in the backend (`UserSettings`)."
+          >
+            <div className="space-y-3">
+              <input
+                value={sunoApiKey}
+                onChange={(e) => setSunoApiKey(e.target.value)}
+                className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                placeholder="Enter your Suno API key"
+              />
+              <button onClick={saveSunoApiKey} className="btn btn-primary w-full sm:w-auto">Save key</button>
+              {sunoStatus && (
+                <p className="text-sm text-slate-600 dark:text-slate-400">{sunoStatus}</p>
+              )}
             </div>
-          </div>
+          </IntegrationCard>
         </section>
 
       </div>

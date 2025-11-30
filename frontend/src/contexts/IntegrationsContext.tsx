@@ -2,6 +2,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useAuth } from './AuthContext';
+import { apiJson } from '../lib/api';
+import { safeStorage } from '../lib/safeStorage';
 
 export type ProviderKey = 'instagram' | 'tiktok' | 'facebook' | 'youtube' | 'pinterest' | 'threads';
 
@@ -34,15 +36,10 @@ export function useIntegrations() {
 
 export function IntegrationsProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated, user } = useAuth();
+  const storage = safeStorage();
   const [status, setStatus] = useState<IntegrationsStatus | null>(() => {
     // Provide immediate "ready" state using cached status; refresh will correct it.
-    try {
-      const raw = localStorage.getItem('integrations_status');
-      return raw ? (JSON.parse(raw) as IntegrationsStatus) : null;
-    } catch {
-      try { localStorage.removeItem('integrations_status'); } catch { void 0; }
-      return null;
-    }
+    return storage.getJSON<IntegrationsStatus>('integrations_status');
   });
   const [facebookPages, setFacebookPages] = useState<FacebookPage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -57,15 +54,14 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/integrations/status', { credentials: 'include' });
-      const data: unknown = await res.json().catch(() => null);
-      if (!res.ok || !data || typeof data !== 'object') {
+      const res = await apiJson<IntegrationsStatus>('/api/integrations/status');
+      if (!res.ok || !res.data || typeof res.data !== 'object') {
         setStatus(null);
         return;
       }
-      const obj = data as IntegrationsStatus;
+      const obj = res.data as IntegrationsStatus;
       setStatus(obj);
-      try { localStorage.setItem('integrations_status', JSON.stringify(obj)); } catch { void 0; }
+      storage.setJSON('integrations_status', obj);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -76,9 +72,9 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
 
   const refreshFacebookPages = useCallback(async () => {
     try {
-      const res = await fetch('/api/integrations/facebook/pages', { credentials: 'include' });
-      const data: any = await res.json().catch(() => null);
+      const res = await apiJson<any>('/api/integrations/facebook/pages');
       if (!res.ok) return;
+      const data: any = res.data;
       const pages = Array.isArray(data?.pages) ? data.pages : [];
       setFacebookPages(
         pages
@@ -118,5 +114,3 @@ export function IntegrationsProvider({ children }: { children: ReactNode }) {
 
   return <IntegrationsContext.Provider value={value}>{children}</IntegrationsContext.Provider>;
 }
-
-

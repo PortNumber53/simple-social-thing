@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Layout } from '../components/Layout';
 import { StatusBar } from '../components/StatusBar';
 import { useAuth } from '../contexts/AuthContext';
+import { AlertBanner } from '../components/AlertBanner';
 
 export const Profile: React.FC = () => {
   const { user } = useAuth();
@@ -19,7 +20,7 @@ export const Profile: React.FC = () => {
     try {
       // TODO: Implement API call to update display name
       await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-      
+
       setMessage({ type: 'success', text: 'Display name updated successfully!' });
     } catch {
       setMessage({ type: 'error', text: 'Failed to update display name. Please try again.' });
@@ -47,7 +48,7 @@ export const Profile: React.FC = () => {
     try {
       // TODO: Implement API call to change password
       await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-      
+
       setMessage({ type: 'success', text: 'Password changed successfully!' });
       setCurrentPassword('');
       setNewPassword('');
@@ -74,24 +75,14 @@ export const Profile: React.FC = () => {
 
           {/* Message Banner */}
           {message && (
-            <div className={`mb-6 p-4 rounded-lg animate-slide-down ${
-              message.type === 'success' 
-                ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-200'
-                : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
-            }`}>
-              <div className="flex items-center gap-2">
-                {message.type === 'success' ? (
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                )}
-                <span>{message.text}</span>
-              </div>
-            </div>
+            <AlertBanner
+              variant={message.type === 'success' ? 'success' : 'error'}
+              className="mb-6 animate-slide-down"
+              dismissible
+              onDismiss={() => setMessage(null)}
+            >
+              {message.text}
+            </AlertBanner>
           )}
 
           <div className="space-y-6">
@@ -192,21 +183,11 @@ export const Profile: React.FC = () => {
               </h2>
 
               <form onSubmit={handleChangePassword} className="space-y-6">
-                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                  <div className="flex items-start gap-3">
-                    <svg className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <div>
-                      <p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
-                        Set a password for direct login
-                      </p>
-                      <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
-                        You can use this password to log in directly without Google OAuth
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                <AlertBanner variant="info" title="Set a password for direct login">
+                  <span className="text-xs">
+                    You can use this password to log in directly without Google OAuth
+                  </span>
+                </AlertBanner>
 
                 <div>
                   <label htmlFor="currentPassword" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
