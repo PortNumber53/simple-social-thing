@@ -178,7 +178,7 @@ async function sqlDeleteSocial(sql: NonNullable<SqlClient>, userId: string, prov
 }
 
 // --- Generic cookie helpers ---
-function getCookie(cookieHeader: string, name: string): string | null {
+export function getCookie(cookieHeader: string, name: string): string | null {
   const parts = cookieHeader.split(/;\s*/);
   for (const p of parts) {
     const idx = p.indexOf('=');
@@ -189,7 +189,7 @@ function getCookie(cookieHeader: string, name: string): string | null {
   return null;
 }
 
-function buildSidCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
+export function buildSidCookie(value: string, maxAgeSeconds: number, requestUrl?: string): string {
 	const isHttps = requestUrl ? new URL(requestUrl).protocol === 'https:' : false;
 	const url = requestUrl ? new URL(requestUrl) : null;
 	const parts = [
@@ -1992,7 +1992,7 @@ async function handleSunoApiKey(request: Request, env: Env): Promise<Response> {
 	return new Response(null, { status: 405, headers });
 }
 
-function buildCorsHeaders(request: Request): Headers {
+export function buildCorsHeaders(request: Request): Headers {
 	const origin = request.headers.get('Origin');
 	const headers = new Headers();
 	if (origin) {
@@ -2020,7 +2020,7 @@ async function fetchUserSunoKey(backendOrigin: string, userId: string): Promise<
 	}
 }
 
-function getBackendOrigin(env: Env, request: Request): string {
+export function getBackendOrigin(env: Env, request: Request): string {
 	const normalize = (raw: string): string => {
 		let v = (raw || '').trim().replace(/\/+$/g, '');
 		if (!v) return v;

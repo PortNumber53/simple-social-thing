@@ -50,6 +50,10 @@ type mediaItem struct {
 // SyncUser imports the latest Instagram media for a single user and upserts rows into SocialLibraries.
 // It looks up the user's stored token in public."UserSettings" key='instagram_oauth'.
 func SyncUser(ctx context.Context, db *sql.DB, userID string, logger *log.Logger) (fetched int, upserted int, err error) {
+	return syncUserWithClient(ctx, db, userID, logger, &http.Client{Timeout: 15 * time.Second})
+}
+
+func syncUserWithClient(ctx context.Context, db *sql.DB, userID string, logger *log.Logger, client *http.Client) (fetched int, upserted int, err error) {
 	if db == nil {
 		return 0, 0, fmt.Errorf("db is nil")
 	}
@@ -82,7 +86,10 @@ func SyncUser(ctx context.Context, db *sql.DB, userID string, logger *log.Logger
 		return 0, 0, nil
 	}
 
-	imp := &Importer{DB: db, Client: &http.Client{Timeout: 15 * time.Second}}
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	imp := &Importer{DB: db, Client: client}
 	media, _, err := imp.fetchRecentMedia(ctx, tok.IGBusinessID, tok.AccessToken)
 	if err != nil {
 		return 0, 0, err
