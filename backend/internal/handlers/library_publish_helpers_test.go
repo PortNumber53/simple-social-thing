@@ -239,9 +239,15 @@ func TestRunPublishJob_NoKnownProviders(t *testing.T) {
 	mock.ExpectExec(`UPDATE public\."PublishJobs".*status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE public\."Posts".*"lastPublishStatus"='running'`).
+		WithArgs("job1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`UPDATE public\."PublishJobs".*SET status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE public\."Posts".*SET "lastPublishStatus"=\$2`).
+		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	h.runPublishJob("job1", "u1", "cap", publishPostRequest{Providers: []string{"unknown"}}, nil, "https://app.test")
 

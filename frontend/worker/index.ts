@@ -1,5 +1,5 @@
 import postgres from 'postgres';
-import { buildCorsHeaders, buildSidCookie, getCookie } from './lib/http';
+import { buildCorsHeaders, buildSidCookie, getCookie, publicUrlForRequest } from './lib/http';
 import { withCors } from './lib/cors';
 import { requireSid } from './lib/sid';
 
@@ -21,6 +21,8 @@ interface Env {
   DATABASE_URL?: string;
   // Hyperdrive binding is available on env.HYPERDRIVE in CF
   HYPERDRIVE?: { connectionString?: string };
+  // Shared secret used to open internal backend WS connections (Worker -> Backend).
+  INTERNAL_WS_SECRET?: string;
 }
 
 // --- Hyperdrive (Postgres) helpers ---
@@ -182,6 +184,13 @@ async function sqlDeleteSocial(sql: NonNullable<SqlClient>, userId: string, prov
   `;
 }
 
+async function sqlDeleteSocialByProviderId(sql: NonNullable<SqlClient>, provider: string, providerId: string) {
+  await sql`
+    DELETE FROM public."SocialConnections"
+    WHERE provider = ${provider} AND "providerId" = ${providerId};
+  `;
+}
+
 // --- Generic cookie helpers are in ./lib/http.ts (re-exported above) ---
 
 async function persistSocialConnection(
@@ -219,7 +228,7 @@ interface GoogleUserInfo {
 
 export default {
   async fetch(request: Request, env: Env) {
-    const url = new URL(request.url);
+    const url = publicUrlForRequest(request);
 
     // Debug endpoint to help diagnose asset binding / routing issues in production.
     // (Safe: does not expose secrets; only reports whether ASSETS is present and whether index.html can be fetched.)
@@ -353,7 +362,8 @@ export default {
 
       // Instagram disconnect clears cookie
       if (url.pathname === "/api/integrations/instagram/disconnect") {
-        const headers = new Headers({ 'Set-Cookie': buildInstagramCookie('', 0) });
+        const reqUrl = publicUrlForRequest(request).toString();
+        const headers = new Headers({ 'Set-Cookie': buildInstagramCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
         const sid = getCookie(cookie, 'sid');
         const sql = getSql(env);
@@ -377,7 +387,8 @@ export default {
       }
       // TikTok disconnect clears cookie
       if (url.pathname === "/api/integrations/tiktok/disconnect") {
-        const headers = new Headers({ 'Set-Cookie': buildTikTokCookie('', 0, request.url) });
+        const reqUrl = publicUrlForRequest(request).toString();
+        const headers = new Headers({ 'Set-Cookie': buildTikTokCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
         const sid = getCookie(cookie, 'sid');
         const sql = getSql(env);
@@ -397,14 +408,15 @@ export default {
           } catch { void 0; }
         }
         // Clear temp oauth cookies too
-        headers.append('Set-Cookie', buildTempCookie('tt_state', '', 0, request.url));
-        headers.append('Set-Cookie', buildTempCookie('tt_verifier', '', 0, request.url));
+        headers.append('Set-Cookie', buildTempCookie('tt_state', '', 0, reqUrl));
+        headers.append('Set-Cookie', buildTempCookie('tt_verifier', '', 0, reqUrl));
         return new Response(null, { status: 204, headers });
       }
 
       // Facebook disconnect clears cookie
       if (url.pathname === "/api/integrations/facebook/disconnect") {
-        const headers = new Headers({ 'Set-Cookie': buildFacebookCookie('', 0, request.url) });
+        const reqUrl = publicUrlForRequest(request).toString();
+        const headers = new Headers({ 'Set-Cookie': buildFacebookCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
         const sid = getCookie(cookie, 'sid');
         const sql = getSql(env);
@@ -428,7 +440,8 @@ export default {
 
       // YouTube disconnect clears cookie
       if (url.pathname === "/api/integrations/youtube/disconnect") {
-        const headers = new Headers({ 'Set-Cookie': buildYouTubeCookie('', 0, request.url) });
+        const reqUrl = publicUrlForRequest(request).toString();
+        const headers = new Headers({ 'Set-Cookie': buildYouTubeCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
         const sid = getCookie(cookie, 'sid');
         const sql = getSql(env);
@@ -445,19 +458,26 @@ export default {
             });
           } catch { void 0; }
         }
-        headers.append('Set-Cookie', buildTempCookie('yt_state', '', 0, request.url));
-        headers.append('Set-Cookie', buildTempCookie('yt_verifier', '', 0, request.url));
+        headers.append('Set-Cookie', buildTempCookie('yt_state', '', 0, reqUrl));
+        headers.append('Set-Cookie', buildTempCookie('yt_verifier', '', 0, reqUrl));
         return new Response(null, { status: 204, headers });
       }
 
       // Pinterest disconnect clears cookie
       if (url.pathname === "/api/integrations/pinterest/disconnect") {
-        const headers = new Headers({ 'Set-Cookie': buildPinterestCookie('', 0, request.url) });
+        const reqUrl = publicUrlForRequest(request).toString();
+        const headers = new Headers({ 'Set-Cookie': buildPinterestCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
+        const existing = parsePinterestCookie(cookie);
         const sid = getCookie(cookie, 'sid');
         const sql = getSql(env);
         if (sid && sql) {
-          try { await sqlDeleteSocial(sql, sid, 'pinterest'); } catch { void 0; }
+          // Prefer deleting by providerId as `sid` can change (we canonicalize users by email in SQL),
+          // and older rows may still reference the prior id.
+          try {
+            if (existing?.id) await sqlDeleteSocialByProviderId(sql, 'pinterest', existing.id);
+            else await sqlDeleteSocial(sql, sid, 'pinterest');
+          } catch { void 0; }
         }
         if (sid) {
           const backendOrigin = getBackendOrigin(env, request);
@@ -469,13 +489,14 @@ export default {
             });
           } catch { void 0; }
         }
-        headers.append('Set-Cookie', buildTempCookie('pin_state', '', 0, request.url));
+        headers.append('Set-Cookie', buildTempCookie('pin_state', '', 0, reqUrl));
         return new Response(null, { status: 204, headers });
       }
 
       // Threads disconnect clears cookie
       if (url.pathname === "/api/integrations/threads/disconnect") {
-        const headers = new Headers({ 'Set-Cookie': buildThreadsCookie('', 0, request.url) });
+        const reqUrl = publicUrlForRequest(request).toString();
+        const headers = new Headers({ 'Set-Cookie': buildThreadsCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
         const sid = getCookie(cookie, 'sid');
         const sql = getSql(env);
@@ -492,7 +513,7 @@ export default {
             });
           } catch { void 0; }
         }
-        headers.append('Set-Cookie', buildTempCookie('th_state', '', 0, request.url));
+        headers.append('Set-Cookie', buildTempCookie('th_state', '', 0, reqUrl));
         return new Response(null, { status: 204, headers });
       }
 
@@ -593,6 +614,9 @@ export default {
       if (url.pathname === "/api/local-library/items") {
         return handleLocalLibraryItems(request, env);
       }
+      if (url.pathname.startsWith("/api/local-library/items/") && url.pathname.endsWith("/publish-now")) {
+        return handleLocalLibraryPublishNow(request, env);
+      }
       if (url.pathname.startsWith("/api/local-library/items/")) {
         return handleLocalLibraryItem(request, env);
       }
@@ -612,6 +636,9 @@ export default {
       }
       if (url.pathname === "/api/posts/publish/ws") {
         return handlePublishJobWs(request, env);
+      }
+      if (url.pathname === "/api/events/ws") {
+        return handleRealtimeEventsWs(request, env);
       }
 
       return Response.json({ ok: true });
@@ -682,7 +709,7 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 	} else {
 		// Suno API (3rd-party) supports async callbacks + polling.
 		// Docs: https://docs.sunoapi.org/suno-api/generate-music
-		const origin = new URL(request.url).origin;
+		const origin = publicUrlForRequest(request).origin;
 		const callBackUrl = new URL('/callback/suno/music/', origin).toString();
 
 		const sunoRes = await fetch('https://api.sunoapi.org/api/v1/generate', {
@@ -914,7 +941,11 @@ function sleep(ms: number): Promise<void> {
 
 async function handlePublishJobWs(request: Request, env: Env): Promise<Response> {
   // WebSocket endpoint: streams publish job status updates by polling backend.
-  if (request.headers.get('Upgrade') !== 'websocket') {
+  const upgrade = (request.headers.get('Upgrade') || '').toLowerCase();
+  const wsKey = request.headers.get('Sec-WebSocket-Key');
+  const looksLikeWs = upgrade === 'websocket' || !!wsKey;
+  if (!looksLikeWs) {
+    console.log('[PublishJobWs] not_a_websocket upgrade=%s hasKey=%s url=%s', upgrade || '(empty)', !!wsKey, request.url);
     return new Response('expected websocket', { status: 400 });
   }
   const url = new URL(request.url);
@@ -986,6 +1017,88 @@ async function handlePublishJobWs(request: Request, env: Env): Promise<Response>
     }
     try { server.close(1000, 'timeout'); } catch { void 0; }
   })();
+
+  return new Response(null, { status: 101, webSocket: client, headers });
+}
+
+async function handleRealtimeEventsWs(request: Request, env: Env): Promise<Response> {
+  // WebSocket endpoint: proxies backend realtime events, authenticated by sid cookie.
+  const upgrade = (request.headers.get('Upgrade') || '').toLowerCase();
+  const wsKey = request.headers.get('Sec-WebSocket-Key');
+  const looksLikeWs = upgrade === 'websocket' || !!wsKey;
+  if (!looksLikeWs) {
+    console.log('[EventsWS] not_a_websocket upgrade=%s hasKey=%s url=%s', upgrade || '(empty)', !!wsKey, request.url);
+    return new Response('expected websocket', { status: 400 });
+  }
+
+  const headers = buildCorsHeaders(request);
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sid = getCookie(cookieHeader, 'sid');
+  if (!sid) {
+    console.log('[EventsWS] unauthenticated url=%s hasCookie=%s', request.url, cookieHeader.length > 0);
+    return new Response('unauthenticated', { status: 401, headers });
+  }
+
+  const backendOrigin = getBackendOrigin(env, request);
+  const secret = (env.INTERNAL_WS_SECRET || '').trim();
+
+  const backendUrl = `${backendOrigin}/api/events/ws?userId=${encodeURIComponent(sid)}`;
+  console.log('[EventsWS] connect sid=%s backend=%s hasSecret=%s', sid, backendUrl, !!secret);
+  // Debug: verify backend sees our request as authorized before attempting WS upgrade.
+  try {
+    const ping = await fetch(`${backendOrigin}/api/events/ping`, {
+      headers: {
+        ...(secret ? { 'X-Internal-WS-Secret': secret } : {}),
+      },
+    });
+    const pingText = await ping.text().catch(() => '');
+    console.log('[EventsWS] ping status=%s body=%s', ping.status, (pingText || '').slice(0, 200));
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.log('[EventsWS] ping failed message=%s', message);
+  }
+  const upstream = await fetch(backendUrl, {
+    headers: {
+      Upgrade: 'websocket',
+      Connection: 'Upgrade',
+      // In production, set INTERNAL_WS_SECRET on both Worker + Backend.
+      // In local dev, backend allows localhost-only WS when the secret is unset.
+      ...(secret ? { 'X-Internal-WS-Secret': secret } : {}),
+    },
+  });
+  if (!upstream.webSocket) {
+    const text = await upstream.text().catch(() => '');
+    console.log('[EventsWS] upstream_rejected status=%s body=%s', upstream.status, (text || '').slice(0, 200));
+    return new Response(text || 'upstream did not accept websocket', { status: upstream.status || 502, headers });
+  }
+
+  const upstreamWs = upstream.webSocket;
+  upstreamWs.accept();
+
+  const pair = new WebSocketPair();
+  const client = pair[0];
+  const server = pair[1];
+  server.accept();
+
+  let closed = false;
+  const closeBoth = (code = 1000, reason = 'closed') => {
+    if (closed) return;
+    closed = true;
+    try { server.close(code, reason); } catch { void 0; }
+    try { upstreamWs.close(code, reason); } catch { void 0; }
+  };
+
+  server.addEventListener('message', (ev) => {
+    try { upstreamWs.send(ev.data); } catch { closeBoth(1011, 'upstream_send_failed'); }
+  });
+  upstreamWs.addEventListener('message', (ev) => {
+    try { server.send(ev.data); } catch { closeBoth(1011, 'client_send_failed'); }
+  });
+
+  server.addEventListener('close', () => closeBoth(1000, 'client_closed'));
+  server.addEventListener('error', () => closeBoth(1011, 'client_error'));
+  upstreamWs.addEventListener('close', () => closeBoth(1000, 'upstream_closed'));
+  upstreamWs.addEventListener('error', () => closeBoth(1011, 'upstream_error'));
 
   return new Response(null, { status: 101, webSocket: client, headers });
 }
@@ -1419,6 +1532,40 @@ async function handleLocalLibraryItem(request: Request, env: Env): Promise<Respo
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[LocalLibraryItem] backend unreachable', { backendOrigin, message });
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
+}
+
+async function handleLocalLibraryPublishNow(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
+  if (preflight) return preflight;
+  if (request.method !== 'POST') return new Response(null, { status: 405, headers });
+
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+  if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+  const path = new URL(request.url).pathname;
+  const prefix = "/api/local-library/items/";
+  const suffix = "/publish-now";
+  const raw = path.slice(prefix.length, path.length - suffix.length);
+  const id = decodeURIComponent(raw).trim();
+  if (!id) return new Response(JSON.stringify({ ok: false, error: 'missing_id' }), { status: 400, headers });
+
+  try {
+    const res = await fetch(`${backendOrigin}/api/posts/${encodeURIComponent(id)}/publish-now/user/${encodeURIComponent(sid)}`, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json' },
+    });
+    const text = await res.text().catch(() => '');
+    headers.set('Content-Type', 'application/json');
+    if (!res.ok) {
+      return new Response(JSON.stringify({ ok: false, error: 'publish_now_failed', status: res.status, body: text.slice(0, 1200) }), { status: 502, headers });
+    }
+    return new Response(text || JSON.stringify({ ok: true }), { status: 200, headers });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
 }
@@ -1874,14 +2021,14 @@ export function getBackendOrigin(env: Env, request: Request): string {
 			if (/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(v)) {
 				v = `http://${v}`;
 			} else {
-				const proto = new URL(request.url).protocol || 'https:';
+				const proto = publicUrlForRequest(request).protocol || 'https:';
 				v = `${proto}//${v}`;
 			}
 		}
 		return v;
 	};
 	if (env.BACKEND_ORIGIN && env.BACKEND_ORIGIN.trim() !== '') return normalize(env.BACKEND_ORIGIN);
-	const url = new URL(request.url);
+	const url = publicUrlForRequest(request);
 	const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
 	if (isLocal) {
 		return 'http://localhost:18911';
@@ -1898,10 +2045,37 @@ export function getBackendOrigin(env: Env, request: Request): string {
 }
 
 async function startInstagramOAuth(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/instagram/callback', url.origin).toString();
+
+  // Require an authenticated session before starting, otherwise the callback cannot associate the
+  // connection to a user and will fail with `unauthenticated`.
+  {
+    const cookieHeader = request.headers.get('Cookie') || '';
+    const sid = getCookie(cookieHeader, 'sid');
+    if (!sid) {
+      const data = encodeURIComponent(
+        JSON.stringify({
+          success: false,
+          error: 'unauthenticated',
+          debug: {
+            requestUrl: request.url,
+            browserFacingUrl: url.toString(),
+            cookieNames: cookieHeader
+              .split(/;\s*/)
+              .map(kv => kv.split('=')[0]?.trim())
+              .filter(Boolean)
+              .slice(0, 50),
+            xForwardedHost: request.headers.get('X-Forwarded-Host'),
+            xForwardedProto: request.headers.get('X-Forwarded-Proto'),
+          },
+        }),
+      );
+      return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
+    }
+  }
 
   if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'instagram_secrets_missing' }));
@@ -1932,7 +2106,7 @@ async function startInstagramOAuth(request: Request, env: Env): Promise<Response
 }
 
 async function handleInstagramCallback(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/instagram/callback', url.origin).toString();
@@ -1951,14 +2125,45 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
     return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
   }
   if (!code) {
-    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'missing_code' }));
+    // This usually means the reverse proxy dropped the querystring (e.g. `code=...`) on the callback request.
+    // Include minimal debug to make it obvious what URL the worker actually received.
+    const data = encodeURIComponent(
+      JSON.stringify({
+        success: false,
+        error: 'missing_code',
+        debug: {
+          requestUrl: request.url,
+          browserFacingUrl: url.toString(),
+          hasQueryString: !!url.search,
+          queryKeys: Array.from(url.searchParams.keys()),
+          xForwardedHost: request.headers.get('X-Forwarded-Host'),
+          xForwardedProto: request.headers.get('X-Forwarded-Proto'),
+        },
+      }),
+    );
     return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
   const sid = getCookie(cookieHeader, 'sid');
   if (!sid) {
-    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
+    const data = encodeURIComponent(
+      JSON.stringify({
+        success: false,
+        error: 'unauthenticated',
+        debug: {
+          requestUrl: request.url,
+          browserFacingUrl: url.toString(),
+          cookieNames: cookieHeader
+            .split(/;\s*/)
+            .map(kv => kv.split('=')[0]?.trim())
+            .filter(Boolean)
+            .slice(0, 50),
+          xForwardedHost: request.headers.get('X-Forwarded-Host'),
+          xForwardedProto: request.headers.get('X-Forwarded-Proto'),
+        },
+      }),
+    );
     return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
   }
 
@@ -2086,7 +2291,7 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
     const location = `${clientUrl}/integrations?instagram=${data}`;
     const headers = new Headers();
     headers.set('Location', location);
-    headers.append('Set-Cookie', buildInstagramCookie(cookieValue, 60 * 60 * 24 * 30, request.url)); // 30 days
+    headers.append('Set-Cookie', buildInstagramCookie(cookieValue, 60 * 60 * 24 * 30, url.toString())); // 30 days
     return new Response(null, { status: 302, headers });
   } catch (e) {
     console.error('[IG] internal_error', e);
@@ -2096,7 +2301,7 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
 }
 
 async function handleOAuthCallback(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
 
@@ -2131,6 +2336,16 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
   }
 
   try {
+    if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
+      return Response.json(
+        {
+          error: 'google_secrets_missing',
+          error_description: 'GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are not configured on the worker',
+        },
+        { status: 500 },
+      );
+    }
+
     // For local development, return mock data if external APIs are not accessible
     const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
     const useMock = isLocalhost && env.USE_MOCK_AUTH === 'true';
@@ -2188,10 +2403,21 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      console.error('Token exchange failed:', errorText);
+      logLarge('[Google] token exchange failed', errorText);
       return Response.json({
         error: 'token_exchange_failed',
-        error_description: 'Failed to exchange authorization code for token'
+        error_description: 'Failed to exchange authorization code for token',
+        status: tokenResponse.status,
+        // Helpful dev diagnostics (this is safe: does not include secrets)
+        debug: {
+          requestUrl: request.url,
+          browserFacingUrl: url.toString(),
+          host: request.headers.get('Host'),
+          xForwardedHost: request.headers.get('X-Forwarded-Host'),
+          xForwardedProto: request.headers.get('X-Forwarded-Proto'),
+          redirectUri,
+          tokenResponseBody: errorText.slice(0, 2000),
+        },
       }, { status: 500 });
     }
 
@@ -2274,7 +2500,7 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
         console.error('[DB] sqlUpsertUser for sid failed', e);
       }
     }
-    headers.append('Set-Cookie', buildSidCookie(sidValue, 60 * 60 * 24 * 30, request.url));
+    headers.append('Set-Cookie', buildSidCookie(sidValue, 60 * 60 * 24 * 30, url.toString()));
     return new Response(null, { status: 302, headers });
 
   } catch (error) {
@@ -2287,7 +2513,7 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
 }
 
 async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/tiktok/callback', url.origin).toString();
@@ -2306,7 +2532,7 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   // local dev helper: create sid if missing, so callback can persist tokens
   if (!sid && isLocalhost) {
     sid = crypto.randomUUID();
-    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, request.url));
+    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, url.toString()));
     const backendOrigin = getBackendOrigin(env, request);
     try {
       await fetch(`${backendOrigin}/api/users`, {
@@ -2325,8 +2551,8 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   const verifier = base64UrlRandom(32);
   const challenge = await pkceChallengeS256(verifier);
 
-  headers.append('Set-Cookie', buildTempCookie('tt_state', state, 10 * 60, request.url));
-  headers.append('Set-Cookie', buildTempCookie('tt_verifier', verifier, 10 * 60, request.url));
+  headers.append('Set-Cookie', buildTempCookie('tt_state', state, 10 * 60, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('tt_verifier', verifier, 10 * 60, url.toString()));
 
   // Scopes:
   // - default: Login Kit minimal (`user.info.basic`)
@@ -2350,7 +2576,7 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   // returning `error=invalid_scope`.
   const scopes = Array.from(finalScopes).join(' ');
 
-  headers.append('Set-Cookie', buildTempCookie('tt_scopes', scopes, 10 * 60, request.url));
+  headers.append('Set-Cookie', buildTempCookie('tt_scopes', scopes, 10 * 60, url.toString()));
   const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
   authUrl.searchParams.set('client_key', clientKey);
   authUrl.searchParams.set('scope', scopes);
@@ -2365,7 +2591,7 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleTikTokCallback(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/tiktok/callback', url.origin).toString();
@@ -2528,11 +2754,11 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
   // Set minimal cookie so UI can show status even if DB status fetch fails
   const headers = new Headers();
   const cookieValue = JSON.stringify({ id: openId, displayName });
-  headers.append('Set-Cookie', buildTikTokCookie(cookieValue, 60 * 60 * 24 * 30, request.url));
+  headers.append('Set-Cookie', buildTikTokCookie(cookieValue, 60 * 60 * 24 * 30, url.toString()));
   // Clear temp cookies
-  headers.append('Set-Cookie', buildTempCookie('tt_state', '', 0, request.url));
-  headers.append('Set-Cookie', buildTempCookie('tt_verifier', '', 0, request.url));
-  headers.append('Set-Cookie', buildTempCookie('tt_scopes', '', 0, request.url));
+  headers.append('Set-Cookie', buildTempCookie('tt_state', '', 0, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('tt_verifier', '', 0, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('tt_scopes', '', 0, url.toString()));
 
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'tiktok', account: { id: openId, displayName } }));
   headers.set('Location', `${clientUrl}/integrations?tiktok=${data}`);
@@ -2579,7 +2805,7 @@ async function handleTikTokScopes(request: Request, env: Env): Promise<Response>
 }
 
 async function startFacebookOAuth(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/facebook/callback', url.origin).toString();
@@ -2597,7 +2823,7 @@ async function startFacebookOAuth(request: Request, env: Env): Promise<Response>
   // local dev helper: create sid if missing, so callback can persist tokens
   if (!sid && isLocalhost) {
     sid = crypto.randomUUID();
-    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, request.url));
+    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, url.toString()));
     const backendOrigin = getBackendOrigin(env, request);
     try {
       await fetch(`${backendOrigin}/api/users`, {
@@ -2613,7 +2839,7 @@ async function startFacebookOAuth(request: Request, env: Env): Promise<Response>
   }
 
   const state = crypto.randomUUID();
-  headers.append('Set-Cookie', buildTempCookie('fb_state', state, 10 * 60, request.url));
+  headers.append('Set-Cookie', buildTempCookie('fb_state', state, 10 * 60, url.toString()));
 
   // Scopes needed for reading Page posts.
   const scopes = [
@@ -2636,7 +2862,7 @@ async function startFacebookOAuth(request: Request, env: Env): Promise<Response>
 }
 
 async function handleFacebookCallback(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/facebook/callback', url.origin).toString();
@@ -2774,8 +3000,8 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
   }
 
   const headers = new Headers();
-  headers.append('Set-Cookie', buildFacebookCookie(JSON.stringify({ id: pageId, name: pageName }), 60 * 60 * 24 * 30, request.url));
-  headers.append('Set-Cookie', buildTempCookie('fb_state', '', 0, request.url));
+  headers.append('Set-Cookie', buildFacebookCookie(JSON.stringify({ id: pageId, name: pageName }), 60 * 60 * 24 * 30, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('fb_state', '', 0, url.toString()));
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'facebook', account: { id: pageId, name: pageName } }));
   headers.set('Location', `${clientUrl}/integrations?facebook=${data}`);
   return new Response(null, { status: 302, headers });
@@ -2890,7 +3116,7 @@ async function handleFacebookPages(request: Request, env: Env): Promise<Response
 }
 
 async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/youtube/callback', url.origin).toString();
@@ -2905,7 +3131,7 @@ async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> 
   const headers = new Headers();
   if (!sid && isLocalhost) {
     sid = crypto.randomUUID();
-    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, request.url));
+    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, url.toString()));
     const backendOrigin = getBackendOrigin(env, request);
     try {
       await fetch(`${backendOrigin}/api/users`, {
@@ -2923,8 +3149,8 @@ async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> 
   const state = crypto.randomUUID();
   const verifier = base64UrlRandom(32);
   const challenge = await pkceChallengeS256(verifier);
-  headers.append('Set-Cookie', buildTempCookie('yt_state', state, 10 * 60, request.url));
-  headers.append('Set-Cookie', buildTempCookie('yt_verifier', verifier, 10 * 60, request.url));
+  headers.append('Set-Cookie', buildTempCookie('yt_state', state, 10 * 60, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('yt_verifier', verifier, 10 * 60, url.toString()));
 
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
@@ -2945,7 +3171,7 @@ async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> 
 }
 
 async function handleYouTubeCallback(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/youtube/callback', url.origin).toString();
@@ -3069,16 +3295,16 @@ async function handleYouTubeCallback(request: Request, env: Env): Promise<Respon
   }
 
   const headers = new Headers();
-  headers.append('Set-Cookie', buildYouTubeCookie(JSON.stringify({ id: channelId, name: channelTitle }), 60 * 60 * 24 * 30, request.url));
-  headers.append('Set-Cookie', buildTempCookie('yt_state', '', 0, request.url));
-  headers.append('Set-Cookie', buildTempCookie('yt_verifier', '', 0, request.url));
+  headers.append('Set-Cookie', buildYouTubeCookie(JSON.stringify({ id: channelId, name: channelTitle }), 60 * 60 * 24 * 30, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('yt_state', '', 0, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('yt_verifier', '', 0, url.toString()));
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'youtube', account: { id: channelId, name: channelTitle } }));
   headers.set('Location', `${clientUrl}/integrations?youtube=${data}`);
   return new Response(null, { status: 302, headers });
 }
 
 async function startPinterestOAuth(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/pinterest/callback', url.origin).toString();
@@ -3099,7 +3325,7 @@ async function startPinterestOAuth(request: Request, env: Env): Promise<Response
 
   const state = crypto.randomUUID();
   const headers = new Headers();
-  headers.append('Set-Cookie', buildTempCookie('pin_state', state, 10 * 60, request.url));
+  headers.append('Set-Cookie', buildTempCookie('pin_state', state, 10 * 60, url.toString()));
 
   const authUrl = new URL('https://www.pinterest.com/oauth/');
   authUrl.searchParams.set('client_id', clientId);
@@ -3116,7 +3342,8 @@ async function startPinterestOAuth(request: Request, env: Env): Promise<Response
     'pins:read_secret',
     'pins:write',
     'pins:write_secret',
-    'user_accounts',
+    // Required to call /v5/user_account (used to fetch the account id/name after OAuth)
+    'user_accounts:read',
   ].join(','));
 
   headers.set('Location', authUrl.toString());
@@ -3124,7 +3351,7 @@ async function startPinterestOAuth(request: Request, env: Env): Promise<Response
 }
 
 async function handlePinterestCallback(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/pinterest/callback', url.origin).toString();
@@ -3244,15 +3471,15 @@ async function handlePinterestCallback(request: Request, env: Env): Promise<Resp
   }
 
   const headers = new Headers();
-  headers.append('Set-Cookie', buildPinterestCookie(JSON.stringify({ id: accountId, name: accountName }), 60 * 60 * 24 * 30, request.url));
-  headers.append('Set-Cookie', buildTempCookie('pin_state', '', 0, request.url));
+  headers.append('Set-Cookie', buildPinterestCookie(JSON.stringify({ id: accountId, name: accountName }), 60 * 60 * 24 * 30, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('pin_state', '', 0, url.toString()));
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'pinterest', account: { id: accountId, name: accountName } }));
   headers.set('Location', `${clientUrl}/integrations?pinterest=${data}`);
   return new Response(null, { status: 302, headers });
 }
 
 async function startThreadsOAuth(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/threads/callback', url.origin).toString();
@@ -3271,7 +3498,7 @@ async function startThreadsOAuth(request: Request, env: Env): Promise<Response> 
 
   const state = crypto.randomUUID();
   const headers = new Headers();
-  headers.append('Set-Cookie', buildTempCookie('th_state', state, 10 * 60, request.url));
+  headers.append('Set-Cookie', buildTempCookie('th_state', state, 10 * 60, url.toString()));
 
   // IMPORTANT:
   // These are not Facebook Login permissions, so requesting them via `facebook.com/.../dialog/oauth`
@@ -3290,7 +3517,7 @@ async function startThreadsOAuth(request: Request, env: Env): Promise<Response> 
 }
 
 async function handleThreadsCallback(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
+  const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
   const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
   const redirectUri = new URL('/api/integrations/threads/callback', url.origin).toString();
@@ -3407,8 +3634,8 @@ async function handleThreadsCallback(request: Request, env: Env): Promise<Respon
   }
 
   const headers = new Headers();
-  headers.append('Set-Cookie', buildThreadsCookie(JSON.stringify({ id: threadsUserId, name }), 60 * 60 * 24 * 30, request.url));
-  headers.append('Set-Cookie', buildTempCookie('th_state', '', 0, request.url));
+  headers.append('Set-Cookie', buildThreadsCookie(JSON.stringify({ id: threadsUserId, name }), 60 * 60 * 24 * 30, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('th_state', '', 0, url.toString()));
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'threads', account: { id: threadsUserId, name } }));
   headers.set('Location', `${clientUrl}/integrations?threads=${data}`);
   return new Response(null, { status: 302, headers });

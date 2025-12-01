@@ -1,29 +1,40 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { UploadGrid, type UploadPreview } from '../components/library/UploadGrid';
+import { useIntegrations, type ProviderKey } from '../contexts/IntegrationsContext';
 
 type LocalPost = {
   id: string;
   content?: string | null;
   status: 'draft' | 'scheduled' | 'published' | string;
+  providers?: string[] | null;
+  media?: string[] | null;
   scheduledFor?: string | null;
   publishedAt?: string | null;
+  lastPublishJobId?: string | null;
+  lastPublishStatus?: string | null;
+  lastPublishError?: string | null;
+  lastPublishAttemptAt?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 };
 
 export const Library: React.FC = () => {
+  const { status: integrationsStatus } = useIntegrations();
   const [statusFilter, setStatusFilter] = useState<'draft' | 'scheduled'>('draft');
   const [items, setItems] = useState<LocalPost[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [publishingNowId, setPublishingNowId] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<LocalPost | null>(null);
   const [draftText, setDraftText] = useState('');
   const [draftStatus, setDraftStatus] = useState<'draft' | 'scheduled'>('draft');
   const [scheduledForLocal, setScheduledForLocal] = useState<string>('');
+  const [draftProviders, setDraftProviders] = useState<Set<ProviderKey>>(() => new Set());
   const editorRef = useRef<HTMLDivElement | null>(null);
 
   const [uploads, setUploads] = useState<UploadPreview[]>([]);
@@ -35,6 +46,21 @@ export const Library: React.FC = () => {
   const [draftMediaIds, setDraftMediaIds] = useState<string[]>([]);
   const [dragOverDraftMedia, setDragOverDraftMedia] = useState(false);
   const [lastUploadError, setLastUploadError] = useState<string | null>(null);
+
+  const allProviders: ProviderKey[] = ['instagram', 'tiktok', 'facebook', 'youtube', 'pinterest', 'threads'];
+  const providerLabels: Record<ProviderKey, string> = {
+    instagram: 'Instagram',
+    tiktok: 'TikTok',
+    facebook: 'Facebook',
+    youtube: 'YouTube',
+    pinterest: 'Pinterest',
+    threads: 'Threads',
+  };
+
+  const isProviderConnected = (p: ProviderKey) => {
+    const s = integrationsStatus || {};
+    return !!s[p]?.connected;
+  };
 
   const formatUploadError = (e: unknown) => {
     if (!e) return 'upload_failed';
@@ -59,7 +85,7 @@ export const Library: React.FC = () => {
     } catch { /* ignore */ }
   };
 
-  const load = async (status: 'draft' | 'scheduled') => {
+  const load = useCallback(async (status: 'draft' | 'scheduled') => {
     setLoading(true);
     setError(null);
     try {
@@ -76,17 +102,148 @@ export const Library: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const publishStateFor = (p: LocalPost): { label: string; tone: 'neutral' | 'info' | 'warn' | 'success' | 'danger' } => {
+    const s = String(p.lastPublishStatus || '').trim().toLowerCase();
+    if (s === 'queued') return { label: 'Queued', tone: 'warn' };
+    if (s === 'running') return { label: 'Publishing…', tone: 'info' };
+    if (s === 'failed') return { label: 'Failed', tone: 'danger' };
+    if (s === 'completed') return { label: 'Published', tone: 'success' };
+    return { label: p.status === 'scheduled' ? 'Scheduled' : '—', tone: 'neutral' };
+  };
+
+  const publishBadgeClass = (tone: 'neutral' | 'info' | 'warn' | 'success' | 'danger') => {
+    switch (tone) {
+      case 'info':
+        return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200 border-blue-200/70 dark:border-blue-800/60';
+      case 'warn':
+        return 'bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200 border-amber-200/70 dark:border-amber-800/60';
+      case 'success':
+        return 'bg-green-100 text-green-900 dark:bg-green-900/30 dark:text-green-200 border-green-200/70 dark:border-green-800/60';
+      case 'danger':
+        return 'bg-rose-100 text-rose-900 dark:bg-rose-900/30 dark:text-rose-200 border-rose-200/70 dark:border-rose-800/60';
+      default:
+        return 'bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-200 border-slate-200/70 dark:border-slate-700/70';
+    }
+  };
+
+  const processingCount = useMemo(() => {
+    if (statusFilter !== 'scheduled') return 0;
+    return items.filter((p) => {
+      const s = String(p.lastPublishStatus || '').toLowerCase();
+      return s === 'queued' || s === 'running';
+    }).length;
+  }, [items, statusFilter]);
+
+  const publishNow = async (p: LocalPost) => {
+    setError(null);
+    setNotice(null);
+    setPublishingNowId(p.id);
+    try {
+      const res = await fetch(`/api/local-library/items/${encodeURIComponent(p.id)}/publish-now`, { method: 'POST', credentials: 'include' });
+      const text = await res.text().catch(() => '');
+      if (!res.ok) throw new Error(text || `publish_now_failed_${res.status}`);
+      setNotice('Queued publish job.');
+      await load(statusFilter);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg || 'publish_now_failed');
+    } finally {
+      setPublishingNowId(null);
+    }
   };
 
   useEffect(() => {
     void load(statusFilter);
+  }, [load, statusFilter]);
+
+  // Realtime: refresh the list when backend signals a post publish/update (scheduler or publish-now).
+  const statusFilterRef = useRef(statusFilter);
+  useEffect(() => {
+    statusFilterRef.current = statusFilter;
   }, [statusFilter]);
+
+  const noticeRef = useRef<string | null>(null);
+  useEffect(() => {
+    noticeRef.current = notice;
+  }, [notice]);
+
+  useEffect(() => {
+    if (import.meta.env.MODE === 'test') return;
+    if (typeof window === 'undefined' || typeof window.WebSocket === 'undefined') return;
+
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${proto}://${window.location.host}/api/events/ws`;
+    const ws = new WebSocket(wsUrl);
+    let isOpen = false;
+
+    let t: number | null = null;
+    const scheduleRefresh = () => {
+      if (t) window.clearTimeout(t);
+      t = window.setTimeout(() => {
+        void load(statusFilterRef.current);
+      }, 300);
+    };
+
+    ws.onopen = () => {
+      isOpen = true;
+      // eslint-disable-next-line no-console
+      console.info('[Library] realtime websocket connected');
+    };
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data as string) as any;
+        if (!msg || typeof msg !== 'object') return;
+        const type = String(msg.type || '');
+        if (type === 'post.updated') {
+          const st = String(msg.status || '').toLowerCase();
+          if (!noticeRef.current && (st === 'queued' || st === 'running')) {
+            setNotice(st === 'queued' ? 'Queued for publishing…' : 'Publishing in progress…');
+          }
+          scheduleRefresh();
+        }
+        if (type === 'post.publish') {
+          const st = String(msg.status || '').toLowerCase();
+          if (!noticeRef.current) {
+            setNotice(st === 'completed' ? 'Published.' : st === 'failed' ? 'Publish failed.' : 'Publish finished.');
+          }
+          scheduleRefresh();
+        }
+      } catch { /* ignore */ }
+    };
+    ws.onerror = () => {
+      // Keep quiet in-prod; this just helps local debugging.
+      // eslint-disable-next-line no-console
+      console.warn('[Library] realtime websocket error');
+    };
+    ws.onclose = () => {
+      isOpen = false;
+      // eslint-disable-next-line no-console
+      console.warn('[Library] realtime websocket closed');
+    };
+
+    // Fallback: if WS never connects (proxy/upgrade issues), poll while on the Scheduled tab.
+    const poll =
+      statusFilterRef.current === 'scheduled'
+        ? window.setInterval(() => {
+          if (!isOpen) void load('scheduled');
+        }, 5000)
+        : null;
+
+    return () => {
+      if (t) window.clearTimeout(t);
+      if (poll) window.clearInterval(poll);
+      try { ws.close(); } catch { /* ignore */ }
+    };
+  }, [load]);
 
   const resetEditorToNewDraft = () => {
     setEditing(null);
     setDraftText('');
     setDraftStatus('draft');
     setScheduledForLocal('');
+    setDraftProviders(new Set());
     setDraftMediaIds([]);
   };
 
@@ -164,7 +321,9 @@ export const Library: React.FC = () => {
             reject(new Error(`upload_failed_bad_response: ${(xhr.responseText || '').slice(0, 800)}`));
             return;
           }
-          resolve({ id, url: fileUrlForId(id), kind, filename: ensureFileName(id, file.name) });
+          // Prefer backend-provided public /media/... url (works for social networks too).
+          // Fall back to the legacy scoped endpoint when url isn't provided.
+          resolve({ id, url: (url || fileUrlForId(id)), kind, filename: ensureFileName(id, file.name) });
         };
 
         const form = new FormData();
@@ -315,7 +474,8 @@ export const Library: React.FC = () => {
           const it = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
           const id = typeof it?.id === 'string' ? it.id : (typeof it?.filename === 'string' ? it.filename : '');
           const filename = typeof it?.filename === 'string' ? it.filename : id;
-          const url = id ? fileUrlForId(id) : '';
+          const rawUrl = typeof it?.url === 'string' ? it.url : '';
+          const url = rawUrl ? rawUrl : (id ? fileUrlForId(id) : '');
           const kind = it?.kind === 'image' || it?.kind === 'video' || it?.kind === 'other' ? it.kind : 'other';
           if (!id || !url) continue;
           next.push({ id, url, filename, kind, uploading: false, error: null });
@@ -413,7 +573,25 @@ export const Library: React.FC = () => {
     } else {
       setScheduledForLocal('');
     }
-    setDraftMediaIds([]); // local-only for now
+    const prov = Array.isArray(p.providers) ? p.providers : [];
+    setDraftProviders(
+      new Set(
+        prov
+          .map((x) => String(x || '').trim().toLowerCase())
+          .filter((x): x is ProviderKey => x === 'instagram' || x === 'tiktok' || x === 'facebook' || x === 'youtube' || x === 'pinterest' || x === 'threads'),
+      ),
+    );
+    // Persisted as rel paths in DB; map back to upload ids (filename) when possible.
+    const media = Array.isArray(p.media) ? p.media : [];
+    const ids = media
+      .map((m) => {
+        const s = String(m || '').trim();
+        if (!s) return '';
+        const last = s.split('?')[0].split('#')[0].split('/').pop() || '';
+        return last.trim();
+      })
+      .filter(Boolean);
+    setDraftMediaIds(ids);
     scrollToEditor();
   };
 
@@ -428,9 +606,34 @@ export const Library: React.FC = () => {
   const save = async () => {
     const content = draftText.trim();
     const scheduledForIso = toIsoOrNull(scheduledForLocal);
+    const providers = Array.from(draftProviders);
+    const media = draftMedia
+      .map((u) => {
+        const raw = String(u?.url || '').trim();
+        if (!raw) return null;
+        if (raw.startsWith('/media/')) return raw;
+        try {
+          const parsed = new URL(raw);
+          if (parsed.pathname.startsWith('/media/')) return parsed.pathname;
+        } catch { /* ignore */ }
+        return null;
+      })
+      .filter((x): x is string => !!x);
+
     if (draftStatus === 'scheduled' && !scheduledForIso) {
       setError('Pick a valid scheduled time.');
       return;
+    }
+    if (draftStatus === 'scheduled' && providers.length === 0) {
+      setError('Select at least one network.');
+      return;
+    }
+    if (draftStatus === 'scheduled') {
+      const requiresMedia = providers.some((p) => p === 'instagram' || p === 'pinterest' || p === 'tiktok' || p === 'youtube');
+      if (requiresMedia && media.length === 0) {
+        setError('Attach at least one upload before scheduling to this network (it requires media).');
+        return;
+      }
     }
 
     setSaving(true);
@@ -441,7 +644,7 @@ export const Library: React.FC = () => {
           method: 'PUT',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content, status: draftStatus, scheduledFor: scheduledForIso }),
+          body: JSON.stringify({ content, status: draftStatus, scheduledFor: scheduledForIso, providers, media }),
         });
       const data: unknown = await res.json().catch(() => null);
       if (!res.ok) {
@@ -463,7 +666,7 @@ export const Library: React.FC = () => {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content, status: draftStatus, scheduledFor: scheduledForIso }),
+          body: JSON.stringify({ content, status: draftStatus, scheduledFor: scheduledForIso, providers, media }),
         });
         const data: unknown = await res.json().catch(() => null);
         if (!res.ok) {
@@ -568,11 +771,102 @@ export const Library: React.FC = () => {
                 <input
                   type="datetime-local"
                   value={scheduledForLocal}
-                  onChange={(e) => setScheduledForLocal(e.target.value)}
-                  disabled={draftStatus !== 'scheduled'}
-                  className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm disabled:opacity-60"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setScheduledForLocal(v);
+                    // UX: if user picks a time, implicitly schedule the post.
+                    if (v && draftStatus !== 'scheduled') setDraftStatus('scheduled');
+                  }}
+                  className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
                       />
+                {draftStatus !== 'scheduled' && scheduledForLocal.trim() !== '' && (
+                  <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                    This time will be used once the status is set to “Scheduled”.
+                  </div>
+                )}
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Networks</label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setDraftProviders(new Set(allProviders));
+                    }}
+                    disabled={allProviders.length === 0}
+                    title="Select all networks"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setDraftProviders(new Set())}
+                    disabled={draftProviders.size === 0}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {allProviders.map((p) => {
+                  const connected = isProviderConnected(p);
+                  const checked = draftProviders.has(p);
+                  const warn = checked && !connected;
+                  return (
+                    <div
+                      key={p}
+                      className={[
+                        'flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm',
+                        warn ? 'border-amber-300/70 dark:border-amber-700/60 bg-amber-50/40 dark:bg-amber-900/10' : '',
+                      ].join(' ')}
+                      title={connected ? '' : 'Not connected yet — you can still plan/schedule, but connect before publish time.'}
+                    >
+                      <label className="flex items-center gap-2 flex-1 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const v = e.target.checked;
+                            setDraftProviders((prev) => {
+                              const next = new Set(prev);
+                              if (v) next.add(p);
+                              else next.delete(p);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span className="text-slate-800 dark:text-slate-100 truncate">{providerLabels[p]}</span>
+                      </label>
+                      {!connected ? (
+                        <a
+                          className="text-xs underline hover:no-underline text-slate-600 dark:text-slate-300"
+                          href="/integrations"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          connect
+                        </a>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {draftStatus === 'scheduled' && draftProviders.size === 0 && (
+                <div className="text-xs text-amber-700 dark:text-amber-200">
+                  Pick at least one network before scheduling.
+                </div>
+              )}
+              {draftProviders.size > 0 && Array.from(draftProviders).some((p) => !isProviderConnected(p)) && (
+                <div className="text-xs text-slate-600 dark:text-slate-300">
+                  Some selected networks are not connected yet. Connect them before the scheduled time to publish successfully.
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -704,8 +998,9 @@ export const Library: React.FC = () => {
             </div>
 
             {error && <div className="text-sm text-red-600 dark:text-red-300">{error}</div>}
+            {notice && <div className="text-sm text-emerald-700 dark:text-emerald-300">{notice}</div>}
             <div className="text-xs text-slate-600 dark:text-slate-300">
-              Scheduling is stored in the app, but automated scheduled publishing is not wired up yet.
+              Scheduled publishing runs in the background. Use “Publish Now” to trigger a scheduled item immediately for testing.
             </div>
           </div>
 
@@ -744,6 +1039,12 @@ export const Library: React.FC = () => {
                   {loading ? 'Loading…' : `${items.length} item(s)`}
                 </div>
 
+                {statusFilter === 'scheduled' && processingCount > 0 && (
+                  <div className="text-xs px-2 py-1 rounded-md border border-amber-200/70 dark:border-amber-800/60 bg-amber-50/80 dark:bg-amber-900/20 text-amber-900 dark:text-amber-200">
+                    Processing {processingCount} post(s)…
+                  </div>
+                )}
+
                 <div className="ml-auto flex items-center gap-2">
                   <button type="button" className="btn btn-secondary" onClick={() => void load(statusFilter)} disabled={loading}>
                     Refresh
@@ -757,6 +1058,17 @@ export const Library: React.FC = () => {
                   items.map((p) => {
                     const scheduledLabel = p.scheduledFor ? new Date(p.scheduledFor).toLocaleString() : '—';
                     const createdLabel = p.createdAt ? new Date(p.createdAt).toLocaleString() : '';
+                    const prov = Array.isArray(p.providers) ? p.providers : [];
+                    const mediaCount = Array.isArray(p.media) ? p.media.length : 0;
+                    const pub = publishStateFor(p);
+                    const canPublishNow = p.status === 'scheduled' && !['queued', 'running'].includes(String(p.lastPublishStatus || '').toLowerCase());
+                    const provLabel = prov.length
+                      ? prov
+                          .map((x) => String(x || '').trim().toLowerCase())
+                          .filter(Boolean)
+                          .map((x) => (x in providerLabels ? providerLabels[x as ProviderKey] : x))
+                          .join(', ')
+                      : '';
                     const preview = (p.content || '').trim();
                     return (
                       <div key={p.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start gap-4">
@@ -766,9 +1078,39 @@ export const Library: React.FC = () => {
                               {p.status}
                             </span>
                             {p.status === 'scheduled' && (
+                              <span
+                                className={[
+                                  'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium',
+                                  publishBadgeClass(pub.tone),
+                                ].join(' ')}
+                                title={p.lastPublishJobId ? `job: ${p.lastPublishJobId}` : ''}
+                              >
+                                {String(p.lastPublishStatus || '').toLowerCase() === 'running' ? (
+                                  <span className="inline-block w-2 h-2 rounded-full bg-current opacity-70 animate-pulse" />
+                                ) : null}
+                                {pub.label}
+                              </span>
+                            )}
+                            {p.status === 'scheduled' && (
                               <span className="text-xs text-slate-600 dark:text-slate-300">Scheduled: {scheduledLabel}</span>
                             )}
-          </div>
+                          </div>
+                          <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                            Networks: {provLabel ? provLabel : '—'}
+                          </div>
+                          <div className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                            Media: {mediaCount}
+                          </div>
+                          {p.lastPublishAttemptAt && p.status === 'scheduled' && (
+                            <div className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                              Last attempt: {new Date(p.lastPublishAttemptAt).toLocaleString()}
+                            </div>
+                          )}
+                          {String(p.lastPublishStatus || '').toLowerCase() === 'failed' && p.lastPublishError && (
+                            <div className="mt-1 text-xs text-rose-700 dark:text-rose-200">
+                              Error: {p.lastPublishError}
+                            </div>
+                          )}
                           <div className="mt-2 text-sm text-slate-900 dark:text-slate-50 break-words">
                             {preview ? preview : <span className="text-slate-500 dark:text-slate-400">No content</span>}
                           </div>
@@ -778,6 +1120,17 @@ export const Library: React.FC = () => {
                         </div>
 
                         <div className="flex items-center gap-2">
+                          {p.status === 'scheduled' && (
+                            <button
+                              type="button"
+                              className="btn btn-primary"
+                              onClick={() => void publishNow(p)}
+                              disabled={!canPublishNow || publishingNowId === p.id || saving || loading}
+                              title="Enqueue this scheduled post immediately"
+                            >
+                              {publishingNowId === p.id ? 'Publishing…' : !canPublishNow ? 'Processing…' : 'Publish Now'}
+                            </button>
+                          )}
                           <button type="button" className="btn btn-secondary" onClick={() => openEdit(p)}>
                             Edit
                           </button>

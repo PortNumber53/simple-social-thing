@@ -107,9 +107,15 @@ func TestEnqueuePublishJobForUser_Success_UnknownProvider(t *testing.T) {
 	mock.ExpectExec(`UPDATE public\."PublishJobs".*status='running'`).
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE public\."Posts".*"lastPublishStatus"='running'`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`UPDATE public\."PublishJobs".*SET status=\$2`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE public\."Posts".*SET "lastPublishStatus"=\$2`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	rr := httptest.NewRecorder()
 	body := `{"caption":"cap","providers":["unknown"],"dryRun":true}`
@@ -156,6 +162,9 @@ func TestRunPublishJob_TikTokDryRun(t *testing.T) {
 	mock.ExpectExec(`UPDATE public\."PublishJobs".*status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE public\."Posts".*"lastPublishStatus"='running'`).
+		WithArgs("job1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	tok := tiktokOAuth{AccessToken: "tt", OpenID: "oid", Scope: "video.upload,video.publish"}
 	raw, _ := json.Marshal(tok)
@@ -166,6 +175,9 @@ func TestRunPublishJob_TikTokDryRun(t *testing.T) {
 	mock.ExpectExec(`UPDATE public\."PublishJobs".*SET status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE public\."Posts".*SET "lastPublishStatus"=\$2`).
+		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	h.runPublishJob("job1", "u1", "cap", publishPostRequest{Providers: []string{"tiktok"}, DryRun: true}, []string{"/media/uploads/u1/v.mp4"}, "https://app.test")
 
@@ -190,6 +202,9 @@ func TestRunPublishJob_FacebookCaptionOnly_Success(t *testing.T) {
 	mock.ExpectExec(`UPDATE public\."PublishJobs".*status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE public\."Posts".*"lastPublishStatus"='running'`).
+		WithArgs("job1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	payload := fbOAuthPayload{Pages: []fbOAuthPageRow{{ID: "pg1", AccessToken: "ptok", Tasks: []string{"CREATE_CONTENT"}}}}
 	raw, _ := json.Marshal(payload)
@@ -205,6 +220,9 @@ func TestRunPublishJob_FacebookCaptionOnly_Success(t *testing.T) {
 	mock.ExpectExec(`UPDATE public\."PublishJobs".*SET status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE public\."Posts".*SET "lastPublishStatus"=\$2`).
+		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	orig := http.DefaultTransport
 	defer func() { http.DefaultTransport = orig }()
@@ -244,6 +262,9 @@ func TestRunPublishJob_MultiProviders_DryRun(t *testing.T) {
 	mock.ExpectExec(`UPDATE public\."PublishJobs".*status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE public\."Posts".*"lastPublishStatus"='running'`).
+		WithArgs("job1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	igRaw, _ := json.Marshal(instagramOAuth{AccessToken: "igtok", IGBusinessID: "ig1"})
 	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='instagram_oauth'`).
@@ -268,6 +289,9 @@ func TestRunPublishJob_MultiProviders_DryRun(t *testing.T) {
 	mock.ExpectExec(`UPDATE public\."PublishJobs".*SET status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE public\."Posts".*SET "lastPublishStatus"=\$2`).
+		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	req := publishPostRequest{Providers: []string{"instagram", "tiktok", "youtube", "pinterest"}, DryRun: true}
 	rel := []string{"/media/uploads/u1/img.jpg", "/media/uploads/u1/vid.mp4"}

@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Layout } from '../components/Layout';
-import { StatusBar } from '../components/StatusBar';
 import { AlertBanner } from '../components/AlertBanner';
 
 export const Settings: React.FC = () => {
@@ -152,7 +151,6 @@ export const Settings: React.FC = () => {
           </div>
         </div>
       </div>
-      <StatusBar />
     </Layout>
   );
 };

@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Layout } from '../components/Layout';
-import { StatusBar } from '../components/StatusBar';
 import { useAuth } from '../contexts/AuthContext';
 import { AlertBanner } from '../components/AlertBanner';
 
@@ -261,7 +260,6 @@ export const Profile: React.FC = () => {
             </div>
           </div>
         </div>
-      <StatusBar />
     </Layout>
   );
 };

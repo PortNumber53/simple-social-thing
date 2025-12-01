@@ -262,10 +262,27 @@ func TestPublishInstagram_WritesMediaAndUsesPublicOrigin(t *testing.T) {
 		t.Fatalf("expected posted=1 got %d", posted)
 	}
 	// Ensure media file was saved under temp working dir.
-	p := filepath.Join(tmp, "media", "uploads", "u1")
-	entries, _ := os.ReadDir(p)
-	if len(entries) == 0 {
-		t.Fatalf("expected saved media under %s", p)
+	userHash := mediaUserHash("u1")
+	base := filepath.Join(tmp, "media", userHash)
+	shards, _ := os.ReadDir(base)
+	found := false
+	for _, s := range shards {
+		if s == nil || !s.IsDir() {
+			continue
+		}
+		files, _ := os.ReadDir(filepath.Join(base, s.Name()))
+		for _, f := range files {
+			if f != nil && !f.IsDir() {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected saved media under %s", base)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

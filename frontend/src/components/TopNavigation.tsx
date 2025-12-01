@@ -251,6 +251,9 @@ export const TopNavigation: React.FC = () => {
                     </div>
                     <div className="p-2 grid grid-cols-1 gap-1">
                       <a href="/content/posts" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
+                        Published
+                      </a>
+                      <a href="/content/posts" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
                         Posts
                       </a>
                       <a href="/content/videos" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
@@ -258,9 +261,6 @@ export const TopNavigation: React.FC = () => {
                       </a>
                       <a href="/content/music" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
                         Music
-                      </a>
-                      <a href="/content/published" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
-                        Published
                       </a>
                     </div>
                   </div>

@@ -63,6 +63,26 @@ func migrateUp(db *sql.DB) error {
 		return fmt.Errorf("Failed to create migrator: %w", err)
 	}
 	if err := migrator.Up(); err != nil && err != migrate.ErrNoChange {
+		// If the DB is dirty, allow an opt-in forced recovery.
+		// This is a common failure mode after an interrupted migration.
+		if os.Getenv("MIGRATE_FORCE_DIRTY") != "" {
+			v, dirty, verr := migrator.Version()
+			if verr == nil && dirty {
+				// Force to the current version (clears dirty flag), then retry.
+				if ferr := migrator.Force(int(v)); ferr == nil {
+					if err2 := migrator.Up(); err2 == nil || err2 == migrate.ErrNoChange {
+						log.Printf("Database was dirty at version %d; forced and recovered", v)
+						return nil
+					} else {
+						return fmt.Errorf("Database migration failed after forcing dirty version %d: %w", v, err2)
+					}
+				}
+			}
+		}
+		// Keep error message explicit for manual recovery (best-effort hint).
+		if v, dirty, verr := migrator.Version(); verr == nil && dirty {
+			return fmt.Errorf("Database migration failed: %w (hint: run `go run db/migrate.go -force=%d` or set MIGRATE_FORCE_DIRTY=1)", err, v)
+		}
 		return fmt.Errorf("Database migration failed: %w", err)
 	}
 	return nil
@@ -131,6 +151,9 @@ func run(d deps) error {
 	// Disabled by default; enable explicitly in prod after configuring tokens + quotas.
 	startSocialImportWorkersIfEnabled(rootCtx, db, d.getenv)
 
+	// Background: scheduled post poller (publishes due posts and enqueues publish jobs).
+	startScheduledPostsWorker(rootCtx, h, d.getenv)
+
 	go func() {
 		<-stop
 		log.Println("Shutting down server...")
@@ -196,6 +219,15 @@ func startSocialImportWorkersIfEnabled(ctx context.Context, db *sql.DB, getenv f
 	go runner.StartProviderWorker(ctx, providers.ThreadsProvider{}, parseIntervalFromEnv(getenv, "SOCIAL_IMPORT_THREADS_INTERVAL_SECONDS", 60*time.Minute))
 }
 
+func startScheduledPostsWorker(ctx context.Context, h *handlers.Handler, getenv func(string) string) {
+	interval := parseIntervalFromEnv(getenv, "SCHEDULED_POSTS_INTERVAL_SECONDS", 60*time.Second)
+	origin := ""
+	if getenv != nil {
+		origin = getenv("PUBLIC_ORIGIN")
+	}
+	go h.StartScheduledPostsWorker(ctx, interval, origin)
+}
+
 func buildCORSHandler(r http.Handler) http.Handler {
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"*"},
@@ -223,6 +255,11 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 
 	// Health check
 	r.HandleFunc("/health", h.Health).Methods("GET")
+
+	// Realtime events (WebSocket). This is intended to be proxied by the Worker which authenticates the browser session.
+	r.HandleFunc("/api/events/ws", h.EventsWebSocket)
+	// Debug endpoint to validate internal WS auth from the Worker.
+	r.HandleFunc("/api/events/ping", h.EventsPing).Methods("GET")
 
 	// Public media (uploaded assets used for publishing)
 	// NOTE: required for Instagram publishing which needs public HTTPS URLs for images.
@@ -255,6 +292,8 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	r.HandleFunc("/api/posts/user/{userId}", h.CreatePostForUser).Methods("POST")
 	r.HandleFunc("/api/posts/{postId}/user/{userId}", h.UpdatePostForUser).Methods("PUT")
 	r.HandleFunc("/api/posts/{postId}/user/{userId}", h.DeletePostForUser).Methods("DELETE")
+	// Publish a scheduled post immediately (for testing / manual override)
+	r.HandleFunc("/api/posts/{postId}/publish-now/user/{userId}", h.PublishNowPostForUser).Methods("POST")
 
 	// Local uploads for drafts/publishing (stored under /media/uploads/<userId>/)
 	r.HandleFunc("/api/uploads/user/{userId}", h.ListUploadsForUser).Methods("GET")
