@@ -651,8 +651,6 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 		} `json:"failed,omitempty"`
 	}
 	if req.DeleteExternal {
-		// Provider-side deletion is not supported/reliable; do not attempt it and do not remove locally.
-		// (We keep the request shape for future support but make the behavior explicit.)
 		extResp = &struct {
 			Attempted bool `json:"attempted"`
 			Deleted   int  `json:"deleted"`
@@ -662,15 +660,73 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 				Reason  string `json:"reason"`
 			} `json:"failed,omitempty"`
 		}{Attempted: true}
+
+		okIDs := make([]string, 0, len(ids))
 		for _, id := range ids {
-			extResp.Failed = append(extResp.Failed, struct {
-				ID      string `json:"id"`
-				Network string `json:"network"`
-				Reason  string `json:"reason"`
-			}{ID: id, Network: "", Reason: "external_delete_not_supported"})
+			// Avoid hanging on DB locks/slow queries.
+			ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+			var networkRaw string
+			var externalIDRaw sql.NullString
+			err := h.db.QueryRowContext(ctx, `SELECT network, external_id FROM public."SocialLibraries" WHERE user_id=$1 AND id=$2`, userID, id).Scan(&networkRaw, &externalIDRaw)
+			cancel()
+			if err != nil {
+				if err == sql.ErrNoRows {
+					extResp.Failed = append(extResp.Failed, struct {
+						ID      string `json:"id"`
+						Network string `json:"network"`
+						Reason  string `json:"reason"`
+					}{ID: id, Network: "", Reason: "not_found"})
+					continue
+				}
+				log.Printf("[Library][DeleteExternal] select_one error userId=%s id=%s err=%v", userID, truncate(id, 120), err)
+				extResp.Failed = append(extResp.Failed, struct {
+					ID      string `json:"id"`
+					Network string `json:"network"`
+					Reason  string `json:"reason"`
+				}{ID: id, Network: "", Reason: "db_error"})
+				continue
+			}
+			network := strings.TrimSpace(strings.ToLower(networkRaw))
+			externalID := strings.TrimSpace(externalIDRaw.String)
+			log.Printf("[Library][DeleteExternal] item userId=%s id=%s network=%s hasExternalId=%t", userID, truncate(id, 80), network, externalID != "")
+
+			if externalID == "" {
+				extResp.Failed = append(extResp.Failed, struct {
+					ID      string `json:"id"`
+					Network string `json:"network"`
+					Reason  string `json:"reason"`
+				}{ID: id, Network: network, Reason: "missing_external_id"})
+				continue
+			}
+
+			var derr error
+			switch network {
+			case "instagram":
+				derr = h.deleteInstagramMedia(r.Context(), userID, externalID)
+			case "facebook":
+				derr = h.deleteFacebookObject(r.Context(), userID, externalID)
+			case "pinterest":
+				derr = h.deletePinterestPin(r.Context(), userID, externalID)
+			case "youtube":
+				derr = h.deleteYouTubeVideo(r.Context(), userID, externalID)
+			default:
+				derr = fmt.Errorf("unsupported_network")
+			}
+			if derr != nil {
+				extResp.Failed = append(extResp.Failed, struct {
+					ID      string `json:"id"`
+					Network string `json:"network"`
+					Reason  string `json:"reason"`
+				}{ID: id, Network: network, Reason: truncate(derr.Error(), 220)})
+				continue
+			}
+
+			okIDs = append(okIDs, id)
+			extResp.Deleted++
 		}
-		log.Printf("[Library][DeleteExternal] not_supported userId=%s ids=%d dur=%dms", userID, len(ids), time.Since(start).Milliseconds())
-		idsToDeleteLocally = nil
+
+		idsToDeleteLocally = okIDs
+		log.Printf("[Library][DeleteExternal] done userId=%s reqIds=%d okIds=%d failed=%d dur=%dms", userID, len(ids), len(okIDs), len(extResp.Failed), time.Since(start).Milliseconds())
 	}
 
 	if len(idsToDeleteLocally) == 0 {
@@ -3121,6 +3177,145 @@ func (h *Handler) deleteInstagramMedia(ctx context.Context, userID string, media
 	// Typical response: {"success":true}
 	log.Printf("[ExternalDelete] ok userId=%s network=instagram externalId=%s", userID, truncate(mediaID, 64))
 	return nil
+}
+
+func (h *Handler) deleteFacebookObject(ctx context.Context, userID string, objectID string) error {
+	// Needs a Page access token. We'll try all page tokens we have for this user.
+	var raw []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='facebook_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("facebook_not_connected")
+		}
+		return err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return fmt.Errorf("facebook_not_connected")
+	}
+	var tok fbOAuthPayload
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return fmt.Errorf("facebook_invalid_oauth_payload")
+	}
+
+	pages := make([]fbOAuthPageRow, 0, len(tok.Pages))
+	for _, p := range tok.Pages {
+		if strings.TrimSpace(p.ID) != "" && strings.TrimSpace(p.AccessToken) != "" {
+			pages = append(pages, p)
+		}
+	}
+	// Backward compat: single page fields.
+	if len(pages) == 0 && strings.TrimSpace(tok.PageID) != "" && strings.TrimSpace(tok.AccessToken) != "" {
+		name := tok.PageName
+		pages = append(pages, fbOAuthPageRow{ID: tok.PageID, Name: &name, AccessToken: tok.AccessToken})
+	}
+	if len(pages) == 0 {
+		return fmt.Errorf("facebook_not_connected")
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	var lastErr error
+	for _, p := range pages {
+		endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s?access_token=%s",
+			url.PathEscape(strings.TrimSpace(objectID)),
+			url.QueryEscape(strings.TrimSpace(p.AccessToken)),
+		)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+		req.Header.Set("Accept", "application/json")
+		res, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		_ = res.Body.Close()
+		if res.StatusCode >= 200 && res.StatusCode < 300 {
+			log.Printf("[ExternalDelete] ok userId=%s network=facebook externalId=%s pageId=%s", userID, truncate(objectID, 64), truncate(p.ID, 64))
+			return nil
+		}
+		trace := strings.TrimSpace(res.Header.Get("x-fb-trace-id"))
+		msg := extractFacebookErrorMessage(b, string(b))
+		if strings.TrimSpace(msg) == "" {
+			msg = truncate(string(b), 500)
+		}
+		lastErr = fmt.Errorf("facebook_delete_non_2xx status=%d trace=%s msg=%s", res.StatusCode, trace, truncate(msg, 220))
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("facebook_delete_failed")
+	}
+	return lastErr
+}
+
+func (h *Handler) deletePinterestPin(ctx context.Context, userID string, pinID string) error {
+	var raw []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("pinterest_not_connected")
+		}
+		return err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return fmt.Errorf("pinterest_not_connected")
+	}
+	var tok pinterestOAuth
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return fmt.Errorf("pinterest_invalid_oauth_payload")
+	}
+	if strings.TrimSpace(tok.AccessToken) == "" {
+		return fmt.Errorf("pinterest_not_connected")
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	endpoint := fmt.Sprintf("https://api.pinterest.com/v5/pins/%s", url.PathEscape(strings.TrimSpace(pinID)))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(tok.AccessToken))
+	req.Header.Set("Accept", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		log.Printf("[ExternalDelete] ok userId=%s network=pinterest externalId=%s", userID, truncate(pinID, 64))
+		return nil
+	}
+	return fmt.Errorf("pinterest_delete_non_2xx status=%d body=%s", res.StatusCode, truncate(string(b), 300))
+}
+
+func (h *Handler) deleteYouTubeVideo(ctx context.Context, userID string, videoID string) error {
+	var raw []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("youtube_not_connected")
+		}
+		return err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return fmt.Errorf("youtube_not_connected")
+	}
+	var tok youtubeOAuth
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return fmt.Errorf("youtube_invalid_oauth_payload")
+	}
+	if strings.TrimSpace(tok.AccessToken) == "" {
+		return fmt.Errorf("youtube_not_connected")
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	endpoint := fmt.Sprintf("https://www.googleapis.com/youtube/v3/videos?id=%s", url.QueryEscape(strings.TrimSpace(videoID)))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(tok.AccessToken))
+	req.Header.Set("Accept", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		log.Printf("[ExternalDelete] ok userId=%s network=youtube externalId=%s", userID, truncate(videoID, 64))
+		return nil
+	}
+	return fmt.Errorf("youtube_delete_non_2xx status=%d body=%s", res.StatusCode, truncate(string(b), 300))
 }
 
 func (h *Handler) publishTikTokWithVideoURL(ctx context.Context, userID, caption string, videoURL string, dryRun bool) (int, error, map[string]interface{}) {
