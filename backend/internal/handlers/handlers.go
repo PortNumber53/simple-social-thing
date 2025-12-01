@@ -653,7 +653,9 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 	if req.DeleteExternal {
 		// External deletion is experimental/provider-dependent. Unless explicitly enabled, do not hit the DB
 		// and do not claim success. This avoids stressing the DB for a feature that may be unsupported.
-		if strings.TrimSpace(strings.ToLower(os.Getenv("ENABLE_INSTAGRAM_EXTERNAL_DELETE"))) != "true" {
+		extEnabledRaw := os.Getenv("ENABLE_INSTAGRAM_EXTERNAL_DELETE")
+		extEnabled := strings.TrimSpace(strings.ToLower(extEnabledRaw)) == "true"
+		if !extEnabled {
 			extResp = &struct {
 				Attempted bool `json:"attempted"`
 				Deleted   int  `json:"deleted"`
@@ -670,7 +672,20 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 					Reason  string `json:"reason"`
 				}{ID: id, Network: "", Reason: "external_delete_disabled"})
 			}
-			log.Printf("[Library][DeleteExternal] disabled userId=%s ids=%d dur=%dms", userID, len(ids), time.Since(start).Milliseconds())
+			// Include a short summary so it's obvious why nothing happened.
+			// (We intentionally do not query SocialLibraries here to avoid extra DB load.)
+			failSummary := make([]string, 0, 4)
+			for i := 0; i < len(extResp.Failed) && i < 4; i++ {
+				failSummary = append(failSummary, fmt.Sprintf("%s:%s", truncate(extResp.Failed[i].ID, 36), extResp.Failed[i].Reason))
+			}
+			log.Printf(
+				"[Library][DeleteExternal] disabled userId=%s ids=%d enableFlag=%q dur=%dms failed=%v",
+				userID,
+				len(ids),
+				extEnabledRaw,
+				time.Since(start).Milliseconds(),
+				failSummary,
+			)
 			idsToDeleteLocally = nil
 		} else {
 			extResp = &struct {
