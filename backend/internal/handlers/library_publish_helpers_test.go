@@ -84,9 +84,9 @@ func TestListAndDeleteSocialLibrariesForUser_Success(t *testing.T) {
 	}
 
 	// DeleteSocialLibrariesForUser
-	mock.ExpectExec(`DELETE FROM public\."SocialLibraries" WHERE user_id = \$1 AND id = ANY\(\$2\)`).
+	mock.ExpectQuery(`DELETE FROM public\."SocialLibraries" WHERE user_id = \$1 AND id = ANY\(\$2\) RETURNING id`).
 		WithArgs("u1", sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(0, 2))
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("a").AddRow("b"))
 
 	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/social-libraries/delete/user/u1", bytes.NewBufferString(`{"ids":["a","b","a"]}`))
