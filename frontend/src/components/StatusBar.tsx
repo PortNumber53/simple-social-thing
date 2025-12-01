@@ -41,6 +41,12 @@ export const StatusBar: React.FC = () => {
       try {
         const msg = JSON.parse(ev.data as string) as any;
         if (!msg || typeof msg !== 'object') return;
+        // Broadcast all realtime messages to the app; pages can subscribe without opening extra WS connections.
+        try {
+          window.dispatchEvent(new CustomEvent('realtime:event', { detail: msg }));
+        } catch {
+          /* ignore */
+        }
         if (String(msg.type || '') === 'clock' && typeof msg.now === 'string') {
           setBackendNow(msg.now);
           setLastBackendTickAt(Date.now());

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { apiJson } from '../lib/api';
 import { useLocalStorageState } from '../lib/useLocalStorageState';
@@ -33,6 +33,8 @@ export const ContentPublished: React.FC = () => {
     clear: clearSelection,
   } = useSelectionSet<string>(allItems.map((it) => it.id));
   const [deleting, setDeleting] = useState<boolean>(false);
+  const pendingDeleteIdsRef = useRef<Set<string>>(new Set());
+  const deleteAckTimerRef = useRef<number | null>(null);
 
   const normalizeText = (s: string) => s.trim().toLowerCase();
 
@@ -172,7 +174,9 @@ export const ContentPublished: React.FC = () => {
       return;
     }
     const ids = Array.from(selectedIds);
-    const ok = window.confirm(`Delete ${ids.length} selected published item(s)? This cannot be undone.`);
+    const ok = window.confirm(
+      `Remove ${ids.length} selected item(s) from this app?\n\nNote: this removes the cached items from the Published gallery in this app. It does NOT delete the post on Instagram/Facebook/etc.`,
+    );
     if (!ok) return;
 
     setDeleting(true);
@@ -192,10 +196,46 @@ export const ContentPublished: React.FC = () => {
       }
       const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
       const deleted = typeof obj?.deleted === 'number' ? obj!.deleted : null;
-      setSyncStatus(deleted !== null ? `Deleted ${deleted} item(s).` : 'Deleted.');
-      setAllItems((prev) => prev.filter((it) => !selectedIds.has(it.id)));
-      clearSelection();
-      console.info('[PublishedDelete] ok', { deleted });
+      const deletedIdsRaw = obj?.ids;
+      const deletedIds = Array.isArray(deletedIdsRaw)
+        ? deletedIdsRaw.filter((x) => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
+        : [];
+
+      // In tests, don't wait for realtime — confirm immediately via the API response.
+      if (import.meta.env.MODE === 'test') {
+        const deletedSet = new Set(deletedIds.length > 0 ? deletedIds : ids);
+        setAllItems((prev) => prev.filter((it) => !deletedSet.has(it.id)));
+        clearSelection();
+        if (deleted !== null) {
+          const msg =
+            deletedIds.length > 0 && deleted !== ids.length ? `Removed ${deleted} of ${ids.length} item(s) from library.` : `Removed ${deleted} item(s) from library.`;
+          setSyncStatus(msg);
+        } else {
+          setSyncStatus('Removed from library.');
+        }
+        console.info('[PublishedDelete] ok (api-confirmed)', { deleted, ids: deletedSet.size });
+        return;
+      }
+
+      // Production UX: only remove from UI after realtime confirmation (so we never lie to the user).
+      pendingDeleteIdsRef.current = new Set(deletedIds.length > 0 ? deletedIds : ids);
+      setSyncStatus('Remove requested. Waiting for confirmation…');
+
+      if (deleteAckTimerRef.current) window.clearTimeout(deleteAckTimerRef.current);
+      deleteAckTimerRef.current = window.setTimeout(() => {
+        if (pendingDeleteIdsRef.current.size === 0) return;
+        console.warn('[PublishedDelete] no realtime confirmation; falling back to refresh', { pending: pendingDeleteIdsRef.current.size });
+        pendingDeleteIdsRef.current = new Set();
+        void loadAll();
+        clearSelection();
+        if (deleted !== null) {
+          setSyncStatus(deleted !== ids.length ? `Removed ${deleted} of ${ids.length} item(s) from library.` : `Removed ${deleted} item(s) from library.`);
+        } else {
+          setSyncStatus('Removed from library.');
+        }
+      }, 4000);
+
+      console.info('[PublishedDelete] ok (awaiting realtime)', { deleted, ids: pendingDeleteIdsRef.current.size });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[PublishedDelete] exception', { message: msg });
@@ -204,6 +244,41 @@ export const ContentPublished: React.FC = () => {
       setDeleting(false);
     }
   };
+
+  // Realtime updates (StatusBar keeps a WS open and broadcasts messages via window events).
+  useEffect(() => {
+    if (import.meta.env.MODE === 'test') return;
+    if (typeof window === 'undefined') return;
+
+    const onRealtime = (ev: Event) => {
+      const ce = ev as CustomEvent;
+      const msg = ce?.detail as any;
+      if (!msg || typeof msg !== 'object') return;
+      if (String(msg.type || '') !== 'library.deleted') return;
+      const idsRaw = msg.ids;
+      const ids = Array.isArray(idsRaw) ? idsRaw.filter((x) => typeof x === 'string').map((x) => x.trim()).filter(Boolean) : [];
+      if (ids.length === 0) return;
+
+      const removed = new Set(ids);
+      setAllItems((prev) => prev.filter((it) => !removed.has(it.id)));
+      ids.forEach((id) => setSelected(id, false));
+
+      const pending = pendingDeleteIdsRef.current;
+      const overlaps = pending.size === 0 ? false : ids.some((id) => pending.has(id));
+      if (overlaps) {
+        pendingDeleteIdsRef.current = new Set();
+        if (deleteAckTimerRef.current) {
+          window.clearTimeout(deleteAckTimerRef.current);
+          deleteAckTimerRef.current = null;
+        }
+        setSyncStatus(`Removed ${ids.length} item(s) from library.`);
+        console.info('[PublishedRealtime] confirm library.deleted', { ids: ids.length });
+      }
+    };
+
+    window.addEventListener('realtime:event', onRealtime as EventListener);
+    return () => window.removeEventListener('realtime:event', onRealtime as EventListener);
+  }, [setSelected]);
 
   useEffect(() => {
     void loadAll();

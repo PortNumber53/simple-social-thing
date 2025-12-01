@@ -322,8 +322,9 @@ type deleteSocialLibrariesRequest struct {
 }
 
 type deleteSocialLibrariesResponse struct {
-	OK      bool  `json:"ok"`
-	Deleted int64 `json:"deleted"`
+	OK      bool     `json:"ok"`
+	Deleted int64    `json:"deleted"`
+	IDs     []string `json:"ids,omitempty"`
 }
 
 type createOrUpdatePostRequest struct {
@@ -626,16 +627,43 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 	}
 
 	log.Printf("[Library][Delete] start userId=%s ids=%d", userID, len(ids))
-	res, err := h.db.Exec(`DELETE FROM public."SocialLibraries" WHERE user_id = $1 AND id = ANY($2)`, userID, pq.Array(ids))
+	rows, err := h.db.Query(`DELETE FROM public."SocialLibraries" WHERE user_id = $1 AND id = ANY($2) RETURNING id`, userID, pq.Array(ids))
 	if err != nil {
 		log.Printf("[Library][Delete] exec error userId=%s err=%v", userID, err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	n, _ := res.RowsAffected()
-	log.Printf("[Library][Delete] ok userId=%s deleted=%d reqIds=%d", userID, n, len(ids))
+	defer rows.Close()
 
-	writeJSON(w, http.StatusOK, deleteSocialLibrariesResponse{OK: true, Deleted: n})
+	deletedIDs := make([]string, 0, len(ids))
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			log.Printf("[Library][Delete] scan error userId=%s err=%v", userID, err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if strings.TrimSpace(id) != "" {
+			deletedIDs = append(deletedIDs, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[Library][Delete] rows error userId=%s err=%v", userID, err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	log.Printf("[Library][Delete] ok userId=%s deleted=%d reqIds=%d", userID, len(deletedIDs), len(ids))
+
+	// Realtime: notify clients so they can update without polling.
+	h.emitEvent(userID, realtimeEvent{
+		Type:   "library.deleted",
+		UserID: userID,
+		IDs:    deletedIDs,
+		At:     time.Now().UTC().Format(time.RFC3339),
+	})
+
+	writeJSON(w, http.StatusOK, deleteSocialLibrariesResponse{OK: true, Deleted: int64(len(deletedIDs)), IDs: deletedIDs})
 }
 
 func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Request) {

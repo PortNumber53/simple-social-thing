@@ -146,6 +146,7 @@ type realtimeEvent struct {
 	JobID  string `json:"jobId,omitempty"`
 
 	Status string `json:"status,omitempty"`
+	IDs    []string `json:"ids,omitempty"`
 	Now    string `json:"now,omitempty"`
 	At     string `json:"at"`
 }

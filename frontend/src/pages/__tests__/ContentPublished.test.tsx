@@ -100,8 +100,8 @@ describe('ContentPublished', () => {
     if (!cb) throw new Error('missing selection checkbox');
     await u.click(cb);
 
-    // Delete selected
-    await u.click(screen.getByRole('button', { name: /Delete selected/i }));
+    // Remove selected from library
+    await u.click(screen.getByRole('button', { name: /Remove from library/i }));
     await waitFor(() => {
       expect((globalThis.fetch as any).mock.calls.some((c: any[]) => String(c[0]).includes('/api/library/delete'))).toBe(true);
     });

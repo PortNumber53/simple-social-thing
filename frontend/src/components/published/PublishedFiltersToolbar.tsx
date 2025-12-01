@@ -173,9 +173,9 @@ export function PublishedFiltersToolbar({
             className="btn bg-red-600 text-white hover:bg-red-700 active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
             type="button"
             disabled={deleting || syncing || selectedCount === 0}
-            title={selectedCount === 0 ? 'Select items in the gallery to delete' : 'Delete selected items'}
+            title={selectedCount === 0 ? 'Select items to remove from the library' : 'Remove selected items from the library (does not delete from the social network)'}
           >
-            {deleting ? 'Deleting…' : `Delete selected${selectedCount ? ` (${selectedCount})` : ''}`}
+            {deleting ? 'Removing…' : `Remove from library${selectedCount ? ` (${selectedCount})` : ''}`}
           </button>
           <button onClick={onReset} className="btn btn-secondary" type="button">
             Reset
