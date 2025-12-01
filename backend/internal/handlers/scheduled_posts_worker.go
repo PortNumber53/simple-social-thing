@@ -34,14 +34,11 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 	type cand struct {
 		id           string
 		userID       string
-		content      sql.NullString
-		providers    []string
-		media        []string
 		scheduledFor time.Time
 	}
 
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT id, "userId", content, COALESCE(providers, ARRAY[]::text[]), COALESCE(media, ARRAY[]::text[]), "scheduledFor"
+		SELECT id, "userId", "scheduledFor"
 		  FROM public."Posts"
 		 WHERE status = 'scheduled'
 		   AND "publishedAt" IS NULL
@@ -59,7 +56,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 	cands := make([]cand, 0)
 	for rows.Next() {
 		var c cand
-		if err := rows.Scan(&c.id, &c.userID, &c.content, pq.Array(&c.providers), pq.Array(&c.media), &c.scheduledFor); err != nil {
+		if err := rows.Scan(&c.id, &c.userID, &c.scheduledFor); err != nil {
 			return 0, err
 		}
 		cands = append(cands, c)
@@ -75,8 +72,8 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 	for _, c := range cands {
 		jobID := fmt.Sprintf("pub_%s", randHex(12))
 
-		log.Printf("[ScheduledPosts] candidate postId=%s userId=%s scheduledFor=%s providers=%v media=%d",
-			c.id, c.userID, c.scheduledFor.UTC().Format(time.RFC3339), c.providers, len(c.media))
+		log.Printf("[ScheduledPosts] candidate postId=%s userId=%s scheduledFor=%s",
+			c.id, c.userID, c.scheduledFor.UTC().Format(time.RFC3339))
 
 		// Try to claim atomically (prevents multiple app instances from enqueuing the same post).
 		res, err := h.db.ExecContext(ctx, `
@@ -104,7 +101,38 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			continue
 		}
 
-		caption := strings.TrimSpace(c.content.String)
+		// Load the (potentially large) publish fields only after we claim, to avoid forcing Postgres
+		// to detoast big columns for a wide scan.
+		var content sql.NullString
+		var providers []string
+		var media []string
+		var scheduledFor time.Time
+		if err := h.db.QueryRowContext(ctx, `
+			SELECT content,
+			       COALESCE(providers, ARRAY[]::text[]),
+			       COALESCE(media, ARRAY[]::text[]),
+			       "scheduledFor"
+			  FROM public."Posts"
+			 WHERE id = $1
+			   AND "userId" = $2
+			   AND "lastPublishJobId" = $3
+		`, c.id, c.userID, jobID).Scan(&content, pq.Array(&providers), pq.Array(&media), &scheduledFor); err != nil {
+			reason := "load_failed"
+			if strings.Contains(strings.ToLower(err.Error()), "out of memory") {
+				reason = "db_out_of_memory"
+			}
+			_, _ = h.db.ExecContext(ctx, `
+				UPDATE public."Posts"
+				   SET "lastPublishStatus"='failed',
+				       "lastPublishError"=$4,
+				       "updatedAt"=NOW()
+				 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+			`, c.id, c.userID, jobID, reason)
+			log.Printf("[ScheduledPosts] load_failed postId=%s userId=%s jobId=%s err=%v", c.id, c.userID, jobID, err)
+			continue
+		}
+
+		caption := strings.TrimSpace(content.String)
 		if caption == "" {
 			// Don't enqueue a publish job; mark as failed (user can edit to clear this state).
 			_, _ = h.db.ExecContext(ctx, `
@@ -117,7 +145,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			log.Printf("[ScheduledPosts] skipped postId=%s userId=%s jobId=%s reason=empty_content", c.id, c.userID, jobID)
 			continue
 		}
-		if len(c.providers) == 0 {
+		if len(providers) == 0 {
 			_, _ = h.db.ExecContext(ctx, `
 				UPDATE public."Posts"
 				   SET "lastPublishStatus"='failed',
@@ -128,9 +156,9 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			log.Printf("[ScheduledPosts] skipped postId=%s userId=%s jobId=%s reason=missing_providers", c.id, c.userID, jobID)
 			continue
 		}
-		if len(c.media) == 0 {
+		if len(media) == 0 {
 			requires := false
-			for _, p := range c.providers {
+			for _, p := range providers {
 				switch p {
 				case "instagram", "pinterest", "tiktok", "youtube":
 					requires = true
@@ -153,9 +181,9 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			"source":       "scheduled_post",
 			"postId":       c.id,
 			"userId":       c.userID,
-			"providers":    c.providers,
-			"media":        c.media,
-			"scheduledFor": c.scheduledFor.UTC().Format(time.RFC3339),
+			"providers":    providers,
+			"media":        media,
+			"scheduledFor": scheduledFor.UTC().Format(time.RFC3339),
 			"publicOrigin": origin,
 		}
 		reqJSON, _ := json.Marshal(reqSnapshot)
@@ -166,7 +194,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			  (id, user_id, status, providers, caption, request_json, created_at, updated_at)
 			VALUES
 			  ($1, $2, 'queued', $3, $4, $5::jsonb, $6, $6)
-		`, jobID, c.userID, pq.Array(c.providers), caption, string(reqJSON), now)
+		`, jobID, c.userID, pq.Array(providers), caption, string(reqJSON), now)
 		if err != nil {
 			// Undo claim so it can be retried (nothing published yet).
 			_, _ = h.db.ExecContext(ctx, `
@@ -183,7 +211,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 		}
 
 		enqueued++
-		log.Printf("[ScheduledPosts] enqueued_one postId=%s userId=%s jobId=%s providers=%v media=%d", c.id, c.userID, jobID, c.providers, len(c.media))
+		log.Printf("[ScheduledPosts] enqueued_one postId=%s userId=%s jobId=%s providers=%v media=%d", c.id, c.userID, jobID, providers, len(media))
 		// Realtime: let the UI know this post started processing (queued).
 		h.emitEvent(c.userID, realtimeEvent{
 			Type:   "post.updated",
@@ -192,7 +220,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			Status: "queued",
 			At:     time.Now().UTC().Format(time.RFC3339),
 		})
-		startJob(jobID, c.userID, caption, c.providers, c.media)
+		startJob(jobID, c.userID, caption, providers, media)
 	}
 
 	return enqueued, nil
@@ -241,11 +269,36 @@ func (h *Handler) StartScheduledPostsWorker(ctx context.Context, interval time.D
 
 	run := func() {
 		sweepCount++
-		n, err := h.processDueScheduledPostsOnce(ctx, origin, 25, func(jobID, userID, caption string, providers []string, relMedia []string) {
-			go h.runPublishJob(jobID, userID, caption, publishPostRequest{Providers: providers}, relMedia, origin)
-		})
+		limit := 25
+		backoffs := []time.Duration{700 * time.Millisecond, 1500 * time.Millisecond, 3 * time.Second}
+		var n int
+		var err error
+		for attempt := 0; attempt < len(backoffs)+1; attempt++ {
+			// Timebox each sweep attempt.
+			sweepCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			n, err = h.processDueScheduledPostsOnce(sweepCtx, origin, limit, func(jobID, userID, caption string, providers []string, relMedia []string) {
+				go h.runPublishJob(jobID, userID, caption, publishPostRequest{Providers: providers}, relMedia, origin)
+			})
+			cancel()
+			if err == nil {
+				break
+			}
+			// If the DB reports OOM, reduce the batch size to reduce pressure and avoid repeated failures.
+			if strings.Contains(strings.ToLower(err.Error()), "out of memory") && limit > 5 {
+				limit = 5
+			}
+			if attempt < len(backoffs) {
+				log.Printf("[ScheduledPosts] sweep error attempt=%d/%d limit=%d err=%v", attempt+1, len(backoffs)+1, limit, err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoffs[attempt]):
+				}
+				continue
+			}
+		}
 		if err != nil {
-			log.Printf("[ScheduledPosts] sweep error err=%v", err)
+			log.Printf("[ScheduledPosts] sweep error final limit=%d err=%v", limit, err)
 			return
 		}
 		if n > 0 {

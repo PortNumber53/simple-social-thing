@@ -1094,7 +1094,7 @@ export const Library: React.FC = () => {
                             {p.status === 'scheduled' && (
                               <span className="text-xs text-slate-600 dark:text-slate-300">Scheduled: {scheduledLabel}</span>
                             )}
-                          </div>
+          </div>
                           <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">
                             Networks: {provLabel ? provLabel : '—'}
                           </div>

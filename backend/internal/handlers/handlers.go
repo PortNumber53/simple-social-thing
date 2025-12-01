@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -335,6 +336,17 @@ type deleteSocialLibrariesResponse struct {
 			Reason  string `json:"reason"`
 		} `json:"failed,omitempty"`
 	} `json:"external,omitempty"`
+}
+
+type notificationRow struct {
+	ID        string     `json:"id"`
+	UserID    string     `json:"userId"`
+	Type      string     `json:"type"`
+	Title     string     `json:"title"`
+	Body      *string    `json:"body,omitempty"`
+	URL       *string    `json:"url,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+	ReadAt    *time.Time `json:"readAt,omitempty"`
 }
 
 type createOrUpdatePostRequest struct {
@@ -667,7 +679,8 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 			ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 			var networkRaw string
 			var externalIDRaw sql.NullString
-			err := h.db.QueryRowContext(ctx, `SELECT network, external_id FROM public."SocialLibraries" WHERE user_id=$1 AND id=$2`, userID, id).Scan(&networkRaw, &externalIDRaw)
+			var permalinkRaw sql.NullString
+			err := h.db.QueryRowContext(ctx, `SELECT network, external_id, permalink_url FROM public."SocialLibraries" WHERE user_id=$1 AND id=$2`, userID, id).Scan(&networkRaw, &externalIDRaw, &permalinkRaw)
 			cancel()
 			if err != nil {
 				if err == sql.ErrNoRows {
@@ -688,6 +701,7 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 			}
 			network := strings.TrimSpace(strings.ToLower(networkRaw))
 			externalID := strings.TrimSpace(externalIDRaw.String)
+			permalink := strings.TrimSpace(permalinkRaw.String)
 			log.Printf("[Library][DeleteExternal] item userId=%s id=%s network=%s hasExternalId=%t", userID, truncate(id, 80), network, externalID != "")
 
 			if externalID == "" {
@@ -713,6 +727,19 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 				derr = fmt.Errorf("unsupported_network")
 			}
 			if derr != nil {
+				// Workaround for provider limitations: if Instagram deletion fails, notify the owner with a direct link
+				// so they can delete it manually in Instagram.
+				if network == "instagram" {
+					title := "Manual action required: delete on Instagram"
+					body := fmt.Sprintf("We couldn't delete this post via the Instagram API. Please open it and delete it from Instagram. (reason=%s)", truncate(derr.Error(), 220))
+					var urlStr *string
+					if permalink != "" {
+						u := permalink
+						urlStr = &u
+					}
+					b := body
+					h.createNotificationOnce(userID, "manual_delete.instagram", title, &b, urlStr)
+				}
 				extResp.Failed = append(extResp.Failed, struct {
 					ID      string `json:"id"`
 					Network string `json:"network"`
@@ -858,6 +885,146 @@ func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 	resp.DurationMs = time.Since(start).Milliseconds()
 	log.Printf("[LibrarySync] done userId=%s dur=%dms", userID, resp.DurationMs)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) ListNotificationsForUser(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	userID := pathVar(r, "userId")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+	limit := parseLimit(r, 50, 1, 200)
+	if limit <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid limit")
+		return
+	}
+	onlyUnread := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("unread"))) == "true"
+
+	q := `
+		SELECT id, user_id, type, title, body, url, created_at, read_at
+		FROM public."Notifications"
+		WHERE user_id = $1
+	`
+	args := []any{userID}
+	if onlyUnread {
+		q += " AND read_at IS NULL"
+	}
+	q += " ORDER BY created_at DESC LIMIT $2"
+	args = append(args, limit)
+
+	rows, err := h.db.Query(q, args...)
+	if err != nil {
+		log.Printf("[Notifications][List] query error userId=%s err=%v", userID, err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := []notificationRow{}
+	for rows.Next() {
+		var n notificationRow
+		var body sql.NullString
+		var urlStr sql.NullString
+		var readAt sql.NullTime
+		if err := rows.Scan(&n.ID, &n.UserID, &n.Type, &n.Title, &body, &urlStr, &n.CreatedAt, &readAt); err != nil {
+			log.Printf("[Notifications][List] scan error userId=%s err=%v", userID, err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if body.Valid {
+			b := body.String
+			n.Body = &b
+		}
+		if urlStr.Valid {
+			u := urlStr.String
+			n.URL = &u
+		}
+		n.ReadAt = nullTimePtr(readAt)
+		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[Notifications][List] rows error userId=%s err=%v", userID, err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) MarkNotificationReadForUser(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	userID := pathVar(r, "userId")
+	id := pathVar(r, "id")
+	if userID == "" || id == "" {
+		writeError(w, http.StatusBadRequest, "userId and id are required")
+		return
+	}
+	res, err := h.db.Exec(`
+		UPDATE public."Notifications"
+		   SET read_at = COALESCE(read_at, NOW())
+		 WHERE user_id = $1 AND id = $2
+	`, userID, id)
+	if err != nil {
+		log.Printf("[Notifications][Read] exec error userId=%s id=%s err=%v", userID, truncate(id, 80), err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		writeError(w, http.StatusNotFound, "not_found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (h *Handler) createNotification(userID, typ, title string, body *string, urlStr *string) string {
+	id := fmt.Sprintf("n_%d", time.Now().UTC().UnixNano())
+	_, err := h.db.Exec(`
+		INSERT INTO public."Notifications" (id, user_id, type, title, body, url, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+	`, id, userID, typ, title, body, urlStr)
+	if err != nil {
+		log.Printf("[Notifications][Create] insert error userId=%s type=%s err=%v", userID, typ, err)
+		return ""
+	}
+	log.Printf("[Notifications][Create] ok userId=%s id=%s type=%s", userID, id, typ)
+
+	// Realtime: notify UI (so it can show a badge/toast).
+	h.emitEvent(userID, realtimeEvent{
+		Type:   "notification.created",
+		UserID: userID,
+		IDs:    []string{id},
+		Status: typ,
+		At:     time.Now().UTC().Format(time.RFC3339),
+	})
+	return id
+}
+
+// createNotificationOnce inserts a notification only if there isn't already an unread one with the same (type,url).
+// This prevents flooding the user when a provider consistently fails (ex: Meta delete flakiness).
+func (h *Handler) createNotificationOnce(userID, typ, title string, body *string, urlStr *string) string {
+	if urlStr != nil && strings.TrimSpace(*urlStr) != "" {
+		var existingID string
+		err := h.db.QueryRow(`
+			SELECT id
+			  FROM public."Notifications"
+			 WHERE user_id = $1
+			   AND type = $2
+			   AND url = $3
+			   AND read_at IS NULL
+			 ORDER BY created_at DESC
+			 LIMIT 1
+		`, userID, typ, strings.TrimSpace(*urlStr)).Scan(&existingID)
+		if err == nil && strings.TrimSpace(existingID) != "" {
+			log.Printf("[Notifications][Create] skip_duplicate userId=%s type=%s existingId=%s", userID, typ, existingID)
+			return existingID
+		}
+	}
+	return h.createNotification(userID, typ, title, body, urlStr)
 }
 
 // ListPostsForUser returns local posts (draft/scheduled/published) for a given user.
@@ -2178,7 +2345,9 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		if err != nil {
 			results["pinterest"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
 			overallOK = false
-			log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=pinterest posted=%v err=%s", jobID, userID, postID, posted, truncate(err.Error(), 400))
+			detJSON, _ := json.Marshal(details)
+			log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=pinterest posted=%v err=%s details=%s",
+				jobID, userID, postID, posted, truncate(err.Error(), 400), truncate(string(detJSON), 1600))
 		} else {
 			results["pinterest"] = publishProviderResult{OK: true, Posted: posted, Details: details}
 			log.Printf("[PublishJob] provider_ok jobId=%s userId=%s postId=%s provider=pinterest posted=%v", jobID, userID, postID, posted)
@@ -2279,6 +2448,24 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
+}
+
+func parseLimit(r *http.Request, def, min, max int) int {
+	raw := strings.TrimSpace(r.URL.Query().Get("limit"))
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return -1
+	}
+	if n < min {
+		return min
+	}
+	if n > max {
+		return max
+	}
+	return n
 }
 
 type uploadedMedia struct {
@@ -3424,8 +3611,22 @@ func (h *Handler) publishPinterestWithImageURL(ctx context.Context, userID, capt
 
 	// Basic scope guard (Pinterest returns comma-delimited scopes; be permissive).
 	scope := strings.ToLower(tok.Scope)
-	if scope != "" && !(strings.Contains(scope, "pins:write") || strings.Contains(scope, "pins:write_secret")) {
-		return 0, fmt.Errorf("missing_scope"), map[string]interface{}{"scope": tok.Scope, "required": []string{"pins:write"}}
+	if scope != "" {
+		hasPinsWrite := strings.Contains(scope, "pins:write") || strings.Contains(scope, "pins:write_secret")
+		// We fetch boards to select a destination board; older connections that don't include boards scope will fail here.
+		hasBoardsRead := strings.Contains(scope, "boards:read") || strings.Contains(scope, "boards:read_secret")
+		if !hasPinsWrite || !hasBoardsRead {
+			reqScopes := []string{"pins:write", "boards:read"}
+			if !hasPinsWrite && hasBoardsRead {
+				reqScopes = []string{"pins:write"}
+			} else if hasPinsWrite && !hasBoardsRead {
+				reqScopes = []string{"boards:read"}
+			}
+			return 0, fmt.Errorf("missing_scope"), map[string]interface{}{
+				"scope":    tok.Scope,
+				"required": reqScopes,
+			}
+		}
 	}
 
 	// Best-effort expiration check (Pinterest tokens are often long-lived; we don't refresh here).
@@ -3565,7 +3766,12 @@ func (h *Handler) publishPinterestWithImageURL(ctx context.Context, userID, capt
 		pinID, _ := pinParsed["id"].(string)
 		link, _ := pinParsed["link"].(string)
 		if link == "" && pinID != "" {
-			link = fmt.Sprintf("https://www.pinterest.com/pin/%s/", pinID)
+			// If we're using the sandbox API, prefer sandbox web URLs for click-throughs.
+			if strings.Contains(strings.ToLower(apiBase), "api-sandbox.pinterest.com") {
+				link = fmt.Sprintf("https://www-sandbox.pinterest.com/pin/%s/", pinID)
+			} else {
+				link = fmt.Sprintf("https://www.pinterest.com/pin/%s/", pinID)
+			}
 		}
 		local["pinId"] = pinID
 		local["response"] = json.RawMessage(body)
@@ -3595,14 +3801,32 @@ func (h *Handler) publishPinterestWithImageURL(ctx context.Context, userID, capt
 		return 1, nil, local, false
 	}
 
+	// Allow overriding the Pinterest API base (useful for trial apps that must use api-sandbox).
+	apiBase := strings.TrimSpace(os.Getenv("PINTEREST_API_BASE"))
+	if apiBase == "" {
+		apiBase = "https://api.pinterest.com"
+	}
+	if strings.EqualFold(apiBase, "sandbox") {
+		apiBase = "https://api-sandbox.pinterest.com"
+	}
+	details["apiBaseConfigured"] = apiBase
+
 	// Trial apps cannot create pins using the production API host; Pinterest returns code=29 and instructs using api-sandbox.
-	posted, err, det, trial := publishOnce("https://api.pinterest.com")
+	posted, err, det, trial := publishOnce(apiBase)
 	if err == nil {
 		for k, v := range det {
 			details[k] = v
 		}
 		return posted, nil, details
 	}
+	// If we were already using sandbox and still got a "trial/sandbox" error, return the underlying error details.
+	if trial && strings.Contains(strings.ToLower(apiBase), "api-sandbox.pinterest.com") {
+		for k, v := range det {
+			details[k] = v
+		}
+		return 0, fmt.Errorf("pinterest_sandbox_non_2xx"), details
+	}
+
 	if trial {
 		posted2, err2, det2, _ := publishOnce("https://api-sandbox.pinterest.com")
 		if err2 == nil {
@@ -3614,7 +3838,9 @@ func (h *Handler) publishPinterestWithImageURL(ctx context.Context, userID, capt
 		}
 		details["sandboxFallback"] = true
 		details["sandboxError"] = det2
-		return 0, fmt.Errorf("pinterest_trial_requires_sandbox"), details
+		// Return the underlying sandbox error so it's actionable (boards vs create-pin vs auth/scope).
+		log.Printf("[PINPublish] sandbox_failed userId=%s err=%v det=%v", userID, err2, det2)
+		return 0, fmt.Errorf("pinterest_sandbox_failed:%s", err2.Error()), details
 	}
 
 	for k, v := range det {

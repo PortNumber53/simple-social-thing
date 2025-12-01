@@ -280,6 +280,10 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	// Batch delete cached library items for a user
 	r.HandleFunc("/api/social-libraries/delete/user/{userId}", h.DeleteSocialLibrariesForUser).Methods("POST")
 
+	// Notifications (manual actions, errors, etc.)
+	r.HandleFunc("/api/notifications/user/{userId}", h.ListNotificationsForUser).Methods("GET")
+	r.HandleFunc("/api/notifications/{id}/read/user/{userId}", h.MarkNotificationReadForUser).Methods("POST")
+
 	// Publishing: post content to connected networks
 	r.HandleFunc("/api/social-posts/publish/user/{userId}", h.PublishSocialPostForUser).Methods("POST")
 	// Publishing (async): enqueue job + return jobId immediately

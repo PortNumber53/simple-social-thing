@@ -86,7 +86,8 @@ func TestDeleteSocialLibrariesForUser_ValidationAndDBError(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectExec(`DELETE FROM public\."SocialLibraries"`).
+		mock.ExpectQuery(`DELETE FROM public\."SocialLibraries"`).
+			WithArgs("u1", sqlmock.AnyArg()).
 			WillReturnError(sqlmock.ErrCancelled)
 
 		rr := httptest.NewRecorder()

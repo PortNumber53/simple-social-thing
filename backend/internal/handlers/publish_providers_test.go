@@ -308,7 +308,7 @@ func TestPublishPinterestWithImageURL_Success_Minimal(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	h := New(db)
 
-	oauth := pinterestOAuth{AccessToken: "tok", Scope: "pins:write", ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339)}
+	oauth := pinterestOAuth{AccessToken: "tok", Scope: "pins:write,boards:read", ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339)}
 	raw, _ := json.Marshal(oauth)
 	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='pinterest_oauth'`).
 		WithArgs("u1").
