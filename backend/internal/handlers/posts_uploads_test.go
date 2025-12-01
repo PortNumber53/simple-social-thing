@@ -10,11 +10,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/gorilla/mux"
+	"github.com/lib/pq"
 )
 
 func TestListPostsForUser_NoStatus(t *testing.T) {
@@ -26,8 +28,13 @@ func TestListPostsForUser_NoStatus(t *testing.T) {
 	h := New(db)
 
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "teamId", "userId", "content", "status", "scheduledFor", "publishedAt", "createdAt", "updatedAt"}).
-		AddRow("p1", "", "u1", sql.NullString{Valid: true, String: "hi"}, "draft", sql.NullTime{}, sql.NullTime{}, now, now)
+	rows := sqlmock.NewRows([]string{
+		"id", "teamId", "userId", "content", "status", "providers", "media",
+		"scheduledFor", "publishedAt",
+		"lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
+		"createdAt", "updatedAt",
+	}).
+		AddRow("p1", "", "u1", sql.NullString{Valid: true, String: "hi"}, "draft", pq.StringArray{"instagram"}, pq.StringArray{}, sql.NullTime{}, sql.NullTime{}, sql.NullString{}, sql.NullString{}, sql.NullString{}, sql.NullTime{}, now, now)
 
 	mock.ExpectQuery(`FROM public\."Posts"\s+WHERE "userId" = \$1`).
 		WithArgs("u1", 200).
@@ -60,8 +67,13 @@ func TestListPostsForUser_WithStatus(t *testing.T) {
 	h := New(db)
 
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "teamId", "userId", "content", "status", "scheduledFor", "publishedAt", "createdAt", "updatedAt"}).
-		AddRow("p2", "", "u1", sql.NullString{Valid: false}, "scheduled", sql.NullTime{}, sql.NullTime{}, now, now)
+	rows := sqlmock.NewRows([]string{
+		"id", "teamId", "userId", "content", "status", "providers", "media",
+		"scheduledFor", "publishedAt",
+		"lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
+		"createdAt", "updatedAt",
+	}).
+		AddRow("p2", "", "u1", sql.NullString{Valid: false}, "scheduled", pq.StringArray{"facebook"}, pq.StringArray{}, sql.NullTime{}, sql.NullTime{}, sql.NullString{}, sql.NullString{}, sql.NullString{}, sql.NullTime{}, now, now)
 
 	mock.ExpectQuery(`FROM public\."Posts"\s+WHERE "userId" = \$1 AND status = \$2`).
 		WithArgs("u1", "scheduled", 200).
@@ -93,6 +105,14 @@ func TestCreatePostForUser_ValidationErrors(t *testing.T) {
 
 	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/posts/user/u1", bytes.NewBufferString(`{"status":"scheduled"}`))
+	req = mux.SetURLVars(req, map[string]string{"userId": "u1"})
+	h.CreatePostForUser(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 got %d", rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/posts/user/u1", bytes.NewBufferString(`{"status":"scheduled","scheduledFor":"2026-01-01T00:00:00Z"}`))
 	req = mux.SetURLVars(req, map[string]string{"userId": "u1"})
 	h.CreatePostForUser(rr, req)
 	if rr.Code != http.StatusBadRequest {
@@ -134,9 +154,14 @@ func TestCreatePostForUser_Success(t *testing.T) {
 	now := time.Now().UTC()
 
 	mock.ExpectQuery(`INSERT INTO public\."Posts"`).
-		WithArgs(id, "u1", &content, status, (*time.Time)(nil), (*time.Time)(nil)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "teamId", "userId", "content", "status", "scheduledFor", "publishedAt", "createdAt", "updatedAt"}).
-			AddRow(id, "", "u1", sql.NullString{Valid: true, String: content}, status, sql.NullTime{}, sql.NullTime{}, now, now))
+		WithArgs(id, "u1", &content, status, sqlmock.AnyArg(), sqlmock.AnyArg(), (*time.Time)(nil), (*time.Time)(nil)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "teamId", "userId", "content", "status", "providers", "media",
+			"scheduledFor", "publishedAt",
+			"lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
+			"createdAt", "updatedAt",
+		}).
+			AddRow(id, "", "u1", sql.NullString{Valid: true, String: content}, status, pq.StringArray{}, pq.StringArray{}, sql.NullTime{}, sql.NullTime{}, sql.NullString{}, sql.NullString{}, sql.NullString{}, sql.NullTime{}, now, now))
 
 	body, _ := json.Marshal(map[string]any{"id": id, "content": content, "status": status})
 	rr := httptest.NewRecorder()
@@ -188,9 +213,14 @@ func TestUpdatePostForUser_NotFoundAndSuccess(t *testing.T) {
 		now := time.Now().UTC()
 
 		mock.ExpectQuery(`UPDATE public\."Posts"`).
-			WithArgs("p1", "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
-			WillReturnRows(sqlmock.NewRows([]string{"id", "teamId", "userId", "content", "status", "scheduledFor", "publishedAt", "createdAt", "updatedAt"}).
-				AddRow("p1", "", "u1", sql.NullString{Valid: true, String: newContent}, newStatus, sql.NullTime{Valid: true, Time: when}, sql.NullTime{}, now, now))
+			WithArgs("p1", "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+			WillReturnRows(sqlmock.NewRows([]string{
+				"id", "teamId", "userId", "content", "status", "providers", "media",
+				"scheduledFor", "publishedAt",
+				"lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
+				"createdAt", "updatedAt",
+			}).
+				AddRow("p1", "", "u1", sql.NullString{Valid: true, String: newContent}, newStatus, pq.StringArray{"instagram"}, pq.StringArray{}, sql.NullTime{Valid: true, Time: when}, sql.NullTime{}, sql.NullString{}, sql.NullString{}, sql.NullString{}, sql.NullTime{}, now, now))
 
 		body, _ := json.Marshal(map[string]any{"content": newContent, "status": newStatus, "scheduledFor": when})
 		rr := httptest.NewRecorder()
@@ -354,10 +384,13 @@ func TestListUploadsForUser_EmptyAndPopulated(t *testing.T) {
 	}
 
 	// Create two files
-	dir := filepath.Join("media", "uploads", "u1")
-	_ = os.MkdirAll(dir, 0o755)
-	_ = os.WriteFile(filepath.Join(dir, "a.jpg"), []byte{0xff, 0xd8, 0xff}, 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "b.mp4"), []byte{0x00, 0x00, 0x00, 0x18}, 0o644)
+	userHash := mediaUserHash("u1")
+	dir1 := filepath.Join("media", userHash, "aaaaa")
+	dir2 := filepath.Join("media", userHash, "bbbbb")
+	_ = os.MkdirAll(dir1, 0o755)
+	_ = os.MkdirAll(dir2, 0o755)
+	_ = os.WriteFile(filepath.Join(dir1, "a.jpg"), []byte{0xff, 0xd8, 0xff}, 0o644)
+	_ = os.WriteFile(filepath.Join(dir2, "b.mp4"), []byte{0x00, 0x00, 0x00, 0x18}, 0o644)
 
 	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/uploads/user/u1", nil)
@@ -416,7 +449,10 @@ func TestUploadAndDeleteUploadsForUser(t *testing.T) {
 	if !del.OK || del.Deleted < 1 {
 		t.Fatalf("unexpected delete response: %+v", del)
 	}
-	if _, err := os.Stat(filepath.Join("media", "uploads", "u1", up.Items[0].ID)); err == nil {
+	// Ensure the newly uploaded file is deleted (path derived from returned URL).
+	rel := strings.TrimPrefix(up.Items[0].URL, "/media/")
+	local := filepath.Clean(filepath.Join("media", rel))
+	if _, err := os.Stat(local); err == nil {
 		t.Fatalf("expected file deleted")
 	}
 }

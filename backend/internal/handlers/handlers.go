@@ -3,7 +3,9 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -18,7 +20,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -31,6 +35,7 @@ import (
 
 type Handler struct {
 	db *sql.DB
+	rt *realtimeHub
 }
 
 type userSetting struct {
@@ -39,7 +44,7 @@ type userSetting struct {
 }
 
 func New(db *sql.DB) *Handler {
-	return &Handler{db: db}
+	return &Handler{db: db, rt: newRealtimeHub()}
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
@@ -327,6 +332,8 @@ type createOrUpdatePostRequest struct {
 
 	Content      *string    `json:"content,omitempty"`
 	Status       *string    `json:"status,omitempty"`
+	Providers    []string   `json:"providers,omitempty"`
+	Media        []string   `json:"media,omitempty"`
 	ScheduledFor *time.Time `json:"scheduledFor,omitempty"`
 	PublishedAt  *time.Time `json:"publishedAt,omitempty"`
 }
@@ -725,7 +732,11 @@ func (h *Handler) ListPostsForUser(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if status != "" {
 		rows, err = h.db.Query(
-			`SELECT id, COALESCE("teamId",'') as "teamId", "userId", content, status, "scheduledFor", "publishedAt", "createdAt", "updatedAt"
+			`SELECT id, COALESCE("teamId",'') as "teamId", "userId", content, status, COALESCE(providers, ARRAY[]::text[]),
+			        COALESCE(media, ARRAY[]::text[]),
+			        "scheduledFor", "publishedAt",
+			        "lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
+			        "createdAt", "updatedAt"
 			 FROM public."Posts"
 			 WHERE "userId" = $1 AND status = $2
 			 ORDER BY "createdAt" DESC
@@ -734,7 +745,11 @@ func (h *Handler) ListPostsForUser(w http.ResponseWriter, r *http.Request) {
 		)
 	} else {
 		rows, err = h.db.Query(
-			`SELECT id, COALESCE("teamId",'') as "teamId", "userId", content, status, "scheduledFor", "publishedAt", "createdAt", "updatedAt"
+			`SELECT id, COALESCE("teamId",'') as "teamId", "userId", content, status, COALESCE(providers, ARRAY[]::text[]),
+			        COALESCE(media, ARRAY[]::text[]),
+			        "scheduledFor", "publishedAt",
+			        "lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
+			        "createdAt", "updatedAt"
 			 FROM public."Posts"
 			 WHERE "userId" = $1
 			 ORDER BY "createdAt" DESC
@@ -750,7 +765,13 @@ func (h *Handler) ListPostsForUser(w http.ResponseWriter, r *http.Request) {
 
 	for rows.Next() {
 		var p models.Post
-		if err := rows.Scan(&p.ID, &p.TeamID, &p.UserID, &p.Content, &p.Status, &p.ScheduledFor, &p.PublishedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&p.ID, &p.TeamID, &p.UserID, &p.Content, &p.Status, pq.Array(&p.Providers),
+			pq.Array(&p.Media),
+			&p.ScheduledFor, &p.PublishedAt,
+			&p.LastPublishJobID, &p.LastPublishStatus, &p.LastPublishError, &p.LastPublishAttemptAt,
+			&p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -806,14 +827,71 @@ func (h *Handler) CreatePostForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Normalize provider list (trim+lowercase+dedupe) and validate for scheduled posts.
+	var providersList []string
+	if req.Providers != nil {
+		seen := map[string]bool{}
+		for _, p := range req.Providers {
+			pp := strings.TrimSpace(strings.ToLower(p))
+			if pp == "" || seen[pp] {
+				continue
+			}
+			switch pp {
+			case "instagram", "tiktok", "facebook", "youtube", "pinterest", "threads":
+				seen[pp] = true
+				providersList = append(providersList, pp)
+			default:
+				// ignore unknown providers to keep behavior tolerant
+			}
+		}
+	}
+	if status == "scheduled" && len(providersList) == 0 {
+		writeError(w, http.StatusBadRequest, "providers is required when status=scheduled")
+		return
+	}
+
+	// Normalize media rel paths (only accept `/media/...` rel paths) and validate requirements.
+	mediaList := make([]string, 0, len(req.Media))
+	seenMedia := map[string]bool{}
+	for _, m := range req.Media {
+		mm := strings.TrimSpace(m)
+		if mm == "" || seenMedia[mm] {
+			continue
+		}
+		// Only store rel paths that our backend can serve publicly.
+		if !strings.HasPrefix(mm, "/media/") {
+			continue
+		}
+		seenMedia[mm] = true
+		mediaList = append(mediaList, mm)
+	}
+	if status == "scheduled" && len(mediaList) == 0 {
+		for _, p := range providersList {
+			switch p {
+			case "instagram", "pinterest", "tiktok", "youtube":
+				writeError(w, http.StatusBadRequest, "media is required for the selected provider(s)")
+				return
+			}
+		}
+	}
+
 	var out models.Post
 	query := `
-		INSERT INTO public."Posts" (id, "teamId", "userId", content, status, "scheduledFor", "publishedAt", "createdAt", "updatedAt")
-		VALUES ($1, NULL, $2, $3, $4, $5, $6, NOW(), NOW())
-		RETURNING id, COALESCE("teamId",''), "userId", content, status, "scheduledFor", "publishedAt", "createdAt", "updatedAt"
+		INSERT INTO public."Posts" (id, "teamId", "userId", content, status, providers, media, "scheduledFor", "publishedAt", "createdAt", "updatedAt")
+		VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+		RETURNING id, COALESCE("teamId",''), "userId", content, status, COALESCE(providers, ARRAY[]::text[]), COALESCE(media, ARRAY[]::text[]),
+		          "scheduledFor", "publishedAt",
+		          "lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
+		          "createdAt", "updatedAt"
 	`
-	err := h.db.QueryRow(query, id, userID, req.Content, status, req.ScheduledFor, req.PublishedAt).
-		Scan(&out.ID, &out.TeamID, &out.UserID, &out.Content, &out.Status, &out.ScheduledFor, &out.PublishedAt, &out.CreatedAt, &out.UpdatedAt)
+	err := h.db.QueryRow(query, id, userID, req.Content, status, pq.Array(providersList), pq.Array(mediaList), req.ScheduledFor, req.PublishedAt).
+		Scan(
+			&out.ID, &out.TeamID, &out.UserID, &out.Content, &out.Status, pq.Array(&out.Providers),
+			pq.Array(&out.Media),
+			&out.ScheduledFor, &out.PublishedAt,
+			&out.LastPublishJobID, &out.LastPublishStatus, &out.LastPublishError, &out.LastPublishAttemptAt,
+			&out.CreatedAt, &out.UpdatedAt,
+		)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -857,7 +935,48 @@ func (h *Handler) UpdatePostForUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Normalize provider list (trim+lowercase+dedupe). If field omitted, keep nil to represent "no change".
+	var providersArg interface{} = nil
+	if req.Providers != nil {
+		next := make([]string, 0, len(req.Providers))
+		seen := map[string]bool{}
+		for _, p := range req.Providers {
+			pp := strings.TrimSpace(strings.ToLower(p))
+			if pp == "" || seen[pp] {
+				continue
+			}
+			switch pp {
+			case "instagram", "tiktok", "facebook", "youtube", "pinterest", "threads":
+				seen[pp] = true
+				next = append(next, pp)
+			default:
+				// ignore unknown providers
+			}
+		}
+		providersArg = pq.Array(next)
+	}
+
+	// Normalize media rel paths. If field omitted, keep nil to represent "no change".
+	var mediaArg interface{} = nil
+	if req.Media != nil {
+		next := make([]string, 0, len(req.Media))
+		seen := map[string]bool{}
+		for _, m := range req.Media {
+			mm := strings.TrimSpace(m)
+			if mm == "" || seen[mm] {
+				continue
+			}
+			if !strings.HasPrefix(mm, "/media/") {
+				continue
+			}
+			seen[mm] = true
+			next = append(next, mm)
+		}
+		mediaArg = pq.Array(next)
+	}
+
 	var out models.Post
+	clearPublishState := req.Content != nil || req.Status != nil || req.ScheduledFor != nil || req.Providers != nil || req.Media != nil
 	query := `
 		UPDATE public."Posts"
 		SET
@@ -865,12 +984,27 @@ func (h *Handler) UpdatePostForUser(w http.ResponseWriter, r *http.Request) {
 			status = COALESCE($4, status),
 			"scheduledFor" = COALESCE($5, "scheduledFor"),
 			"publishedAt" = COALESCE($6, "publishedAt"),
+			providers = COALESCE($7::text[], providers),
+			media = COALESCE($8::text[], media),
+			"lastPublishJobId" = CASE WHEN $9 THEN NULL ELSE "lastPublishJobId" END,
+			"lastPublishStatus" = CASE WHEN $9 THEN NULL ELSE "lastPublishStatus" END,
+			"lastPublishError" = CASE WHEN $9 THEN NULL ELSE "lastPublishError" END,
+			"lastPublishAttemptAt" = CASE WHEN $9 THEN NULL ELSE "lastPublishAttemptAt" END,
 			"updatedAt" = NOW()
 		WHERE id = $1 AND "userId" = $2
-		RETURNING id, COALESCE("teamId",''), "userId", content, status, "scheduledFor", "publishedAt", "createdAt", "updatedAt"
+		RETURNING id, COALESCE("teamId",''), "userId", content, status, COALESCE(providers, ARRAY[]::text[]), COALESCE(media, ARRAY[]::text[]),
+		          "scheduledFor", "publishedAt",
+		          "lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
+		          "createdAt", "updatedAt"
 	`
-	err := h.db.QueryRow(query, postID, userID, req.Content, req.Status, req.ScheduledFor, req.PublishedAt).
-		Scan(&out.ID, &out.TeamID, &out.UserID, &out.Content, &out.Status, &out.ScheduledFor, &out.PublishedAt, &out.CreatedAt, &out.UpdatedAt)
+	err := h.db.QueryRow(query, postID, userID, req.Content, req.Status, req.ScheduledFor, req.PublishedAt, providersArg, mediaArg, clearPublishState).
+		Scan(
+			&out.ID, &out.TeamID, &out.UserID, &out.Content, &out.Status, pq.Array(&out.Providers),
+			pq.Array(&out.Media),
+			&out.ScheduledFor, &out.PublishedAt,
+			&out.LastPublishJobID, &out.LastPublishStatus, &out.LastPublishError, &out.LastPublishAttemptAt,
+			&out.CreatedAt, &out.UpdatedAt,
+		)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, "not found")
@@ -910,6 +1044,194 @@ func (h *Handler) DeletePostForUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// publishScheduledPostNowOnce claims a single scheduled post and enqueues a PublishJob for immediate processing.
+// The caller provides startJob to actually execute the job (e.g., in a goroutine calling runPublishJob).
+func (h *Handler) publishScheduledPostNowOnce(ctx context.Context, origin, postID, userID string, startJob startPublishJobFunc) (string, error) {
+	if h == nil || h.db == nil {
+		return "", fmt.Errorf("db is nil")
+	}
+	if strings.TrimSpace(postID) == "" || strings.TrimSpace(userID) == "" {
+		return "", fmt.Errorf("postId and userId are required")
+	}
+	if strings.TrimSpace(origin) == "" {
+		origin = "http://localhost"
+	}
+	if startJob == nil {
+		startJob = func(jobID, userID, caption string, providers []string, relMedia []string) {}
+	}
+
+	jobID := fmt.Sprintf("pub_%s", randHex(12))
+
+	// Claim atomically and pull the required fields in one round trip.
+	var (
+		content         sql.NullString
+		providers       []string
+		media           []string
+		newScheduledFor time.Time
+	)
+	err := h.db.QueryRowContext(ctx, `
+		UPDATE public."Posts"
+		   SET "scheduledFor" = NOW(),
+		       "lastPublishJobId" = $3,
+		       "lastPublishStatus" = 'queued',
+		       "lastPublishError" = NULL,
+		       "lastPublishAttemptAt" = NOW(),
+		       "updatedAt" = NOW()
+		 WHERE id = $1
+		   AND "userId" = $2
+		   AND status = 'scheduled'
+		   AND "publishedAt" IS NULL
+		   AND "lastPublishJobId" IS NULL
+		RETURNING content, COALESCE(providers, ARRAY[]::text[]), COALESCE(media, ARRAY[]::text[]), "scheduledFor"
+	`, postID, userID, jobID).Scan(&content, pq.Array(&providers), pq.Array(&media), &newScheduledFor)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", sql.ErrNoRows
+		}
+		return "", err
+	}
+
+	caption := strings.TrimSpace(content.String)
+	if caption == "" {
+		// Don't enqueue a publish job; mark as failed so user can edit & retry.
+		_, _ = h.db.ExecContext(ctx, `
+			UPDATE public."Posts"
+			   SET "lastPublishStatus"='failed',
+			       "lastPublishError"='empty_content',
+			       "updatedAt"=NOW()
+			 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+		`, postID, userID, jobID)
+		return "", fmt.Errorf("empty_content")
+	}
+	if len(providers) == 0 {
+		_, _ = h.db.ExecContext(ctx, `
+			UPDATE public."Posts"
+			   SET "lastPublishStatus"='failed',
+			       "lastPublishError"='missing_providers',
+			       "updatedAt"=NOW()
+			 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+		`, postID, userID, jobID)
+		return "", fmt.Errorf("missing_providers")
+	}
+	if len(media) == 0 {
+		for _, p := range providers {
+			switch p {
+			case "instagram", "pinterest", "tiktok", "youtube":
+				_, _ = h.db.ExecContext(ctx, `
+					UPDATE public."Posts"
+					   SET "lastPublishStatus"='failed',
+					       "lastPublishError"='missing_media',
+					       "updatedAt"=NOW()
+					 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+				`, postID, userID, jobID)
+				return "", fmt.Errorf("missing_media")
+			}
+		}
+	}
+
+	reqSnapshot := map[string]interface{}{
+		"source":       "manual_publish_now",
+		"postId":       postID,
+		"userId":       userID,
+		"providers":    providers,
+		"media":        media,
+		"scheduledFor": newScheduledFor.UTC().Format(time.RFC3339),
+		"publicOrigin": origin,
+	}
+	reqJSON, _ := json.Marshal(reqSnapshot)
+	now := time.Now()
+
+	_, err = h.db.ExecContext(ctx, `
+		INSERT INTO public."PublishJobs"
+		  (id, user_id, status, providers, caption, request_json, created_at, updated_at)
+		VALUES
+		  ($1, $2, 'queued', $3, $4, $5::jsonb, $6, $6)
+	`, jobID, userID, pq.Array(providers), caption, string(reqJSON), now)
+	if err != nil {
+		// Undo claim so it can be retried
+		_, _ = h.db.ExecContext(ctx, `
+			UPDATE public."Posts"
+			   SET "lastPublishJobId"=NULL,
+			       "lastPublishStatus"=NULL,
+			       "lastPublishError"=$4,
+			       "lastPublishAttemptAt"=NULL,
+			       "updatedAt"=NOW()
+			 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+		`, postID, userID, jobID, truncate(err.Error(), 300))
+		return "", err
+	}
+
+	startJob(jobID, userID, caption, providers, media)
+	return jobID, nil
+}
+
+// PublishNowPostForUser enqueues a scheduled post for immediate publishing.
+// Intended for dev/testing to avoid waiting for the scheduled-post poller interval.
+func (h *Handler) PublishNowPostForUser(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	userID := strings.TrimSpace(pathVar(r, "userId"))
+	postID := strings.TrimSpace(pathVar(r, "postId"))
+	if userID == "" || postID == "" {
+		writeError(w, http.StatusBadRequest, "userId and postId are required")
+		return
+	}
+
+	origin := publicOrigin(r)
+	log.Printf("[PublishNow] request userId=%s postId=%s origin=%s", userID, postID, origin)
+	jobID, err := h.publishScheduledPostNowOnce(r.Context(), origin, postID, userID, func(jobID, userID, caption string, providers []string, relMedia []string) {
+		go h.runPublishJob(jobID, userID, caption, publishPostRequest{Providers: providers}, relMedia, origin)
+	})
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// Determine whether it's a missing row vs a conflict (already published/claimed/not scheduled)
+			var status string
+			var lastJob sql.NullString
+			var publishedAt sql.NullTime
+			e2 := h.db.QueryRowContext(r.Context(), `SELECT status, "lastPublishJobId", "publishedAt" FROM public."Posts" WHERE id=$1 AND "userId"=$2`, postID, userID).
+				Scan(&status, &lastJob, &publishedAt)
+			if e2 == sql.ErrNoRows {
+				writeError(w, http.StatusNotFound, "not found")
+				return
+			}
+			if e2 == nil {
+				if publishedAt.Valid {
+					writeError(w, http.StatusConflict, "already_published")
+					return
+				}
+				if lastJob.Valid && strings.TrimSpace(lastJob.String) != "" {
+					writeError(w, http.StatusConflict, "already_queued")
+					return
+				}
+				if strings.TrimSpace(status) != "scheduled" {
+					writeError(w, http.StatusBadRequest, "not_scheduled")
+					return
+				}
+			}
+			writeError(w, http.StatusConflict, "not_publishable")
+			return
+		}
+		if strings.Contains(err.Error(), "empty_content") {
+			writeError(w, http.StatusBadRequest, "empty_content")
+			return
+		}
+		if strings.Contains(err.Error(), "missing_providers") {
+			writeError(w, http.StatusBadRequest, "missing_providers")
+			return
+		}
+		if strings.Contains(err.Error(), "missing_media") {
+			writeError(w, http.StatusBadRequest, "missing_media")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "jobId": jobID, "status": "queued"})
+}
+
 func uploadKind(contentType string, filename string) string {
 	ct := strings.ToLower(strings.TrimSpace(contentType))
 	if strings.HasPrefix(ct, "image/") {
@@ -933,7 +1255,8 @@ func uploadKind(contentType string, filename string) string {
 	return "other"
 }
 
-// ListUploadsForUser lists files under media/uploads/<userId>/ for use as local draft media.
+// ListUploadsForUser lists files for a user for use as local draft media.
+// Files are stored under `media/<hmac(userId)>/<shard>/<hmac(filename)>.ext` and served publicly at `/media/...`.
 func (h *Handler) ListUploadsForUser(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	userID := strings.TrimSpace(vars["userId"])
@@ -942,8 +1265,9 @@ func (h *Handler) ListUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir := filepath.Join("media", "uploads", userID)
-	entries, err := os.ReadDir(dir)
+	userHash := mediaUserHash(userID)
+	baseDir := filepath.Join("media", userHash)
+	shards, err := os.ReadDir(baseDir)
 	if err != nil {
 		// If directory doesn't exist yet, return empty list.
 		if os.IsNotExist(err) {
@@ -954,41 +1278,57 @@ func (h *Handler) ListUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items := make([]uploadItem, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
+	items := make([]uploadItem, 0, 64)
+	for _, shard := range shards {
+		if shard == nil || !shard.IsDir() {
 			continue
 		}
-		fn := e.Name()
-		if fn == "" {
+		shardName := strings.TrimSpace(shard.Name())
+		if shardName == "" {
 			continue
 		}
-		ext := strings.ToLower(filepath.Ext(fn))
-		ct := ""
-		if ext != "" {
-			ct = mime.TypeByExtension(ext)
+		dir := filepath.Join(baseDir, shardName)
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue
 		}
-		kind := uploadKind(ct, fn)
-		size := 0
-		if info, err := e.Info(); err == nil {
-			if info.Size() > 0 && info.Size() < 1<<31 {
-				size = int(info.Size())
+		for _, e := range files {
+			if e == nil || e.IsDir() {
+				continue
 			}
+			fn := strings.TrimSpace(e.Name())
+			if fn == "" {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(fn))
+			ct := ""
+			if ext != "" {
+				ct = mime.TypeByExtension(ext)
+			}
+			kind := uploadKind(ct, fn)
+			size := 0
+			if info, err := e.Info(); err == nil {
+				if info.Size() > 0 && info.Size() < 1<<31 {
+					size = int(info.Size())
+				}
+			}
+			items = append(items, uploadItem{
+				ID:          fn, // stable identifier used for delete selection
+				Filename:    fn,
+				URL:         fmt.Sprintf("/media/%s/%s/%s", userHash, shardName, fn),
+				ContentType: ct,
+				Size:        size,
+				Kind:        kind,
+			})
 		}
-		items = append(items, uploadItem{
-			ID:          fn,
-			Filename:    fn,
-			URL:         fmt.Sprintf("/media/uploads/%s/%s", userID, fn),
-			ContentType: ct,
-			Size:        size,
-			Kind:        kind,
-		})
 	}
 
+	// Keep stable-ish ordering for UI (by filename which includes a randomish hash).
+	sort.Slice(items, func(i, j int) bool { return items[i].Filename < items[j].Filename })
 	writeJSON(w, http.StatusOK, uploadsListResponse{OK: true, Items: items})
 }
 
-// UploadUploadsForUser accepts multipart files and stores them under media/uploads/<userId>/.
+// UploadUploadsForUser accepts multipart files and stores them under `media/<hmac(userId)>/...`.
 // Field name supported: files (preferred) or media (fallback).
 func (h *Handler) UploadUploadsForUser(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
@@ -1095,7 +1435,8 @@ func min(a, b int) int {
 	return b
 }
 
-// DeleteUploadsForUser deletes uploaded files by id (filename) under media/uploads/<userId>/.
+// DeleteUploadsForUser deletes uploaded files by id (hashed filename) under `media/<hmac(userId)>/...`.
+// Back-compat: also attempts deletion under the legacy directory `media/uploads/<userId>/`.
 func (h *Handler) DeleteUploadsForUser(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -1139,13 +1480,55 @@ func (h *Handler) DeleteUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir := filepath.Join("media", "uploads", userID)
 	var deleted int64 = 0
+
+	// New hashed layout
+	userHash := mediaUserHash(userID)
+	baseDir := filepath.Join("media", userHash)
+	known := map[string]string{} // filename -> absolute path
+	if shards, err := os.ReadDir(baseDir); err == nil {
+		for _, shard := range shards {
+			if shard == nil || !shard.IsDir() {
+				continue
+			}
+			shardName := strings.TrimSpace(shard.Name())
+			if shardName == "" {
+				continue
+			}
+			dir := filepath.Join(baseDir, shardName)
+			files, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, f := range files {
+				if f == nil || f.IsDir() {
+					continue
+				}
+				fn := strings.TrimSpace(f.Name())
+				if fn == "" {
+					continue
+				}
+				// Only map the specific ids requested (keeps scan cheap).
+				if seen[fn] {
+					known[fn] = filepath.Join(dir, fn)
+				}
+			}
+		}
+	}
 	for _, id := range ids {
-		path := filepath.Join(dir, id)
-		// Only delete if within dir.
+		if p := known[id]; p != "" {
+			if err := os.Remove(p); err == nil {
+				deleted++
+			}
+		}
+	}
+
+	// Legacy layout fall-back
+	legacyDir := filepath.Join("media", "uploads", userID)
+	for _, id := range ids {
+		path := filepath.Join(legacyDir, id)
 		clean := filepath.Clean(path)
-		if !strings.HasPrefix(clean, filepath.Clean(dir)+string(filepath.Separator)) {
+		if !strings.HasPrefix(clean, filepath.Clean(legacyDir)+string(filepath.Separator)) {
 			continue
 		}
 		if err := os.Remove(clean); err == nil {
@@ -1337,6 +1720,9 @@ func (h *Handler) EnqueuePublishJobForUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	log.Printf("[PublishJob] enqueued jobId=%s userId=%s providers=%v media=%d dryRun=%v origin=%s",
+		jobID, userID, reqObj.Providers, len(relMedia), reqObj.DryRun, publicOrigin(r))
+
 	// Fire and forget: run in background (uses DB for status, so any instance can serve status reads).
 	go h.runPublishJob(jobID, userID, caption, reqObj, relMedia, publicOrigin(r))
 
@@ -1410,6 +1796,34 @@ func (h *Handler) GetPublishJob(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRequest, relMedia []string, origin string) {
 	start := time.Now()
+	// If this job is tied to a scheduled/manual publish-now post, fetch its id for better logging.
+	postID := ""
+	postStatus := ""
+	var postScheduledFor sql.NullTime
+	postScheduledForStr := ""
+	{
+		var pid sql.NullString
+		var st sql.NullString
+		// Best-effort only; do not block job execution on logging.
+		_ = h.db.QueryRow(`
+			SELECT id, status, "scheduledFor"
+			  FROM public."Posts"
+			 WHERE "lastPublishJobId"=$1
+			 LIMIT 1
+		`, jobID).Scan(&pid, &st, &postScheduledFor)
+		if pid.Valid {
+			postID = strings.TrimSpace(pid.String)
+		}
+		if st.Valid {
+			postStatus = strings.TrimSpace(st.String)
+		}
+		if postScheduledFor.Valid {
+			postScheduledForStr = postScheduledFor.Time.UTC().Format(time.RFC3339)
+		}
+	}
+
+	log.Printf("[PublishJob] start jobId=%s userId=%s postId=%s postStatus=%s scheduledFor=%s providers=%v relMedia=%d dryRun=%v origin=%s",
+		jobID, userID, postID, postStatus, postScheduledForStr, req.Providers, len(relMedia), req.DryRun, origin)
 	defer func() {
 		if rec := recover(); rec != nil {
 			msg := fmt.Sprintf("panic: %v", rec)
@@ -1419,6 +1833,14 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 				   SET status='failed', error=$2, finished_at=NOW(), updated_at=NOW()
 				 WHERE id=$1
 			`, jobID, msg)
+			// Best-effort: if this was triggered by a scheduled post, mark it as failed too.
+			_, _ = h.db.Exec(`
+				UPDATE public."Posts"
+				   SET "lastPublishStatus"='failed',
+				       "lastPublishError"=$2,
+				       "updatedAt"=NOW()
+				 WHERE "lastPublishJobId"=$1
+			`, jobID, truncate(msg, 400))
 		}
 	}()
 
@@ -1427,6 +1849,24 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		   SET status='running', started_at=NOW(), updated_at=NOW()
 		 WHERE id=$1
 	`, jobID)
+	// If this is tied to a scheduled post, reflect job state there too.
+	_, _ = h.db.Exec(`
+		UPDATE public."Posts"
+		   SET "lastPublishStatus"='running',
+		       "updatedAt"=NOW()
+		 WHERE "lastPublishJobId"=$1
+	`, jobID)
+
+	// Realtime: let the UI know we're actively processing.
+	if strings.TrimSpace(postID) != "" {
+		h.emitEvent(userID, realtimeEvent{
+			Type:   "post.updated",
+			PostID: postID,
+			JobID:  jobID,
+			Status: "running",
+			At:     time.Now().UTC().Format(time.RFC3339),
+		})
+	}
 
 	want := map[string]bool{}
 	if len(req.Providers) > 0 {
@@ -1454,24 +1894,30 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		if err != nil {
 			overallOK = false
 			results["media"] = publishProviderResult{OK: false, Error: "failed_to_load_media", Details: map[string]interface{}{"error": err.Error()}}
+			log.Printf("[PublishJob] media_load_failed jobId=%s userId=%s postId=%s err=%s", jobID, userID, postID, truncate(err.Error(), 400))
 		} else {
 			mediaFiles = mf
+			log.Printf("[PublishJob] media_loaded jobId=%s userId=%s postId=%s files=%d", jobID, userID, postID, len(mediaFiles))
 		}
 	}
 
 	// Facebook
 	if want["facebook"] {
+		log.Printf("[PublishJob] provider_start jobId=%s userId=%s postId=%s provider=facebook pages=%d", jobID, userID, postID, len(req.FacebookPageIDs))
 		posted, err, details := h.publishFacebookPages(context.Background(), userID, caption, req.FacebookPageIDs, mediaFiles, req.DryRun)
 		if err != nil {
 			results["facebook"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
 			overallOK = false
+			log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=facebook posted=%v err=%s", jobID, userID, postID, posted, truncate(err.Error(), 400))
 		} else {
 			results["facebook"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+			log.Printf("[PublishJob] provider_ok jobId=%s userId=%s postId=%s provider=facebook posted=%v", jobID, userID, postID, posted)
 		}
 	}
 
 	// Instagram (requires public image URLs)
 	if want["instagram"] {
+		log.Printf("[PublishJob] provider_start jobId=%s userId=%s postId=%s provider=instagram images=%d origin=%s", jobID, userID, postID, len(relMedia), origin)
 		imageURLs := make([]string, 0, len(relMedia))
 		for _, u := range relMedia {
 			imageURLs = append(imageURLs, strings.TrimRight(origin, "/")+u)
@@ -1480,8 +1926,10 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		if err != nil {
 			results["instagram"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
 			overallOK = false
+			log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=instagram posted=%v err=%s", jobID, userID, postID, posted, truncate(err.Error(), 400))
 		} else {
 			results["instagram"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+			log.Printf("[PublishJob] provider_ok jobId=%s userId=%s postId=%s provider=instagram posted=%v", jobID, userID, postID, posted)
 		}
 	}
 
@@ -1502,8 +1950,10 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		if err != nil {
 			results["tiktok"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
 			overallOK = false
+			log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=tiktok posted=%v err=%s", jobID, userID, postID, posted, truncate(err.Error(), 400))
 		} else {
 			results["tiktok"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+			log.Printf("[PublishJob] provider_ok jobId=%s userId=%s postId=%s provider=tiktok posted=%v", jobID, userID, postID, posted)
 		}
 	}
 
@@ -1583,8 +2033,10 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		if err != nil {
 			results["pinterest"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
 			overallOK = false
+			log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=pinterest posted=%v err=%s", jobID, userID, postID, posted, truncate(err.Error(), 400))
 		} else {
 			results["pinterest"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+			log.Printf("[PublishJob] provider_ok jobId=%s userId=%s postId=%s provider=pinterest posted=%v", jobID, userID, postID, posted)
 		}
 	}
 
@@ -1618,7 +2070,45 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		 WHERE id=$1
 	`, jobID, finalStatus, string(resJSON), errText)
 
-	log.Printf("[PublishJob] done jobId=%s userId=%s status=%s dur=%dms", jobID, userID, finalStatus, time.Since(start).Milliseconds())
+	// If this job was spawned by a scheduled post, update that post's publish tracking and mark it published on success.
+	postErr := ""
+	if !overallOK {
+		postErr = "one_or_more_providers_failed"
+	}
+	_, _ = h.db.Exec(`
+		UPDATE public."Posts"
+		   SET "lastPublishStatus"=$2,
+		       "lastPublishError"=CASE WHEN $2='failed' THEN $3 ELSE NULL END,
+		       status=CASE WHEN $2='completed' THEN 'published' ELSE status END,
+		       "publishedAt"=CASE WHEN $2='completed' THEN NOW() ELSE "publishedAt" END,
+		       "updatedAt"=NOW()
+		 WHERE "lastPublishJobId"=$1
+	`, jobID, finalStatus, postErr)
+
+	// Summarize failures (no provider details to avoid leaking sensitive payloads).
+	failures := make([]string, 0, 6)
+	for prov, rr := range results {
+		if !rr.OK {
+			msg := rr.Error
+			if strings.TrimSpace(msg) == "" {
+				msg = "failed"
+			}
+			failures = append(failures, fmt.Sprintf("%s:%s", prov, truncate(msg, 160)))
+		}
+	}
+	sort.Strings(failures)
+	log.Printf("[PublishJob] done jobId=%s userId=%s postId=%s status=%s dur=%dms failures=%v", jobID, userID, postID, finalStatus, time.Since(start).Milliseconds(), failures)
+
+	// Realtime notification (proxied to frontend via Worker WS).
+	if strings.TrimSpace(postID) != "" {
+		h.emitEvent(userID, realtimeEvent{
+			Type:   "post.publish",
+			PostID: postID,
+			JobID:  jobID,
+			Status: finalStatus,
+			At:     time.Now().UTC().Format(time.RFC3339),
+		})
+	}
 }
 
 type fbOAuthPageRow struct {
@@ -1654,6 +2144,56 @@ type uploadedMedia struct {
 
 var reSafeFilename = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 
+var (
+	mediaHMACSecretOnce sync.Once
+	mediaHMACSecret     []byte
+)
+
+func getMediaHMACSecret() []byte {
+	mediaHMACSecretOnce.Do(func() {
+		// NOTE: production should set MEDIA_URL_HMAC_SECRET to a strong random value (e.g. from Jenkins secrets).
+		// For local dev we fall back to a fixed value to keep URLs stable across restarts.
+		sec := strings.TrimSpace(os.Getenv("MEDIA_URL_HMAC_SECRET"))
+		if sec == "" {
+			sec = "dev-insecure-media-secret"
+			log.Printf("[Media] WARNING: MEDIA_URL_HMAC_SECRET is not set; using a dev default (do not use in production)")
+		}
+		mediaHMACSecret = []byte(sec)
+	})
+	return mediaHMACSecret
+}
+
+func hmacSHA256Hex(key []byte, msg string) string {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(msg))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func mediaUserHash(userID string) string {
+	userID = strings.TrimSpace(userID)
+	return hmacSHA256Hex(getMediaHMACSecret(), "user:"+userID)
+}
+
+func extForUpload(filename string, contentType string) string {
+	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(filename)))
+	if ext != "" && len(ext) <= 16 && strings.HasPrefix(ext, ".") {
+		return ext
+	}
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	if semi := strings.Index(ct, ";"); semi >= 0 {
+		ct = strings.TrimSpace(ct[:semi])
+	}
+	if ct != "" {
+		if exts, _ := mime.ExtensionsByType(ct); len(exts) > 0 {
+			e := strings.ToLower(strings.TrimSpace(exts[0]))
+			if e != "" && strings.HasPrefix(e, ".") && len(e) <= 16 {
+				return e
+			}
+		}
+	}
+	return ".bin"
+}
+
 func publicOrigin(r *http.Request) string {
 	proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
 	if proto == "" {
@@ -1686,28 +2226,42 @@ func saveUploadedMedia(userID string, media []uploadedMedia) ([]string, map[stri
 	if len(media) == 0 {
 		return nil, details, nil
 	}
-	dir := filepath.Join("media", "uploads", userID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, details, err
-	}
+	userHash := mediaUserHash(userID)
 	rel := make([]string, 0, len(media))
 	files := make([]map[string]interface{}, 0, len(media))
 	for _, m := range media {
-		name := strings.TrimSpace(m.Filename)
-		if name == "" {
-			name = "upload.bin"
+		orig := strings.TrimSpace(m.Filename)
+		if orig == "" {
+			orig = "upload.bin"
 		}
-		name = reSafeFilename.ReplaceAllString(name, "_")
-		fn := fmt.Sprintf("%s_%s", randHex(8), name)
+		orig = reSafeFilename.ReplaceAllString(orig, "_")
+		ext := extForUpload(orig, m.ContentType)
+
+		nonce := randHex(16)
+		fileHash := hmacSHA256Hex(getMediaHMACSecret(), fmt.Sprintf("file:%s:%s:%s", strings.TrimSpace(userID), nonce, orig))
+		prefix := fileHash
+		if len(prefix) > 5 {
+			prefix = prefix[:5]
+		}
+		if prefix == "" {
+			prefix = "00000"
+		}
+		fn := fileHash + ext
+		dir := filepath.Join("media", userHash, prefix)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, details, err
+		}
 		path := filepath.Join(dir, fn)
 		if err := os.WriteFile(path, m.Bytes, 0o644); err != nil {
 			return nil, details, err
 		}
-		rel = append(rel, fmt.Sprintf("/media/uploads/%s/%s", userID, fn))
+		relURL := fmt.Sprintf("/media/%s/%s/%s", userHash, prefix, fn)
+		rel = append(rel, relURL)
 		files = append(files, map[string]interface{}{
 			"filename":    fn,
 			"contentType": m.ContentType,
 			"size":        len(m.Bytes),
+			"url":         relURL,
 		})
 	}
 	details["saved"] = files

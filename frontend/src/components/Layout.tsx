@@ -1,6 +1,7 @@
 import React, { type ReactNode } from 'react';
 import { TopNavigation } from './TopNavigation';
 import { Footer } from './Footer';
+import { StatusBar } from './StatusBar';
 
 interface LayoutProps {
   children: ReactNode;
@@ -15,6 +16,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, headerPaddingClass = '
         {children}
       </div>
       <Footer />
+      <StatusBar />
     </main>
   );
 };

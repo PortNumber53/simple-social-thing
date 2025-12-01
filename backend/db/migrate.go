@@ -40,14 +40,18 @@ func defaultDeps() deps {
 }
 
 type options struct {
-	direction string
-	steps     int
+	direction  string
+	steps      int
+	force      int
+	forceDirty bool
 }
 
 type migrator interface {
 	Up() error
 	Down() error
 	Steps(n int) error
+	Force(version int) error
+	Version() (version uint, dirty bool, err error)
 }
 
 // These factories are overridden in tests to avoid requiring a real Postgres database connection.
@@ -76,6 +80,8 @@ func parseArgs(args []string) (options, error) {
 	var o options
 	fs.StringVar(&o.direction, "direction", "up", "Migration direction: up or down")
 	fs.IntVar(&o.steps, "steps", 0, "Number of migration steps (0 = all)")
+	fs.IntVar(&o.force, "force", -1, "Force set migration version (clears dirty state). Example: -force=12")
+	fs.BoolVar(&o.forceDirty, "force-dirty", false, "If the database is dirty, force it to the current version and exit")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -113,6 +119,31 @@ func run(args []string, d deps) (string, error) {
 		return "", fmt.Errorf("Failed to connect to database: %w", err)
 	}
 	defer db.Close()
+
+	// If requested, forcibly clear dirty state / set version and exit.
+	if o.force >= 0 || o.forceDirty {
+		m, err := newMigrator(db)
+		if err != nil {
+			return "", err
+		}
+		if o.forceDirty {
+			v, dirty, verr := m.Version()
+			if verr != nil {
+				return "", fmt.Errorf("Failed to read migration version: %w", verr)
+			}
+			if !dirty {
+				return "Database is not dirty (no force needed)", nil
+			}
+			if err := m.Force(int(v)); err != nil {
+				return "", fmt.Errorf("Failed to force dirty version %d: %w", v, err)
+			}
+			return fmt.Sprintf("Forced dirty database to version %d", v), nil
+		}
+		if err := m.Force(o.force); err != nil {
+			return "", fmt.Errorf("Failed to force version %d: %w", o.force, err)
+		}
+		return fmt.Sprintf("Forced database to version %d", o.force), nil
+	}
 
 	if d.migrateF == nil {
 		return "", fmt.Errorf("migrateF dependency is required")

@@ -80,6 +80,18 @@ go run db/migrate.go -direction=down
 
 # Apply specific number of migrations
 go run db/migrate.go -direction=up -steps=1
+
+# If you see: "Dirty database version X. Fix and force version."
+# (e.g., after an interrupted migration), the safest recovery is usually:
+# 1) Force to the previous version (X-1) to clear the dirty flag
+# 2) Re-run migrations (so X is applied again)
+#
+# Example for X=12:
+# go run db/migrate.go -force=11
+# go run db/migrate.go -direction=up
+#
+# (Advanced) If you know X fully applied and only the dirty flag is wrong:
+# go run db/migrate.go -force=X
 ```
 
 ### Create new migration

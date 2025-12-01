@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
+import { IntegrationsProvider } from '../../contexts/IntegrationsContext';
 import { Library } from '../Library';
 
 class FakeXHR {
@@ -62,11 +63,18 @@ describe('Library', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        if (url === '/api/integrations/status') {
+          // Library reads connected networks from IntegrationsProvider.
+          return new Response(JSON.stringify({ instagram: { connected: true } }), { status: 200 });
+        }
         if (url.startsWith('/api/local-library/items?status=draft')) {
           return new Response(JSON.stringify([{ id: 'p1', status: 'draft', content: 'hello' }]), { status: 200 });
         }
         if (url.startsWith('/api/local-library/items?status=scheduled')) {
           return new Response(JSON.stringify([{ id: 'p2', status: 'scheduled', content: 'later' }]), { status: 200 });
+        }
+        if (url === '/api/local-library/items/p2/publish-now' && init?.method === 'POST') {
+          return new Response(JSON.stringify({ ok: true, jobId: 'pub_123', status: 'queued' }), { status: 200 });
         }
         if (url === '/api/user-settings') {
           return new Response(JSON.stringify({ ok: true, data: {} }), { status: 200 });
@@ -85,7 +93,9 @@ describe('Library', () => {
     render(
       <MemoryRouter>
         <AuthProvider>
-          <Library />
+          <IntegrationsProvider>
+            <Library />
+          </IntegrationsProvider>
         </AuthProvider>
       </MemoryRouter>,
     );
@@ -97,6 +107,10 @@ describe('Library', () => {
     // Switch tab to Scheduled (triggers fetch)
     await u.click(screen.getByRole('button', { name: /Scheduled/i }));
     await waitFor(() => expect(screen.getByText(/1 item\(s\)/i)).toBeInTheDocument());
+
+    // Publish Now appears for scheduled items
+    await u.click(screen.getByRole('button', { name: /Publish Now/i }));
+    await waitFor(() => expect(screen.getByText(/Queued publish job/i)).toBeInTheDocument());
 
     // Upload file via hidden input
     const input = document.querySelector('input[type="file"]') as HTMLInputElement | null;
@@ -141,11 +155,49 @@ describe('Library', () => {
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        if (url === '/api/integrations/status') {
+          return new Response(JSON.stringify({ instagram: { connected: true } }), { status: 200 });
+        }
         if (url.startsWith('/api/local-library/items?status=draft')) {
           return new Response(JSON.stringify([{ id: 'p1', status: 'draft', content: 'hello' }]), { status: 200 });
         }
         if (url === '/api/local-library/items' && init?.method === 'POST') {
-          return new Response(JSON.stringify({ id: 'created1', status: 'draft', content: 'new content' }), { status: 200 });
+          let parsed: any = null;
+          try {
+            parsed = init?.body ? JSON.parse(String(init.body)) : null;
+          } catch {
+            parsed = null;
+          }
+          const status = parsed?.status === 'scheduled' ? 'scheduled' : 'draft';
+          return new Response(
+            JSON.stringify({
+              id: 'created1',
+              status,
+              content: parsed?.content ?? 'new content',
+              providers: parsed?.providers ?? [],
+              scheduledFor: parsed?.scheduledFor ?? null,
+            }),
+            { status: 200 },
+          );
+        }
+        if (url === '/api/local-library/items/created1' && init?.method === 'PUT') {
+          let parsed: any = null;
+          try {
+            parsed = init?.body ? JSON.parse(String(init.body)) : null;
+          } catch {
+            parsed = null;
+          }
+          const status = parsed?.status === 'scheduled' ? 'scheduled' : 'draft';
+          return new Response(
+            JSON.stringify({
+              id: 'created1',
+              status,
+              content: parsed?.content ?? 'new content',
+              providers: parsed?.providers ?? [],
+              scheduledFor: parsed?.scheduledFor ?? null,
+            }),
+            { status: 200 },
+          );
         }
         if (url.startsWith('/api/local-library/items/p1') && init?.method === 'DELETE') {
           return new Response(JSON.stringify({ ok: true }), { status: 200 });
@@ -157,7 +209,9 @@ describe('Library', () => {
     render(
       <MemoryRouter>
         <AuthProvider>
-          <Library />
+          <IntegrationsProvider>
+            <Library />
+          </IntegrationsProvider>
         </AuthProvider>
       </MemoryRouter>,
     );
@@ -171,7 +225,34 @@ describe('Library', () => {
     await u.click(screen.getByRole('button', { name: /^Save$/i }));
     expect(screen.getByText(/Pick a valid scheduled time/i)).toBeInTheDocument();
 
-    // Switch back to draft, type content, save create
+    // Provide a scheduled time but no networks -> should show network validation error
+    const scheduledInput = document.querySelector('input[type="datetime-local"]') as HTMLInputElement | null;
+    if (!scheduledInput) throw new Error('missing scheduled input');
+    await u.clear(scheduledInput);
+    await u.type(scheduledInput, '2030-01-01T10:00');
+    await u.click(screen.getByRole('button', { name: /^Save$/i }));
+    expect(screen.getByText(/Select at least one network/i)).toBeInTheDocument();
+
+    // Select a network that does not require media (should still be allowed for planning)
+    await u.click(screen.getByLabelText('Facebook'));
+    await u.click(screen.getByRole('button', { name: /^Save$/i }));
+    await waitFor(() => {
+      expect(document.body.textContent || '').toContain('ID: created1');
+    });
+
+    // Assert the created request included providers
+    await waitFor(() => {
+      const calls = (globalThis.fetch as any).mock.calls as any[];
+      const createCall = calls.find((c: any[]) => String(c?.[0] || '') === '/api/local-library/items' && c?.[1]?.method === 'POST');
+      expect(createCall).toBeTruthy();
+      const body = JSON.parse(String(createCall?.[1]?.body || '{}'));
+      expect(body.status).toBe('scheduled');
+      expect(Array.isArray(body.providers)).toBe(true);
+      expect(body.providers).toContain('facebook');
+      expect(typeof body.scheduledFor).toBe('string');
+    });
+
+    // Switch back to draft, type content, save (updates same post)
     await u.selectOptions(statusSelect, 'draft');
     const textarea = document.querySelector('textarea') as HTMLTextAreaElement | null;
     if (!textarea) throw new Error('missing editor textarea');
@@ -180,6 +261,12 @@ describe('Library', () => {
     await u.click(screen.getByRole('button', { name: /^Save$/i }));
     await waitFor(() => {
       expect(document.body.textContent || '').toContain('ID: created1');
+    });
+
+    await waitFor(() => {
+      const calls = (globalThis.fetch as any).mock.calls as any[];
+      const didPut = calls.some((c: any[]) => String(c?.[0] || '') === '/api/local-library/items/created1' && c?.[1]?.method === 'PUT');
+      expect(didPut).toBe(true);
     });
 
     // Delete the existing list item (p1) if rendered

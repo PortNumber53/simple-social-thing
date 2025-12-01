@@ -1,4 +1,4 @@
-import { buildSidCookie, getCookie } from './http';
+import { buildSidCookie, getCookie, publicUrlForRequest } from './http';
 
 export async function ensureBackendUser(backendOrigin: string, sid: string) {
   // best effort
@@ -22,9 +22,12 @@ export async function requireSid(opts: {
   const { request, headers, backendOrigin, allowLocalAutoCreate } = opts;
   const cookie = request.headers.get('Cookie') || '';
   let sid = getCookie(cookie, 'sid');
-  const requestUrl = request.url;
-  const u = new URL(requestUrl);
-  const isLocal = u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+  const publicUrl = publicUrlForRequest(request);
+  const requestUrl = publicUrl.toString();
+  const isLocal =
+    publicUrl.hostname === 'localhost' ||
+    publicUrl.hostname === '127.0.0.1' ||
+    publicUrl.hostname.endsWith('.dev.portnumber53.com');
 
   if (!sid && allowLocalAutoCreate && isLocal) {
     sid = crypto.randomUUID();

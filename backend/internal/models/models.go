@@ -3,11 +3,11 @@ package models
 import "time"
 
 type User struct {
-	ID        string     `json:"id"`
-	Email     string     `json:"email"`
-	Name      string     `json:"name"`
-	ImageURL  *string    `json:"imageUrl,omitempty"`
-	CreatedAt time.Time  `json:"createdAt"`
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	ImageURL  *string   `json:"imageUrl,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 type SocialConnection struct {
@@ -41,13 +41,19 @@ type TeamMember struct {
 }
 
 type Post struct {
-	ID           string     `json:"id"`
-	TeamID       string     `json:"teamId"`
-	UserID       string     `json:"userId"`
-	Content      *string    `json:"content,omitempty"`
-	Status       string     `json:"status"`
-	ScheduledFor *time.Time `json:"scheduledFor,omitempty"`
-	PublishedAt  *time.Time `json:"publishedAt,omitempty"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	ID                   string     `json:"id"`
+	TeamID               string     `json:"teamId"`
+	UserID               string     `json:"userId"`
+	Content              *string    `json:"content,omitempty"`
+	Status               string     `json:"status"`
+	Providers            []string   `json:"providers,omitempty"`
+	Media                []string   `json:"media,omitempty"`
+	ScheduledFor         *time.Time `json:"scheduledFor,omitempty"`
+	PublishedAt          *time.Time `json:"publishedAt,omitempty"`
+	LastPublishJobID     *string    `json:"lastPublishJobId,omitempty"`
+	LastPublishStatus    *string    `json:"lastPublishStatus,omitempty"`
+	LastPublishError     *string    `json:"lastPublishError,omitempty"`
+	LastPublishAttemptAt *time.Time `json:"lastPublishAttemptAt,omitempty"`
+	CreatedAt            time.Time  `json:"createdAt"`
+	UpdatedAt            time.Time  `json:"updatedAt"`
 }

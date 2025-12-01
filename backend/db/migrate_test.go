@@ -20,12 +20,28 @@ func TestParseArgs_Defaults(t *testing.T) {
 	if o.steps != 0 {
 		t.Fatalf("expected steps 0, got %d", o.steps)
 	}
+	if o.force != -1 {
+		t.Fatalf("expected force -1, got %d", o.force)
+	}
+	if o.forceDirty {
+		t.Fatalf("expected forceDirty false")
+	}
 }
 
 func TestParseArgs_InvalidDirection(t *testing.T) {
 	_, err := parseArgs([]string{"-direction", "sideways"})
 	if err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+func TestParseArgs_Force(t *testing.T) {
+	o, err := parseArgs([]string{"-force", "12"})
+	if err != nil {
+		t.Fatalf("parseArgs: %v", err)
+	}
+	if o.force != 12 {
+		t.Fatalf("expected force 12, got %d", o.force)
 	}
 }
 
@@ -191,11 +207,17 @@ type fakeMigrator struct {
 	upCalls    int
 	downCalls  int
 	stepsCalls []int
+	forceCalls []int
+	version    uint
+	dirty      bool
+	versionErr error
 }
 
-func (f *fakeMigrator) Up() error         { f.upCalls++; return nil }
-func (f *fakeMigrator) Down() error       { f.downCalls++; return nil }
-func (f *fakeMigrator) Steps(n int) error { f.stepsCalls = append(f.stepsCalls, n); return nil }
+func (f *fakeMigrator) Up() error                    { f.upCalls++; return nil }
+func (f *fakeMigrator) Down() error                  { f.downCalls++; return nil }
+func (f *fakeMigrator) Steps(n int) error            { f.stepsCalls = append(f.stepsCalls, n); return nil }
+func (f *fakeMigrator) Force(v int) error            { f.forceCalls = append(f.forceCalls, v); return nil }
+func (f *fakeMigrator) Version() (uint, bool, error) { return f.version, f.dirty, f.versionErr }
 
 func TestPerformMigrations_UsesNewMigratorAndAppliesDirection(t *testing.T) {
 	prevNew := newMigrator
@@ -216,6 +238,51 @@ func TestPerformMigrations_UsesNewMigratorAndAppliesDirection(t *testing.T) {
 	}
 	if fm.upCalls != 1 {
 		t.Fatalf("expected Up called once, got %d", fm.upCalls)
+	}
+}
+
+func TestRun_ForceVersion_UsesMigratorForceAndExits(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	prevNew := newMigrator
+	prevWith := withPostgresInstance
+	prevNewMigrate := newMigrateWithDB
+	defer func() {
+		newMigrator = prevNew
+		withPostgresInstance = prevWith
+		newMigrateWithDB = prevNewMigrate
+	}()
+
+	fm := &fakeMigrator{}
+	withPostgresInstance = func(_ *sql.DB) (migratedb.Driver, error) { return nil, nil }
+	newMigrateWithDB = func(string, string, migratedb.Driver) (migrator, error) { return fm, nil }
+
+	msg, err := run([]string{"-force", "12"}, deps{
+		loadEnv: func(...string) error { return nil },
+		getenv: func(k string) string {
+			if k == "DATABASE_URL" {
+				return "postgres://example"
+			}
+			return ""
+		},
+		openDB: func(string, string) (*sql.DB, error) { return db, nil },
+		migrateF: func(*sql.DB, string, int) error {
+			t.Fatalf("migrateF should not be called when forcing")
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if msg != "Forced database to version 12" {
+		t.Fatalf("unexpected msg: %q", msg)
+	}
+	if len(fm.forceCalls) != 1 || fm.forceCalls[0] != 12 {
+		t.Fatalf("expected Force(12) called, got %#v", fm.forceCalls)
 	}
 }
 
