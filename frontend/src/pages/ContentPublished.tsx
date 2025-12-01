@@ -227,7 +227,15 @@ export const ContentPublished: React.FC = () => {
       const external = obj?.external && typeof obj.external === 'object' ? (obj.external as any) : null;
       const failed = external && Array.isArray(external.failed) ? external.failed : [];
       if (deleteExternal && failed.length > 0) {
-        setError(`Some items were not deleted from the social network (unsupported or failed). They will remain in the library.`);
+        const reasons = failed
+          .slice(0, 4)
+          .map((x: any) => `${String(x.network || 'unknown')}:${String(x.reason || 'failed')}`)
+          .join(', ');
+        setError(
+          `External delete failed/unsupported for ${failed.length} item(s). ` +
+            `Those items will remain in the library. ` +
+            (reasons ? `(${reasons}${failed.length > 4 ? ', …' : ''})` : ''),
+        );
       }
 
       if (deleteAckTimerRef.current) window.clearTimeout(deleteAckTimerRef.current);

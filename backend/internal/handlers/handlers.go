@@ -323,9 +323,9 @@ type deleteSocialLibrariesRequest struct {
 }
 
 type deleteSocialLibrariesResponse struct {
-	OK      bool     `json:"ok"`
-	Deleted int64    `json:"deleted"`
-	IDs     []string `json:"ids,omitempty"`
+	OK       bool     `json:"ok"`
+	Deleted  int64    `json:"deleted"`
+	IDs      []string `json:"ids,omitempty"`
 	External *struct {
 		Attempted bool `json:"attempted"`
 		Deleted   int  `json:"deleted"`
@@ -661,8 +661,8 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 		}{Attempted: true}
 
 		type row struct {
-			ID        string
-			Network   string
+			ID         string
+			Network    string
 			ExternalID sql.NullString
 		}
 		rows, err := h.db.Query(`SELECT id, network, external_id FROM public."SocialLibraries" WHERE user_id=$1 AND id = ANY($2)`, userID, pq.Array(ids))
@@ -704,6 +704,16 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 			externalID := strings.TrimSpace(rr.ExternalID.String)
 
 			if network == "instagram" {
+				// Instagram Graph API does not reliably support deleting published media.
+				// Keep this behind a flag so we don't give users a false sense of deletion.
+				if strings.TrimSpace(strings.ToLower(os.Getenv("ENABLE_INSTAGRAM_EXTERNAL_DELETE"))) != "true" {
+					extResp.Failed = append(extResp.Failed, struct {
+						ID      string `json:"id"`
+						Network string `json:"network"`
+						Reason  string `json:"reason"`
+					}{ID: id, Network: network, Reason: "instagram_delete_not_supported"})
+					continue
+				}
 				if externalID == "" {
 					extResp.Failed = append(extResp.Failed, struct {
 						ID      string `json:"id"`
@@ -3160,13 +3170,18 @@ func (h *Handler) deleteInstagramMedia(ctx context.Context, userID string, media
 		return err
 	}
 	defer res.Body.Close()
+	trace := strings.TrimSpace(res.Header.Get("x-fb-trace-id"))
 	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		msg := extractFacebookErrorMessage(b, string(b))
 		if strings.TrimSpace(msg) == "" {
 			msg = truncate(string(b), 500)
 		}
-		log.Printf("[ExternalDelete] failed userId=%s network=instagram externalId=%s status=%d msg=%s", userID, truncate(mediaID, 64), res.StatusCode, truncate(msg, 300))
+		log.Printf("[ExternalDelete] failed userId=%s network=instagram externalId=%s status=%d trace=%s msg=%s body=%s",
+			userID, truncate(mediaID, 64), res.StatusCode, trace, truncate(msg, 300), truncate(string(b), 600))
+		if trace != "" {
+			return fmt.Errorf("instagram_delete_non_2xx status=%d trace=%s msg=%s", res.StatusCode, trace, truncate(msg, 220))
+		}
 		return fmt.Errorf("instagram_delete_non_2xx status=%d msg=%s", res.StatusCode, truncate(msg, 220))
 	}
 	// Typical response: {"success":true}
