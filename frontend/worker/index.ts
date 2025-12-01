@@ -1384,6 +1384,7 @@ async function handleLibraryDelete(request: Request, env: Env): Promise<Response
 	const body = asRecord(parsed) || {};
 	const idsRaw = body['ids'];
 	const ids = Array.isArray(idsRaw) ? idsRaw.filter((x) => typeof x === 'string').map((x) => x.trim()).filter(Boolean) : [];
+	const deleteExternal = !!body['deleteExternal'];
 	if (ids.length === 0) {
 		return new Response(JSON.stringify({ ok: false, error: 'missing_ids' }), { status: 400, headers });
 	}
@@ -1392,23 +1393,23 @@ async function handleLibraryDelete(request: Request, env: Env): Promise<Response
 	}
 
 	try {
-		console.info('[LibraryDelete] start', { userId: sid, ids: ids.length });
+		console.info('[LibraryDelete] start', { userId: sid, ids: ids.length, deleteExternal });
 		const res = await fetch(`${backendOrigin}/api/social-libraries/delete/user/${encodeURIComponent(sid)}`, {
 			method: 'POST',
 			headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-			body: JSON.stringify({ ids }),
+			body: JSON.stringify({ ids, deleteExternal }),
 		});
 		const text = await res.text().catch(() => '');
 		if (!res.ok) {
 			console.error('[LibraryDelete] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800), ids: ids.length, userId: sid });
 			return new Response(JSON.stringify({ ok: false, error: 'delete_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
 		}
-		console.info('[LibraryDelete] ok', { userId: sid, ids: ids.length });
+		console.info('[LibraryDelete] ok', { userId: sid, ids: ids.length, deleteExternal });
 		headers.set('Content-Type', 'application/json');
 		return new Response(text || '{"ok":true}', { status: 200, headers });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		console.error('[LibraryDelete] backend unreachable', { backendOrigin, message, ids: ids.length, userId: sid });
+		console.error('[LibraryDelete] backend unreachable', { backendOrigin, message, ids: ids.length, userId: sid, deleteExternal });
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
 }

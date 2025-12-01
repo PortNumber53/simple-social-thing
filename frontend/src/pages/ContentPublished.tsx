@@ -33,6 +33,7 @@ export const ContentPublished: React.FC = () => {
     clear: clearSelection,
   } = useSelectionSet<string>(allItems.map((it) => it.id));
   const [deleting, setDeleting] = useState<boolean>(false);
+  const [deleteExternal, setDeleteExternal] = useState<boolean>(false);
   const pendingDeleteIdsRef = useRef<Set<string>>(new Set());
   const deleteAckTimerRef = useRef<number | null>(null);
 
@@ -175,7 +176,9 @@ export const ContentPublished: React.FC = () => {
     }
     const ids = Array.from(selectedIds);
     const ok = window.confirm(
-      `Remove ${ids.length} selected item(s) from this app?\n\nNote: this removes the cached items from the Published gallery in this app. It does NOT delete the post on Instagram/Facebook/etc.`,
+      deleteExternal
+        ? `Remove ${ids.length} selected item(s) from this app AND attempt to delete them from the social network (where supported).\n\nThis is irreversible.\n\nNote: only Instagram is supported right now; other networks will be skipped and kept in the library.`
+        : `Remove ${ids.length} selected item(s) from this app?\n\nNote: this removes the cached items from the Published gallery in this app. It does NOT delete the post on Instagram/Facebook/etc.`,
     );
     if (!ok) return;
 
@@ -186,7 +189,7 @@ export const ContentPublished: React.FC = () => {
       const res = await apiJson<unknown>('/api/library/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids, deleteExternal }),
       });
       const data: unknown = res.ok ? res.data : null;
       if (!res.ok) {
@@ -219,7 +222,13 @@ export const ContentPublished: React.FC = () => {
 
       // Production UX: only remove from UI after realtime confirmation (so we never lie to the user).
       pendingDeleteIdsRef.current = new Set(deletedIds.length > 0 ? deletedIds : ids);
-      setSyncStatus('Remove requested. Waiting for confirmation…');
+      setSyncStatus(deleteExternal ? 'Delete requested. Waiting for confirmation…' : 'Remove requested. Waiting for confirmation…');
+
+      const external = obj?.external && typeof obj.external === 'object' ? (obj.external as any) : null;
+      const failed = external && Array.isArray(external.failed) ? external.failed : [];
+      if (deleteExternal && failed.length > 0) {
+        setError(`Some items were not deleted from the social network (unsupported or failed). They will remain in the library.`);
+      }
 
       if (deleteAckTimerRef.current) window.clearTimeout(deleteAckTimerRef.current);
       deleteAckTimerRef.current = window.setTimeout(() => {
@@ -326,6 +335,8 @@ export const ContentPublished: React.FC = () => {
           onSelectAllFiltered={selectAllFiltered}
           onClearSelection={clearSelection}
           deleting={deleting}
+          deleteExternal={deleteExternal}
+          setDeleteExternal={setDeleteExternal}
         />
 
         {viewMode === 'list' ? (

@@ -318,13 +318,23 @@ type socialLibraryRow struct {
 }
 
 type deleteSocialLibrariesRequest struct {
-	IDs []string `json:"ids"`
+	IDs            []string `json:"ids"`
+	DeleteExternal bool     `json:"deleteExternal,omitempty"`
 }
 
 type deleteSocialLibrariesResponse struct {
 	OK      bool     `json:"ok"`
 	Deleted int64    `json:"deleted"`
 	IDs     []string `json:"ids,omitempty"`
+	External *struct {
+		Attempted bool `json:"attempted"`
+		Deleted   int  `json:"deleted"`
+		Failed    []struct {
+			ID      string `json:"id"`
+			Network string `json:"network"`
+			Reason  string `json:"reason"`
+		} `json:"failed,omitempty"`
+	} `json:"external,omitempty"`
 }
 
 type createOrUpdatePostRequest struct {
@@ -626,8 +636,113 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	log.Printf("[Library][Delete] start userId=%s ids=%d", userID, len(ids))
-	rows, err := h.db.Query(`DELETE FROM public."SocialLibraries" WHERE user_id = $1 AND id = ANY($2) RETURNING id`, userID, pq.Array(ids))
+	log.Printf("[Library][Delete] start userId=%s ids=%d deleteExternal=%t", userID, len(ids), req.DeleteExternal)
+
+	// If requested, attempt to delete from the external provider first, and only remove from our library if that succeeds.
+	idsToDeleteLocally := ids
+	var extResp *struct {
+		Attempted bool `json:"attempted"`
+		Deleted   int  `json:"deleted"`
+		Failed    []struct {
+			ID      string `json:"id"`
+			Network string `json:"network"`
+			Reason  string `json:"reason"`
+		} `json:"failed,omitempty"`
+	}
+	if req.DeleteExternal {
+		extResp = &struct {
+			Attempted bool `json:"attempted"`
+			Deleted   int  `json:"deleted"`
+			Failed    []struct {
+				ID      string `json:"id"`
+				Network string `json:"network"`
+				Reason  string `json:"reason"`
+			} `json:"failed,omitempty"`
+		}{Attempted: true}
+
+		type row struct {
+			ID        string
+			Network   string
+			ExternalID sql.NullString
+		}
+		rows, err := h.db.Query(`SELECT id, network, external_id FROM public."SocialLibraries" WHERE user_id=$1 AND id = ANY($2)`, userID, pq.Array(ids))
+		if err != nil {
+			log.Printf("[Library][DeleteExternal] select error userId=%s err=%v", userID, err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer rows.Close()
+
+		found := map[string]row{}
+		for rows.Next() {
+			var rr row
+			if err := rows.Scan(&rr.ID, &rr.Network, &rr.ExternalID); err != nil {
+				log.Printf("[Library][DeleteExternal] scan error userId=%s err=%v", userID, err)
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			found[rr.ID] = rr
+		}
+		if err := rows.Err(); err != nil {
+			log.Printf("[Library][DeleteExternal] rows error userId=%s err=%v", userID, err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		okIDs := make([]string, 0, len(ids))
+		for _, id := range ids {
+			rr, ok := found[id]
+			if !ok {
+				extResp.Failed = append(extResp.Failed, struct {
+					ID      string `json:"id"`
+					Network string `json:"network"`
+					Reason  string `json:"reason"`
+				}{ID: id, Network: "", Reason: "not_found"})
+				continue
+			}
+			network := strings.TrimSpace(strings.ToLower(rr.Network))
+			externalID := strings.TrimSpace(rr.ExternalID.String)
+
+			if network == "instagram" {
+				if externalID == "" {
+					extResp.Failed = append(extResp.Failed, struct {
+						ID      string `json:"id"`
+						Network string `json:"network"`
+						Reason  string `json:"reason"`
+					}{ID: id, Network: network, Reason: "missing_external_id"})
+					continue
+				}
+				if err := h.deleteInstagramMedia(r.Context(), userID, externalID); err != nil {
+					extResp.Failed = append(extResp.Failed, struct {
+						ID      string `json:"id"`
+						Network string `json:"network"`
+						Reason  string `json:"reason"`
+					}{ID: id, Network: network, Reason: truncate(err.Error(), 220)})
+					continue
+				}
+				okIDs = append(okIDs, id)
+				extResp.Deleted++
+				continue
+			}
+
+			// Not supported (yet).
+			extResp.Failed = append(extResp.Failed, struct {
+				ID      string `json:"id"`
+				Network string `json:"network"`
+				Reason  string `json:"reason"`
+			}{ID: id, Network: network, Reason: "unsupported_network"})
+		}
+
+		idsToDeleteLocally = okIDs
+	}
+
+	if len(idsToDeleteLocally) == 0 {
+		// Nothing to remove locally (either everything failed external deletion, or unsupported).
+		writeJSON(w, http.StatusOK, deleteSocialLibrariesResponse{OK: true, Deleted: 0, IDs: []string{}, External: extResp})
+		return
+	}
+
+	rows, err := h.db.Query(`DELETE FROM public."SocialLibraries" WHERE user_id = $1 AND id = ANY($2) RETURNING id`, userID, pq.Array(idsToDeleteLocally))
 	if err != nil {
 		log.Printf("[Library][Delete] exec error userId=%s err=%v", userID, err)
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -635,7 +750,7 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 	}
 	defer rows.Close()
 
-	deletedIDs := make([]string, 0, len(ids))
+	deletedIDs := make([]string, 0, len(idsToDeleteLocally))
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
@@ -663,7 +778,7 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 		At:     time.Now().UTC().Format(time.RFC3339),
 	})
 
-	writeJSON(w, http.StatusOK, deleteSocialLibrariesResponse{OK: true, Deleted: int64(len(deletedIDs)), IDs: deletedIDs})
+	writeJSON(w, http.StatusOK, deleteSocialLibrariesResponse{OK: true, Deleted: int64(len(deletedIDs)), IDs: deletedIDs, External: extResp})
 }
 
 func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Request) {
@@ -3008,6 +3123,55 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 
 	log.Printf("[IGPublish] ok userId=%s igBusinessId=%s mediaId=%s", userID, tok.IGBusinessID, mediaID)
 	return 1, nil, details
+}
+
+func (h *Handler) deleteInstagramMedia(ctx context.Context, userID string, mediaID string) error {
+	// Load IG token from UserSettings.
+	var raw []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='instagram_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("instagram_not_connected")
+		}
+		return err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return fmt.Errorf("instagram_not_connected")
+	}
+	var tok instagramOAuth
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return fmt.Errorf("instagram_invalid_oauth_payload")
+	}
+	if strings.TrimSpace(tok.AccessToken) == "" {
+		return fmt.Errorf("instagram_not_connected")
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s?access_token=%s",
+		url.PathEscape(strings.TrimSpace(mediaID)),
+		url.QueryEscape(strings.TrimSpace(tok.AccessToken)),
+	)
+
+	log.Printf("[ExternalDelete] start userId=%s network=instagram externalId=%s", userID, truncate(mediaID, 64))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	req.Header.Set("Accept", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		log.Printf("[ExternalDelete] failed userId=%s network=instagram externalId=%s err=%v", userID, truncate(mediaID, 64), err)
+		return err
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		msg := extractFacebookErrorMessage(b, string(b))
+		if strings.TrimSpace(msg) == "" {
+			msg = truncate(string(b), 500)
+		}
+		log.Printf("[ExternalDelete] failed userId=%s network=instagram externalId=%s status=%d msg=%s", userID, truncate(mediaID, 64), res.StatusCode, truncate(msg, 300))
+		return fmt.Errorf("instagram_delete_non_2xx status=%d msg=%s", res.StatusCode, truncate(msg, 220))
+	}
+	// Typical response: {"success":true}
+	log.Printf("[ExternalDelete] ok userId=%s network=instagram externalId=%s", userID, truncate(mediaID, 64))
+	return nil
 }
 
 func (h *Handler) publishTikTokWithVideoURL(ctx context.Context, userID, caption string, videoURL string, dryRun bool) (int, error, map[string]interface{}) {

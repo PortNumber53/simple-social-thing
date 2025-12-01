@@ -95,9 +95,8 @@ describe('ContentPublished', () => {
     expect(await screen.findByRole('heading', { name: /Published/i })).toBeInTheDocument();
     await u.click(screen.getByRole('button', { name: /Gallery/i }));
 
-    // Select the single item checkbox
-    const cb = document.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-    if (!cb) throw new Error('missing selection checkbox');
+    // Select the single item checkbox (avoid the "delete external" option checkbox)
+    const cb = screen.getByRole('checkbox', { name: /^select/i });
     await u.click(cb);
 
     // Remove selected from library
