@@ -625,6 +625,7 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	log.Printf("[Library][Delete] start userId=%s ids=%d", userID, len(ids))
 	res, err := h.db.Exec(`DELETE FROM public."SocialLibraries" WHERE user_id = $1 AND id = ANY($2)`, userID, pq.Array(ids))
 	if err != nil {
 		log.Printf("[Library][Delete] exec error userId=%s err=%v", userID, err)
@@ -632,6 +633,7 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 		return
 	}
 	n, _ := res.RowsAffected()
+	log.Printf("[Library][Delete] ok userId=%s deleted=%d reqIds=%d", userID, n, len(ids))
 
 	writeJSON(w, http.StatusOK, deleteSocialLibrariesResponse{OK: true, Deleted: n})
 }

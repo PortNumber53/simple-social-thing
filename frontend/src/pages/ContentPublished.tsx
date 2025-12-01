@@ -166,7 +166,11 @@ export const ContentPublished: React.FC = () => {
   };
 
   const deleteSelected = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size === 0) {
+      setError('Select one or more items to delete.');
+      console.info('[PublishedDelete] skipped (no selection)');
+      return;
+    }
     const ids = Array.from(selectedIds);
     const ok = window.confirm(`Delete ${ids.length} selected published item(s)? This cannot be undone.`);
     if (!ok) return;
@@ -174,6 +178,7 @@ export const ContentPublished: React.FC = () => {
     setDeleting(true);
     setError(null);
     try {
+      console.info('[PublishedDelete] start', { count: ids.length });
       const res = await apiJson<unknown>('/api/library/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -181,7 +186,8 @@ export const ContentPublished: React.FC = () => {
       });
       const data: unknown = res.ok ? res.data : null;
       if (!res.ok) {
-        setError('Failed to delete selected items.');
+        console.error('[PublishedDelete] failed', { status: res.status, message: res.error.message, data: res.data });
+        setError(res.error.message || 'Failed to delete selected items.');
         return;
       }
       const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
@@ -189,8 +195,10 @@ export const ContentPublished: React.FC = () => {
       setSyncStatus(deleted !== null ? `Deleted ${deleted} item(s).` : 'Deleted.');
       setAllItems((prev) => prev.filter((it) => !selectedIds.has(it.id)));
       clearSelection();
+      console.info('[PublishedDelete] ok', { deleted });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
+      console.error('[PublishedDelete] exception', { message: msg });
       setError(msg || 'Failed to delete selected items.');
     } finally {
       setDeleting(false);
@@ -246,7 +254,7 @@ export const ContentPublished: React.FC = () => {
         />
 
         {viewMode === 'list' ? (
-          <PublishedTable items={filteredItems} />
+          <PublishedTable items={filteredItems} selectedIds={selectedIds} onSelect={setSelected} />
         ) : (
           <PublishedGallery items={filteredItems} selectedIds={selectedIds} onSelect={setSelected} />
         )}
