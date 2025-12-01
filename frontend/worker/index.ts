@@ -610,6 +610,14 @@ export default {
         return handleLibraryDelete(request, env);
       }
 
+      // Notifications
+      if (url.pathname === "/api/notifications") {
+        return handleNotifications(request, env);
+      }
+      if (url.pathname.startsWith("/api/notifications/") && url.pathname.endsWith("/read")) {
+        return handleNotificationsRead(request, env);
+      }
+
       // Local Library: draft + scheduled content stored in our DB (Posts table)
       if (url.pathname === "/api/local-library/items") {
         return handleLocalLibraryItems(request, env);
@@ -1412,6 +1420,67 @@ async function handleLibraryDelete(request: Request, env: Env): Promise<Response
 		console.error('[LibraryDelete] backend unreachable', { backendOrigin, message, ids: ids.length, userId: sid, deleteExternal });
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
+}
+
+async function handleNotifications(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
+  if (preflight) return preflight;
+  if (request.method !== 'GET') return new Response(null, { status: 405, headers });
+
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+  if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+  try {
+    const url = new URL(request.url);
+    const qs = url.search || '';
+    const res = await fetch(`${backendOrigin}/api/notifications/user/${encodeURIComponent(sid)}${qs}`, {
+      headers: { 'Accept': 'application/json' },
+    });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      console.error('[Notifications] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+      return new Response(JSON.stringify({ ok: false, error: 'list_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+    }
+    headers.set('Content-Type', 'application/json');
+    return new Response(text || '[]', { status: 200, headers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[Notifications] backend unreachable', { backendOrigin, message });
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
+}
+
+async function handleNotificationsRead(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
+  if (preflight) return preflight;
+  if (request.method !== 'POST') return new Response(null, { status: 405, headers });
+
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+  if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+  const path = new URL(request.url).pathname;
+  const id = decodeURIComponent(path.slice("/api/notifications/".length, path.length - "/read".length)).trim();
+  if (!id) return new Response(JSON.stringify({ ok: false, error: 'missing_id' }), { status: 400, headers });
+
+  try {
+    const res = await fetch(`${backendOrigin}/api/notifications/${encodeURIComponent(id)}/read/user/${encodeURIComponent(sid)}`, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json' },
+    });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      console.error('[NotificationsRead] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+      return new Response(JSON.stringify({ ok: false, error: 'read_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+    }
+    headers.set('Content-Type', 'application/json');
+    return new Response(text || '{"ok":true}', { status: 200, headers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[NotificationsRead] backend unreachable', { backendOrigin, message });
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
 }
 
 // ensureSid extracted to ./lib/sid.ts (use requireSid)

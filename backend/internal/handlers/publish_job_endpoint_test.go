@@ -281,7 +281,7 @@ func TestRunPublishJob_MultiProviders_DryRun(t *testing.T) {
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(ytRaw))
 
-	pinRaw, _ := json.Marshal(pinterestOAuth{AccessToken: "ptok", Scope: "pins:write", ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339)})
+	pinRaw, _ := json.Marshal(pinterestOAuth{AccessToken: "ptok", Scope: "pins:write,boards:read", ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339)})
 	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='pinterest_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(pinRaw))

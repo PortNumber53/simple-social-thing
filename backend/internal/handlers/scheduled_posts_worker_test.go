@@ -20,8 +20,8 @@ func TestProcessDueScheduledPostsOnce_EnqueuesJob(t *testing.T) {
 	h := New(db)
 	when := time.Now().UTC().Add(-1 * time.Minute)
 
-	rows := sqlmock.NewRows([]string{"id", "userId", "content", "providers", "media", "scheduledFor"}).
-		AddRow("p1", "u1", sql.NullString{Valid: true, String: "hello"}, pq.StringArray{"facebook"}, pq.StringArray{}, when)
+	rows := sqlmock.NewRows([]string{"id", "userId", "scheduledFor"}).
+		AddRow("p1", "u1", when)
 
 	mock.ExpectQuery(`FROM public\."Posts"\s+WHERE status = 'scheduled'`).
 		WithArgs(25).
@@ -30,6 +30,12 @@ func TestProcessDueScheduledPostsOnce_EnqueuesJob(t *testing.T) {
 	mock.ExpectExec(`UPDATE public\."Posts"\s+SET "lastPublishJobId"`).
 		WithArgs("p1", "u1", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	details := sqlmock.NewRows([]string{"content", "providers", "media", "scheduledFor"}).
+		AddRow(sql.NullString{Valid: true, String: "hello"}, pq.StringArray{"facebook"}, pq.StringArray{}, when)
+	mock.ExpectQuery(`SELECT content,\s*COALESCE\(providers, ARRAY\[\]::text\[\]\),\s*COALESCE\(media, ARRAY\[\]::text\[\]\)`).
+		WithArgs("p1", "u1", sqlmock.AnyArg()).
+		WillReturnRows(details)
 
 	mock.ExpectExec(`INSERT INTO public\."PublishJobs"`).
 		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), "hello", sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -57,8 +63,8 @@ func TestProcessDueScheduledPostsOnce_EmptyContent_MarksFailed_NoJobInsert(t *te
 	h := New(db)
 	when := time.Now().UTC().Add(-1 * time.Minute)
 
-	rows := sqlmock.NewRows([]string{"id", "userId", "content", "providers", "media", "scheduledFor"}).
-		AddRow("p1", "u1", sql.NullString{Valid: true, String: "   "}, pq.StringArray{"facebook"}, pq.StringArray{}, when)
+	rows := sqlmock.NewRows([]string{"id", "userId", "scheduledFor"}).
+		AddRow("p1", "u1", when)
 
 	mock.ExpectQuery(`FROM public\."Posts"\s+WHERE status = 'scheduled'`).
 		WithArgs(25).
@@ -67,6 +73,12 @@ func TestProcessDueScheduledPostsOnce_EmptyContent_MarksFailed_NoJobInsert(t *te
 	mock.ExpectExec(`UPDATE public\."Posts"\s+SET "lastPublishJobId"`).
 		WithArgs("p1", "u1", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	details := sqlmock.NewRows([]string{"content", "providers", "media", "scheduledFor"}).
+		AddRow(sql.NullString{Valid: true, String: "   "}, pq.StringArray{"facebook"}, pq.StringArray{}, when)
+	mock.ExpectQuery(`SELECT content,\s*COALESCE\(providers, ARRAY\[\]::text\[\]\),\s*COALESCE\(media, ARRAY\[\]::text\[\]\)`).
+		WithArgs("p1", "u1", sqlmock.AnyArg()).
+		WillReturnRows(details)
 
 	mock.ExpectExec(`UPDATE public\."Posts"\s+SET "lastPublishStatus"='failed'`).
 		WithArgs("p1", "u1", sqlmock.AnyArg()).

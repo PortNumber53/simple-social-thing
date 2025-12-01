@@ -1,15 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { apiJson } from '../lib/api';
 
 export const TopNavigation: React.FC = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false); // desktop account dropdown
   const [mobileOpen, setMobileOpen] = useState(false); // mobile hamburger menu
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifications, setNotifications] = useState<Array<any>>([]);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileButtonRef = useRef<HTMLButtonElement | null>(null);
+  const notifRef = useRef<HTMLDivElement | null>(null);
 
   const navItemBase =
     "inline-flex items-center h-10 px-3 rounded-md text-sm font-medium transition-colors";
@@ -22,6 +27,7 @@ export const TopNavigation: React.FC = () => {
     const onDocClick = (e: MouseEvent) => {
       const target = e.target as Node;
       if (menuOpen && menuRef.current && !menuRef.current.contains(target)) setMenuOpen(false);
+      if (notifOpen && notifRef.current && !notifRef.current.contains(target)) setNotifOpen(false);
       if (mobileOpen) {
         const inPanel = mobileMenuRef.current && mobileMenuRef.current.contains(target);
         const inButton = mobileButtonRef.current && mobileButtonRef.current.contains(target);
@@ -31,6 +37,7 @@ export const TopNavigation: React.FC = () => {
     const onDocKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setMenuOpen(false);
+        setNotifOpen(false);
         setMobileOpen(false);
       }
     };
@@ -40,7 +47,44 @@ export const TopNavigation: React.FC = () => {
       document.removeEventListener('click', onDocClick);
       document.removeEventListener('keydown', onDocKeyDown);
     };
-  }, [menuOpen, mobileOpen]);
+  }, [menuOpen, notifOpen, mobileOpen]);
+
+  const loadNotifications = async () => {
+    if (!user) return;
+    const res = await apiJson<any[]>(`/api/notifications?limit=30`);
+    if (res.ok && Array.isArray(res.data)) {
+      setNotifications(res.data);
+      const unread = res.data.filter((n: any) => !n.readAt).length;
+      setUnreadCount(unread);
+    }
+  };
+
+  const markRead = async (id: string) => {
+    if (!user) return;
+    await apiJson(`/api/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
+    setNotifications((prev) => prev.map((n: any) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n)));
+    setUnreadCount((c) => Math.max(0, c - 1));
+  };
+
+  useEffect(() => {
+    if (!user) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
+    void loadNotifications();
+
+    // Realtime: refresh on notification.created
+    const onRealtime = (ev: Event) => {
+      const ce = ev as CustomEvent;
+      const msg = ce?.detail as any;
+      if (!msg || typeof msg !== 'object') return;
+      if (String(msg.type || '') !== 'notification.created') return;
+      void loadNotifications();
+    };
+    window.addEventListener('realtime:event', onRealtime as EventListener);
+    return () => window.removeEventListener('realtime:event', onRealtime as EventListener);
+  }, [user?.id]);
 
   const handleLogout = () => {
     logout();
@@ -112,6 +156,94 @@ export const TopNavigation: React.FC = () => {
 
           {/* User Menu */}
           <div className="flex items-center gap-4">
+            {/* Notifications */}
+            {user && (
+              <div className="relative" ref={notifRef}>
+                <button
+                  type="button"
+                  aria-label="Notifications"
+                  className="relative inline-flex items-center justify-center w-10 h-10 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                  onClick={() => {
+                    setNotifOpen((v) => !v);
+                    setMenuOpen(false);
+                    void loadNotifications();
+                  }}
+                >
+                  <svg className="w-5 h-5 text-slate-700 dark:text-slate-200" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path d="M10 2a6 6 0 00-6 6v2.586l-.707.707A1 1 0 004 13h12a1 1 0 00.707-1.707L16 10.586V8a6 6 0 00-6-6z" />
+                    <path d="M7 14a3 3 0 006 0H7z" />
+                  </svg>
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[11px] font-semibold">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                </button>
+
+                {notifOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-96 rounded-md shadow-lg bg-white dark:bg-slate-900 ring-1 ring-black/5 dark:ring-white/10 overflow-hidden">
+                    <div className="flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-700/50">
+                      <div className="text-xs font-semibold tracking-wide text-slate-600 dark:text-slate-300">Notifications</div>
+                      <button
+                        type="button"
+                        className="text-xs text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100"
+                        onClick={() => void loadNotifications()}
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                    <div className="max-h-[420px] overflow-auto">
+                      {notifications.length === 0 ? (
+                        <div className="px-4 py-6 text-sm text-slate-600 dark:text-slate-300">No notifications.</div>
+                      ) : (
+                        <ul className="divide-y divide-slate-200/60 dark:divide-slate-700/50">
+                          {notifications.map((n: any) => {
+                            const isUnread = !n.readAt;
+                            const url = typeof n.url === 'string' ? n.url : '';
+                            return (
+                              <li key={n.id} className={`${isUnread ? 'bg-primary-50/40 dark:bg-primary-900/10' : ''}`}>
+                                <a
+                                  href={url || '#'}
+                                  target={url ? '_blank' : undefined}
+                                  rel={url ? 'noreferrer' : undefined}
+                                  onClick={(e) => {
+                                    if (!url) e.preventDefault();
+                                    void markRead(String(n.id));
+                                  }}
+                                  className="block px-4 py-3 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 transition-colors"
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <div className={`text-sm font-medium ${isUnread ? 'text-slate-900 dark:text-slate-100' : 'text-slate-700 dark:text-slate-200'} truncate`}>
+                                        {String(n.title || 'Notification')}
+                                      </div>
+                                      {n.body && (
+                                        <div className="text-xs text-slate-600 dark:text-slate-300 mt-1 overflow-hidden">
+                                          {String(n.body)}
+                                        </div>
+                                      )}
+                                      {url && (
+                                        <div className="text-xs text-primary-700 dark:text-primary-300 mt-1 truncate">
+                                          {url}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
+                                      {n.createdAt ? new Date(String(n.createdAt)).toLocaleString() : ''}
+                                    </div>
+                                  </div>
+                                </a>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Mobile hamburger */}
             <button
               ref={mobileButtonRef}
