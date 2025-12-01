@@ -207,7 +207,7 @@ export function PublishedFiltersToolbar({
         <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
           <input type="checkbox" checked={deleteExternal} onChange={(e) => setDeleteExternal(e.target.checked)} />
           Also delete from the social network (where supported)
-          <span className="text-xs text-slate-500 dark:text-slate-400">(currently: Instagram only)</span>
+          <span className="text-xs text-slate-500 dark:text-slate-400">(experimental; may be unsupported)</span>
         </label>
 
         <div className="sm:ml-auto">
