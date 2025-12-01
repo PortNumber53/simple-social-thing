@@ -28,6 +28,8 @@ export function PublishedFiltersToolbar({
   onSelectAllFiltered,
   onClearSelection,
   deleting,
+  deleteExternal,
+  setDeleteExternal,
 }: {
   network: string;
   setNetwork: (v: string) => void;
@@ -47,6 +49,8 @@ export function PublishedFiltersToolbar({
   selectedCount: number;
   filteredCount: number;
   deleting: boolean;
+  deleteExternal: boolean;
+  setDeleteExternal: (v: boolean) => void;
 
   viewMode: 'list' | 'gallery';
   setViewMode: (v: 'list' | 'gallery') => void;
@@ -199,6 +203,12 @@ export function PublishedFiltersToolbar({
             <span className="text-sm text-slate-600 dark:text-slate-300">{selectedCount} selected</span>
           )}
         </div>
+
+        <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+          <input type="checkbox" checked={deleteExternal} onChange={(e) => setDeleteExternal(e.target.checked)} />
+          Also delete from the social network (where supported)
+          <span className="text-xs text-slate-500 dark:text-slate-400">(currently: Instagram only)</span>
+        </label>
 
         <div className="sm:ml-auto">
           <SegmentedControl
