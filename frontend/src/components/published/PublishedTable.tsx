@@ -1,11 +1,22 @@
 import type { PublishedItem } from './types';
 
-export function PublishedTable({ items }: { items: PublishedItem[] }) {
+export function PublishedTable({
+  items,
+  selectedIds,
+  onSelect,
+}: {
+  items: PublishedItem[];
+  selectedIds: Set<string>;
+  onSelect: (id: string, checked: boolean) => void;
+}) {
   return (
     <div className="card p-0 overflow-x-auto">
       <table className="min-w-full text-sm">
         <thead>
           <tr className="text-left text-slate-600 dark:text-slate-300 border-b border-slate-200/60 dark:border-slate-700/40">
+            <th className="py-3 px-4 font-medium w-10">
+              <span className="sr-only">Select</span>
+            </th>
             <th className="py-3 px-4 font-medium">Posted</th>
             <th className="py-3 px-4 font-medium">Network</th>
             <th className="py-3 px-4 font-medium">Type</th>
@@ -17,15 +28,24 @@ export function PublishedTable({ items }: { items: PublishedItem[] }) {
         <tbody>
           {items.length === 0 ? (
             <tr>
-              <td colSpan={6} className="py-10 px-4 text-slate-500 dark:text-slate-400">
+              <td colSpan={7} className="py-10 px-4 text-slate-500 dark:text-slate-400">
                 No published items yet. Run “Refresh” to sync.
               </td>
             </tr>
           ) : (
             items.map((it) => {
               const posted = it.postedAt ? new Date(it.postedAt).toLocaleString() : '';
+              const isSelected = selectedIds.has(it.id);
               return (
                 <tr key={it.id} className="border-b border-slate-200/40 dark:border-slate-700/30">
+                  <td className="py-3 px-4 whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={(e) => onSelect(it.id, e.target.checked)}
+                      aria-label={`Select ${it.title || it.permalinkUrl || it.id}`}
+                    />
+                  </td>
                   <td className="py-3 px-4 whitespace-nowrap text-slate-700 dark:text-slate-200">{posted}</td>
                   <td className="py-3 px-4 text-slate-700 dark:text-slate-200">{it.network}</td>
                   <td className="py-3 px-4 text-slate-700 dark:text-slate-200">{it.contentType}</td>
