@@ -651,117 +651,26 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 		} `json:"failed,omitempty"`
 	}
 	if req.DeleteExternal {
-		// External deletion is experimental/provider-dependent. Unless explicitly enabled, do not hit the DB
-		// and do not claim success. This avoids stressing the DB for a feature that may be unsupported.
-		extEnabledRaw := os.Getenv("ENABLE_INSTAGRAM_EXTERNAL_DELETE")
-		extEnabled := strings.TrimSpace(strings.ToLower(extEnabledRaw)) == "true"
-		if !extEnabled {
-			extResp = &struct {
-				Attempted bool `json:"attempted"`
-				Deleted   int  `json:"deleted"`
-				Failed    []struct {
-					ID      string `json:"id"`
-					Network string `json:"network"`
-					Reason  string `json:"reason"`
-				} `json:"failed,omitempty"`
-			}{Attempted: true}
-			for _, id := range ids {
-				extResp.Failed = append(extResp.Failed, struct {
-					ID      string `json:"id"`
-					Network string `json:"network"`
-					Reason  string `json:"reason"`
-				}{ID: id, Network: "", Reason: "external_delete_disabled"})
-			}
-			// Include a short summary so it's obvious why nothing happened.
-			// (We intentionally do not query SocialLibraries here to avoid extra DB load.)
-			failSummary := make([]string, 0, 4)
-			for i := 0; i < len(extResp.Failed) && i < 4; i++ {
-				failSummary = append(failSummary, fmt.Sprintf("%s:%s", truncate(extResp.Failed[i].ID, 36), extResp.Failed[i].Reason))
-			}
-			log.Printf(
-				"[Library][DeleteExternal] disabled userId=%s ids=%d enableFlag=%q dur=%dms failed=%v",
-				userID,
-				len(ids),
-				extEnabledRaw,
-				time.Since(start).Milliseconds(),
-				failSummary,
-			)
-			idsToDeleteLocally = nil
-		} else {
-			extResp = &struct {
-				Attempted bool `json:"attempted"`
-				Deleted   int  `json:"deleted"`
-				Failed    []struct {
-					ID      string `json:"id"`
-					Network string `json:"network"`
-					Reason  string `json:"reason"`
-				} `json:"failed,omitempty"`
-			}{Attempted: true}
-
-			okIDs := make([]string, 0, len(ids))
-			for _, id := range ids {
-				// Avoid hanging on DB locks/slow queries.
-				ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
-				var networkRaw string
-				var externalIDRaw sql.NullString
-				err := h.db.QueryRowContext(ctx, `SELECT network, external_id FROM public."SocialLibraries" WHERE user_id=$1 AND id=$2`, userID, id).Scan(&networkRaw, &externalIDRaw)
-				cancel()
-				if err != nil {
-					if err == sql.ErrNoRows {
-						extResp.Failed = append(extResp.Failed, struct {
-							ID      string `json:"id"`
-							Network string `json:"network"`
-							Reason  string `json:"reason"`
-						}{ID: id, Network: "", Reason: "not_found"})
-						continue
-					}
-					log.Printf("[Library][DeleteExternal] select_one error userId=%s id=%s err=%v", userID, truncate(id, 120), err)
-					extResp.Failed = append(extResp.Failed, struct {
-						ID      string `json:"id"`
-						Network string `json:"network"`
-						Reason  string `json:"reason"`
-					}{ID: id, Network: "", Reason: "db_error"})
-					continue
-				}
-				network := strings.TrimSpace(strings.ToLower(networkRaw))
-				externalID := strings.TrimSpace(externalIDRaw.String)
-				log.Printf("[Library][DeleteExternal] item userId=%s id=%s network=%s hasExternalId=%t", userID, truncate(id, 80), network, externalID != "")
-
-				if network == "instagram" {
-					// Instagram Graph API does not reliably support deleting published media.
-					// Keep this behind a flag so we don't give users a false sense of deletion.
-					if externalID == "" {
-						extResp.Failed = append(extResp.Failed, struct {
-							ID      string `json:"id"`
-							Network string `json:"network"`
-							Reason  string `json:"reason"`
-						}{ID: id, Network: network, Reason: "missing_external_id"})
-						continue
-					}
-					if err := h.deleteInstagramMedia(r.Context(), userID, externalID); err != nil {
-						extResp.Failed = append(extResp.Failed, struct {
-							ID      string `json:"id"`
-							Network string `json:"network"`
-							Reason  string `json:"reason"`
-						}{ID: id, Network: network, Reason: truncate(err.Error(), 220)})
-						continue
-					}
-					okIDs = append(okIDs, id)
-					extResp.Deleted++
-					continue
-				}
-
-				// Not supported (yet).
-				extResp.Failed = append(extResp.Failed, struct {
-					ID      string `json:"id"`
-					Network string `json:"network"`
-					Reason  string `json:"reason"`
-				}{ID: id, Network: network, Reason: "unsupported_network"})
-			}
-
-			idsToDeleteLocally = okIDs
-			log.Printf("[Library][DeleteExternal] done userId=%s reqIds=%d okIds=%d failed=%d dur=%dms", userID, len(ids), len(okIDs), len(extResp.Failed), time.Since(start).Milliseconds())
+		// Provider-side deletion is not supported/reliable; do not attempt it and do not remove locally.
+		// (We keep the request shape for future support but make the behavior explicit.)
+		extResp = &struct {
+			Attempted bool `json:"attempted"`
+			Deleted   int  `json:"deleted"`
+			Failed    []struct {
+				ID      string `json:"id"`
+				Network string `json:"network"`
+				Reason  string `json:"reason"`
+			} `json:"failed,omitempty"`
+		}{Attempted: true}
+		for _, id := range ids {
+			extResp.Failed = append(extResp.Failed, struct {
+				ID      string `json:"id"`
+				Network string `json:"network"`
+				Reason  string `json:"reason"`
+			}{ID: id, Network: "", Reason: "external_delete_not_supported"})
 		}
+		log.Printf("[Library][DeleteExternal] not_supported userId=%s ids=%d dur=%dms", userID, len(ids), time.Since(start).Milliseconds())
+		idsToDeleteLocally = nil
 	}
 
 	if len(idsToDeleteLocally) == 0 {

@@ -244,7 +244,7 @@ export const ContentPublished: React.FC = () => {
         console.warn('[PublishedDelete] no realtime confirmation; falling back to refresh', { pending: pendingDeleteIdsRef.current.size });
         pendingDeleteIdsRef.current = new Set();
         void loadAll();
-        clearSelection();
+      clearSelection();
         if (deleted !== null) {
           setSyncStatus(deleted !== ids.length ? `Removed ${deleted} of ${ids.length} item(s) from library.` : `Removed ${deleted} item(s) from library.`);
         } else {
