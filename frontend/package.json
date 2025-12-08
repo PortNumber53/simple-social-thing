@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "rm -rf node_modules/.vite && wrangler types && concurrently -n client,worker -c green,cyan \"npm:dev:client\" \"npm:dev:worker\"",
 		"dev:client": "VITE_DISABLE_CF_PLUGIN=1 vite",
-		"dev:worker": "bash -c 'set -a && source .dev.vars && CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=$DATABASE_URL wrangler dev --port 18912 --config wrangler.dev.jsonc'",
+		"dev:worker": "bash -c 'set -a && source .dev.vars && CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=$DATABASE_URL wrangler dev --local --port 18912 --config wrangler.dev.jsonc'",
 		"build": "tsc -b && vite build",
 		"lint": "eslint .",
 		"test": "vitest run",
@@ -18,7 +18,6 @@
 	},
 	"dependencies": {
 		"@google-cloud/local-auth": "^3.0.1",
-		"@xata.io/client": "^0.30.1",
 		"postgres": "^3.4.4",
 		"react": "^19.1.1",
 		"react-dom": "^19.1.1",

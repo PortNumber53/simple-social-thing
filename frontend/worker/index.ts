@@ -119,8 +119,14 @@ function getSql(env: Env): SqlClient {
       cs = env.DATABASE_URL || cs;
     }
     if (!cs) return null;
+    const url = new URL(cs);
+    const sslmode = url.searchParams.get('sslmode');
+    const ssl =
+      sslmode === 'disable'
+        ? false
+        : 'require';
     return postgres(cs, {
-      ssl: 'require',
+      ssl,
       connect_timeout: 5,  // 5 second timeout instead of default 30s
       idle_timeout: 10,
       max_lifetime: 60

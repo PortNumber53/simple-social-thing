@@ -32,58 +32,8 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
       `access_type=offline&` +
       `prompt=consent`;
 
-    // Prefer a popup to keep the current page state; fallback to full redirect if blocked.
-    const popup = window.open(
-      authUrl,
-      'google-oauth',
-      'width=480,height=640,menubar=no,toolbar=no,location=yes,status=no,resizable=yes,scrollbars=yes',
-    );
-    if (!popup) {
-      window.location.href = authUrl;
-      return;
-    }
-    popup.focus();
-
-    // Watch the popup: when it returns to our origin (callback redirects), drive the opener to the app.
-    // Leave the popup visible for a few seconds so errors (JSON) can be read in prod.
-    const targetPath = '/dashboard';
-    const started = Date.now();
-    const maxWaitMs = 2 * 60 * 1000;
-    const poll = window.setInterval(() => {
-      const elapsed = Date.now() - started;
-      try {
-        if (popup.closed) {
-          window.clearInterval(poll);
-          window.location.href = targetPath;
-          return;
-        }
-      } catch {
-        // Swallow cross-origin access errors until the popup navigates back to our origin.
-      }
-
-      try {
-        const loc = popup.location;
-        if (loc && loc.host === window.location.host) {
-          window.clearInterval(poll);
-          window.location.href = targetPath;
-          // Give the popup a short grace period so any JSON/error can be inspected.
-          window.setTimeout(() => {
-            try {
-              popup.close();
-            } catch {
-              /* ignore */
-            }
-          }, 15000);
-          return;
-        }
-      } catch {
-        // cross-origin while on accounts.google.com; ignore
-      }
-
-      if (elapsed > maxWaitMs) {
-        window.clearInterval(poll);
-      }
-    }, 700);
+    // Use full-page redirect to avoid popup issues.
+    window.location.href = authUrl;
   };
 
   if (isAuthenticated && user) {
