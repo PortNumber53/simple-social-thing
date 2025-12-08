@@ -51,7 +51,7 @@ put_secret() {
     echo "WARN: skipping secret ${key} (empty)"
     return 0
   fi
-  printf '%s' "$value" | npx --yes wrangler secret put "$key" --config wrangler.jsonc --silent
+  printf '%s' "$value" | npx --yes wrangler secret put "$key" --config wrangler.jsonc
 }
 
 # Require OAuth/provider secrets we actively use in production flows.
