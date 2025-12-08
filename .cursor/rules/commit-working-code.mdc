@@ -1,0 +1,4 @@
+Before committing or pushing, run the project’s required linters, formatters, builds, and unit tests. Use the project’s documented commands (e.g., package scripts, Makefile targets, tool configs). If multiple options exist, prefer the canonical command in the repo docs. If required tools/configs are missing or commands fail, stop and ask for guidance instead of skipping
+---
+alwaysApply: true
+---
