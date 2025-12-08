@@ -3558,12 +3558,25 @@ async function startThreadsOAuth(request: Request, env: Env): Promise<Response> 
   // hard-fails with "Invalid Scopes" (see Facebook Login permissions ref: https://developers.facebook.com/docs/facebook-login/permissions).
   // Threads uses its own OAuth authorize endpoint.
   const scopes = ['threads_basic', 'threads_content_publish'].join(',');
-  const authUrl = new URL('https://www.threads.net/oauth/authorize');
+  const threadsAuthBase = env.THREADS_OAUTH_BASE?.trim() || 'https://threads.net';
+  const authUrl = new URL('/oauth/authorize', threadsAuthBase);
+  // Threads sometimes reports “No app ID was sent” if the parameter name is not present;
+  // send both client_id (documented) and app_id (observed in error messaging) for compatibility.
   authUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
+  authUrl.searchParams.set('app_id', env.INSTAGRAM_APP_ID);
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('scope', scopes);
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('state', state);
+
+  // Trace the exact URL we hand to Threads to diagnose “No app ID” reports.
+  console.log('[TH] auth_redirect', {
+    authUrl: authUrl.toString(),
+    clientIdSet: !!env.INSTAGRAM_APP_ID,
+    redirectUri,
+    scopes,
+    state,
+  });
 
   headers.set('Location', authUrl.toString());
   return new Response(null, { status: 302, headers });
