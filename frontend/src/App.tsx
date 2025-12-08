@@ -26,11 +26,18 @@ function App() {
         <Route path="/features" element={<Features />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/pricing" element={<Pricing />} />
-        <Route path="/integrations" element={<Integrations />} />
+        <Route
+          path="/integrations"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
+              <Integrations />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/content/music"
           element={
-            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <ContentMusic />
             </ProtectedRoute>
           }
@@ -38,7 +45,7 @@ function App() {
         <Route
           path="/content/posts"
           element={
-            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <ContentPosts />
             </ProtectedRoute>
           }
@@ -46,7 +53,7 @@ function App() {
         <Route
           path="/content/videos"
           element={
-            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <ContentVideos />
             </ProtectedRoute>
           }
@@ -54,7 +61,7 @@ function App() {
         <Route
           path="/content/published"
           element={
-            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <ContentPublished />
             </ProtectedRoute>
           }
@@ -62,7 +69,7 @@ function App() {
         <Route
           path="/library"
           element={
-            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <Library />
             </ProtectedRoute>
           }
@@ -74,7 +81,7 @@ function App() {
         <Route
           path="/dashboard"
           element={
-            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <Dashboard />
             </ProtectedRoute>
           }
@@ -82,7 +89,7 @@ function App() {
         <Route
           path="/account/profile"
           element={
-            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <Profile />
             </ProtectedRoute>
           }
@@ -90,11 +97,12 @@ function App() {
         <Route
           path="/account/settings"
           element={
-            <ProtectedRoute fallback={<Navigate to="/" replace />}>
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <Settings />
             </ProtectedRoute>
           }
         />
+        <Route path="/login" element={<Home />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
