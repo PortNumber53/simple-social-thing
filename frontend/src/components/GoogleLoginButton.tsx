@@ -44,7 +44,8 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
     }
     popup.focus();
 
-    // Watch the popup: when it returns to our origin (callback redirects), close it and drive the opener to the app.
+    // Watch the popup: when it returns to our origin (callback redirects), drive the opener to the app.
+    // Leave the popup visible for a few seconds so errors (JSON) can be read in prod.
     const targetPath = '/dashboard';
     const started = Date.now();
     const maxWaitMs = 2 * 60 * 1000;
@@ -63,9 +64,16 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
       try {
         const loc = popup.location;
         if (loc && loc.host === window.location.host) {
-          popup.close();
           window.clearInterval(poll);
           window.location.href = targetPath;
+          // Give the popup a short grace period so any JSON/error can be inspected.
+          window.setTimeout(() => {
+            try {
+              popup.close();
+            } catch {
+              /* ignore */
+            }
+          }, 5000);
           return;
         }
       } catch {
