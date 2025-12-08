@@ -41,17 +41,7 @@ npm ci --no-audit --no-fund
 export VITE_GOOGLE_CLIENT_ID="${VITE_GOOGLE_CLIENT_ID:-${GOOGLE_CLIENT_ID:-}}"
 export VITE_STRIPE_PUBLISHABLE_KEY="${VITE_STRIPE_PUBLISHABLE_KEY:-${STRIPE_PUBLISHABLE_KEY:-}}"
 
-echo "=== Frontend: syncing Cloudflare Worker secrets ==="
-put_secret() {
-  local key="$1"
-  local value="${2:-}"
-  if [[ -z "$value" ]]; then
-    echo "WARN: skipping secret ${key} (empty)"
-    return 0
-  fi
-  # Wrangler reads CLOUDFLARE_API_TOKEN from environment.
-  printf '%s' "$value" | npx --yes wrangler secret put "$key" --config wrangler.jsonc
-}
+echo "=== Frontend: syncing Cloudflare Worker secrets (bulk) ==="
 
 # Require OAuth/provider secrets we actively use in production flows.
 require_env "GOOGLE_CLIENT_ID"
@@ -65,22 +55,34 @@ require_env "PINTEREST_CLIENT_SECRET"
 require_env "FACEBOOK_WEBHOOK_TOKEN"
 require_env "BACKEND_ORIGIN"
 
-put_secret "GOOGLE_CLIENT_ID" "${GOOGLE_CLIENT_ID:-}"
-put_secret "GOOGLE_CLIENT_SECRET" "${GOOGLE_CLIENT_SECRET:-}"
-put_secret "INSTAGRAM_APP_ID" "${INSTAGRAM_APP_ID:-}"
-put_secret "INSTAGRAM_APP_SECRET" "${INSTAGRAM_APP_SECRET:-}"
-put_secret "TIKTOK_CLIENT_KEY" "${TIKTOK_CLIENT_KEY:-}"
-put_secret "TIKTOK_CLIENT_SECRET" "${TIKTOK_CLIENT_SECRET:-}"
-put_secret "PINTEREST_CLIENT_ID" "${PINTEREST_CLIENT_ID:-}"
-put_secret "PINTEREST_CLIENT_SECRET" "${PINTEREST_CLIENT_SECRET:-}"
-put_secret "BACKEND_ORIGIN" "${BACKEND_ORIGIN:-}"
-put_secret "FACEBOOK_WEBHOOK_TOKEN" "${FACEBOOK_WEBHOOK_TOKEN:-}"
-put_secret "JWT_SECRET" "${JWT_SECRET:-}"
-put_secret "STRIPE_SECRET_KEY" "${STRIPE_SECRET_KEY:-}"
-put_secret "STRIPE_WEBHOOK_SECRET" "${STRIPE_WEBHOOK_SECRET:-}"
-put_secret "DATABASE_URL" "${DATABASE_URL:-}"
-put_secret "XATA_API_KEY" "${XATA_API_KEY:-}"
-put_secret "XATA_DATABASE_URL" "${XATA_DATABASE_URL:-}"
+tmpfile="$(mktemp)"
+python - <<'PY' > "${tmpfile}"
+import json, os
+keys = [
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "INSTAGRAM_APP_ID",
+    "INSTAGRAM_APP_SECRET",
+    "TIKTOK_CLIENT_KEY",
+    "TIKTOK_CLIENT_SECRET",
+    "PINTEREST_CLIENT_ID",
+    "PINTEREST_CLIENT_SECRET",
+    "BACKEND_ORIGIN",
+    "FACEBOOK_WEBHOOK_TOKEN",
+    "JWT_SECRET",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "DATABASE_URL",
+    "XATA_API_KEY",
+    "XATA_DATABASE_URL",
+    # optional overrides
+    "THREADS_OAUTH_BASE",
+]
+payload = {k: v for k, v in ((k, os.environ.get(k, "")) for k in keys) if v}
+json.dump(payload, sys.stdout)
+PY
+npx --yes wrangler secret:bulk "${tmpfile}" --config wrangler.jsonc
+rm -f "${tmpfile}"
 
 echo "=== Frontend: build ==="
 rm -rf dist
