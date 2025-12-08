@@ -10,15 +10,6 @@ type LibraryStats = { drafts: number; scheduled: number };
 type TaskStatus = 'shipped' | 'in-progress' | 'setup' | 'blocked' | 'prototype';
 
 const PROVIDERS: ProviderKey[] = ['instagram', 'tiktok', 'facebook', 'youtube', 'pinterest', 'threads'];
-const PROVIDER_LABELS: Record<ProviderKey, string> = {
-  instagram: 'Instagram',
-  tiktok: 'TikTok',
-  facebook: 'Facebook Pages',
-  youtube: 'YouTube',
-  pinterest: 'Pinterest',
-  threads: 'Threads',
-};
-
 const PUBLISH_SUPPORTED: Record<ProviderKey, boolean> = {
   instagram: true,
   facebook: true,
@@ -46,18 +37,6 @@ function StatusPill({ status, label }: { status: TaskStatus; label?: string }) {
       {label || entry.label}
     </span>
   );
-}
-
-function accountDisplayName(acc: unknown) {
-  if (!acc || typeof acc !== 'object') return null;
-  const obj = acc as Record<string, unknown>;
-  const fields = ['username', 'displayName', 'name'];
-  for (const key of fields) {
-    if (typeof obj[key] === 'string' && (obj[key] as string).trim() !== '') {
-      return obj[key] as string;
-    }
-  }
-  return null;
 }
 
 function readSunoSnapshot(): SunoSnapshot {
