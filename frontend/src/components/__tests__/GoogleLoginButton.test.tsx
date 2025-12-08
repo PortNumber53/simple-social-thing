@@ -5,18 +5,13 @@ import { AuthProvider } from '../../contexts/AuthContext';
 import { GoogleLoginButton } from '../GoogleLoginButton';
 
 describe('GoogleLoginButton', () => {
-  const originalLocation = window.location;
-
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
-    Object.defineProperty(window, 'location', {
-      configurable: true,
-      value: { ...originalLocation, href: 'http://localhost/' },
-    });
+    vi.stubGlobal('open', vi.fn());
   });
 
-  it('renders sign-in button when logged out and sets location.href on click', async () => {
+  it('opens a popup for Google OAuth when clicked', async () => {
     const u = userEvent.setup();
     render(
       <AuthProvider>
@@ -26,7 +21,9 @@ describe('GoogleLoginButton', () => {
 
     const btn = screen.getByRole('button', { name: /sign in with google/i });
     await u.click(btn);
-    expect(String(window.location.href)).toContain('https://accounts.google.com/o/oauth2/v2/auth?');
+    expect(window.open).toHaveBeenCalledTimes(1);
+    const urlArg = (window.open as any).mock.calls[0][0] as string;
+    expect(urlArg).toContain('https://accounts.google.com/o/oauth2/v2/auth?');
   });
 
   it('renders user chip + sign out when logged in', () => {

@@ -32,8 +32,23 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
       `access_type=offline&` +
       `prompt=consent`;
 
-    // Redirect to Google OAuth (no popup needed since worker handles the callback)
-    window.location.href = authUrl;
+    // Prefer a popup to keep the current page state; fallback to full redirect if blocked.
+    const popup = window.open(
+      authUrl,
+      'google-oauth',
+      'width=480,height=640,menubar=no,toolbar=no,location=yes,status=no,resizable=yes,scrollbars=yes',
+    );
+    if (!popup) {
+      window.location.href = authUrl;
+      return;
+    }
+    popup.focus();
+    const poll = window.setInterval(() => {
+      if (popup.closed) {
+        window.clearInterval(poll);
+        window.location.reload();
+      }
+    }, 600);
   };
 
   if (isAuthenticated && user) {
