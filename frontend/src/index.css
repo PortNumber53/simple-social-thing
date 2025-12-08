@@ -61,7 +61,7 @@
   }
 
   .card-hover {
-    @apply hover:shadow-soft-lg hover:scale-[1.02] hover:-translate-y-1;
+  @apply hover:shadow-soft-lg hover:border-slate-300 hover:dark:border-slate-600;
   }
 
   .input {
