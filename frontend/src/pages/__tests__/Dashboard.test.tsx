@@ -50,13 +50,13 @@ describe('Dashboard', () => {
     );
 
     expect(screen.getByText(/delivery dashboard/i)).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/0 drafts · 0 scheduled/i)).toBeInTheDocument());
 
-    expect(screen.getByText(/auth \+ integrations/i)).toBeInTheDocument();
-    expect(screen.getByText(/instagram/i)).toBeInTheDocument();
-    expect(screen.getByText(/facebook pages/i)).toBeInTheDocument();
-    expect(screen.getByText(/automation \+ realtime/i)).toBeInTheDocument();
-    expect(screen.getByText(/5 suno credits/i)).toBeInTheDocument();
+    // Top metric cards
+    await waitFor(() => expect(screen.getByText(/drafts in library/i)).toBeInTheDocument());
+    expect(screen.getByText(/scheduled posts/i)).toBeInTheDocument();
+    expect(screen.getByText(/publish-ready networks/i)).toBeInTheDocument();
+    // With 3 connected publish-capable providers in the mock: instagram, facebook, youtube
+    expect(screen.getByText(/3 \/ 5/i)).toBeInTheDocument();
 
     expect(screen.getByText(/implementation board/i)).toBeInTheDocument();
     expect(screen.getByText(/OAuth \+ session bootstrap/i)).toBeInTheDocument();
