@@ -57,7 +57,7 @@ require_env "BACKEND_ORIGIN"
 
 tmpfile="$(mktemp)"
 python - <<'PY' > "${tmpfile}"
-import json, os
+import json, os, sys
 keys = [
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
