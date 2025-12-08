@@ -16,6 +16,7 @@
 		"binding": "ASSETS",
 		"not_found_handling": "single-page-application"
 	},
+	"preview_urls": false,
 	"observability": {
 		"enabled": true
 	},
