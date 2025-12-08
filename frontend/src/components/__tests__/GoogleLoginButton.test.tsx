@@ -8,7 +8,13 @@ describe('GoogleLoginButton', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
-    vi.stubGlobal('open', vi.fn());
+    const fakePopup = {
+      focus: vi.fn(),
+      close: vi.fn(),
+      closed: false,
+      location: { host: 'accounts.google.com', href: 'https://accounts.google.com' },
+    };
+    vi.stubGlobal('open', vi.fn().mockReturnValue(fakePopup));
   });
 
   it('opens a popup for Google OAuth when clicked', async () => {

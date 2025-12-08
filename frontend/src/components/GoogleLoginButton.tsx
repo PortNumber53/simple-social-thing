@@ -43,12 +43,38 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
       return;
     }
     popup.focus();
+
+    // Watch the popup: when it returns to our origin (callback redirects), close it and refresh opener.
+    const started = Date.now();
+    const maxWaitMs = 2 * 60 * 1000;
     const poll = window.setInterval(() => {
-      if (popup.closed) {
-        window.clearInterval(poll);
-        window.location.reload();
+      const elapsed = Date.now() - started;
+      try {
+        if (popup.closed) {
+          window.clearInterval(poll);
+          window.location.reload();
+          return;
+        }
+      } catch {
+        // Swallow cross-origin access errors until the popup navigates back to our origin.
       }
-    }, 600);
+
+      try {
+        const loc = popup.location;
+        if (loc && loc.host === window.location.host) {
+          popup.close();
+          window.clearInterval(poll);
+          window.location.reload();
+          return;
+        }
+      } catch {
+        // cross-origin while on accounts.google.com; ignore
+      }
+
+      if (elapsed > maxWaitMs) {
+        window.clearInterval(poll);
+      }
+    }, 700);
   };
 
   if (isAuthenticated && user) {
