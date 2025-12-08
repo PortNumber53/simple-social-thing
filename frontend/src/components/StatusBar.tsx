@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 
 export const StatusBar: React.FC = () => {
+  const { isAuthenticated } = useAuth();
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [backendNow, setBackendNow] = useState<string>('—');
   const [wsState, setWsState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
@@ -22,6 +24,10 @@ export const StatusBar: React.FC = () => {
   useEffect(() => {
     if (import.meta.env.MODE === 'test') return;
     if (typeof window === 'undefined' || typeof window.WebSocket === 'undefined') return;
+    if (!isAuthenticated) {
+      setWsState('disconnected');
+      return;
+    }
 
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const wsUrl = `${proto}://${window.location.host}/api/events/ws`;
