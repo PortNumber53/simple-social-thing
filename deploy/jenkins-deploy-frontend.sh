@@ -42,7 +42,8 @@ export VITE_GOOGLE_CLIENT_ID="${VITE_GOOGLE_CLIENT_ID:-${GOOGLE_CLIENT_ID:-}}"
 export VITE_STRIPE_PUBLISHABLE_KEY="${VITE_STRIPE_PUBLISHABLE_KEY:-${STRIPE_PUBLISHABLE_KEY:-}}"
 
 echo "=== Frontend: syncing Cloudflare Worker secrets ==="
-SYNC_SECRETS="${SYNC_SECRETS:-false}"
+# Default to syncing secrets on deploy; set SYNC_SECRETS=false to skip.
+SYNC_SECRETS="${SYNC_SECRETS:-true}"
 put_secret() {
   local key="$1"
   local value="${2:-}"
@@ -66,7 +67,7 @@ require_env "FACEBOOK_WEBHOOK_TOKEN"
 require_env "BACKEND_ORIGIN"
 
 if [[ "${SYNC_SECRETS}" == "true" ]]; then
-  echo "Syncing secrets via wrangler secret put (may create deployments per secret)..."
+  echo "Syncing secrets via wrangler secret put..."
   put_secret "GOOGLE_CLIENT_ID" "${GOOGLE_CLIENT_ID:-}"
   put_secret "GOOGLE_CLIENT_SECRET" "${GOOGLE_CLIENT_SECRET:-}"
   put_secret "INSTAGRAM_APP_ID" "${INSTAGRAM_APP_ID:-}"
