@@ -17,6 +17,7 @@ interface Env {
   TIKTOK_CLIENT_SECRET?: string;
   PINTEREST_CLIENT_ID?: string;
   PINTEREST_CLIENT_SECRET?: string;
+  THREADS_OAUTH_BASE?: string;
   BACKEND_ORIGIN?: string;
   DATABASE_URL?: string;
   // Hyperdrive binding is available on env.HYPERDRIVE in CF

@@ -83,21 +83,12 @@ function readSunoSnapshot(): SunoSnapshot {
 
 export const Dashboard: React.FC = () => {
   const { user } = useAuth();
-  const { status: integrationsStatus, connectedProviders, facebookPages, isLoading: integrationsLoading } = useIntegrations();
+  const { connectedProviders } = useIntegrations();
   const [libraryStats, setLibraryStats] = useState<LibraryStats | null>(null);
-  const [libraryError, setLibraryError] = useState<string | null>(null);
   const [sunoSnapshot, setSunoSnapshot] = useState<SunoSnapshot>(() => readSunoSnapshot());
-  const [lastRealtime, setLastRealtime] = useState<string>('No events yet');
-  const [lastClockAt, setLastClockAt] = useState<number>(0);
-  const [wsFresh, setWsFresh] = useState<boolean>(false);
 
   const publishReadyProviders = useMemo(
     () => connectedProviders.filter((p) => PUBLISH_SUPPORTED[p]),
-    [connectedProviders],
-  );
-  const postableFacebookPages = useMemo(() => facebookPages.filter((p) => p.canPost), [facebookPages]);
-  const missingProviders = useMemo(
-    () => PROVIDERS.filter((p) => !connectedProviders.includes(p)),
     [connectedProviders],
   );
 
@@ -105,7 +96,6 @@ export const Dashboard: React.FC = () => {
     // Pull a lightweight snapshot of the local library queues so we can show real numbers.
     if (!user) {
       setLibraryStats(null);
-      setLibraryError(null);
       return;
     }
     let cancelled = false;
@@ -121,12 +111,8 @@ export const Dashboard: React.FC = () => {
           scheduled: scheduled.ok && Array.isArray(scheduled.data) ? scheduled.data.length : 0,
         };
         setLibraryStats(next);
-        const anyError = (!drafts.ok && drafts.status !== 404) || (!scheduled.ok && scheduled.status !== 404);
-        setLibraryError(anyError ? 'Library endpoints are reachable but returned an error.' : null);
       } catch (e: unknown) {
         if (cancelled) return;
-        const msg = e instanceof Error ? e.message : String(e);
-        setLibraryError(msg || 'library_unavailable');
       }
     };
     void load();
@@ -139,41 +125,6 @@ export const Dashboard: React.FC = () => {
     // Keep Suno snapshot in sync with the cached user settings.
     setSunoSnapshot(readSunoSnapshot());
   }, [user?.id]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const handleRealtime = (ev: Event) => {
-      const detail = (ev as CustomEvent).detail as any;
-      if (!detail || typeof detail !== 'object') return;
-      if (typeof detail.type === 'string') setLastRealtime(detail.type);
-      if (String(detail.type) === 'clock') setLastClockAt(Date.now());
-    };
-    window.addEventListener('realtime:event', handleRealtime as EventListener);
-    return () => window.removeEventListener('realtime:event', handleRealtime as EventListener);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const id = window.setInterval(() => {
-      setWsFresh(Date.now() - lastClockAt < 5000);
-    }, 2000);
-    return () => window.clearInterval(id);
-  }, [lastClockAt]);
-
-  const providerRows = useMemo(() => {
-    return PROVIDERS.map((provider) => {
-      const info = integrationsStatus?.[provider];
-      const connected = !!info?.connected;
-      const name = accountDisplayName(info?.account);
-      return {
-        provider,
-        label: PROVIDER_LABELS[provider],
-        connected,
-        name,
-        status: connected ? 'shipped' : 'setup',
-      } as const;
-    });
-  }, [integrationsStatus]);
 
   const taskBoard = useMemo(
     () => [
