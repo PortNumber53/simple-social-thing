@@ -44,7 +44,8 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
     }
     popup.focus();
 
-    // Watch the popup: when it returns to our origin (callback redirects), close it and refresh opener.
+    // Watch the popup: when it returns to our origin (callback redirects), close it and drive the opener to the app.
+    const targetPath = '/dashboard';
     const started = Date.now();
     const maxWaitMs = 2 * 60 * 1000;
     const poll = window.setInterval(() => {
@@ -52,7 +53,7 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
       try {
         if (popup.closed) {
           window.clearInterval(poll);
-          window.location.reload();
+          window.location.href = targetPath;
           return;
         }
       } catch {
@@ -64,7 +65,7 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
         if (loc && loc.host === window.location.host) {
           popup.close();
           window.clearInterval(poll);
-          window.location.reload();
+          window.location.href = targetPath;
           return;
         }
       } catch {
