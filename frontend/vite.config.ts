@@ -33,6 +33,10 @@ export default defineConfig(({ mode }) => {
       // Listen on all interfaces so LAN / reverse proxies (nginx) can reach dev server.
       // Equivalent to `vite --host 0.0.0.0`.
       host: true,
+      hmr: {
+        // Keep HMR websocket on the same port the client is served from to reduce proxy/socket churn (EPIPE).
+        clientPort: 18910,
+      },
       // Allow accessing Vite through nginx with custom dev hostnames.
       // Vite blocks unknown Host headers by default to prevent DNS rebinding attacks.
       allowedHosts: ['simple.dev.portnumber53.com', '.dev.portnumber53.com'],
@@ -40,9 +44,8 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       proxy: {
         '/api': {
-          // Use 127.0.0.1 instead of localhost to avoid IPv6 (::1) resolution issues,
-          // which can surface as nginx/Vite 502s if wrangler only binds on IPv4.
-          target: 'http://127.0.0.1:18912',
+          // Use localhost so cookies from the worker apply to the same host the app loads on.
+          target: 'http://localhost:18912',
           changeOrigin: true,
           ws: true,
           configure: forwardProxyHeaders,
@@ -50,7 +53,7 @@ export default defineConfig(({ mode }) => {
         // Media (uploaded assets) are served by the worker in dev and proxied to backend.
         // Our API responses include `/media/...` URLs, so proxy them too.
         '/media': {
-          target: 'http://127.0.0.1:18912',
+          target: 'http://localhost:18912',
           changeOrigin: true,
           configure: forwardProxyHeaders,
         },

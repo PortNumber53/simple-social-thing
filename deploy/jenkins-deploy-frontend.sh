@@ -7,7 +7,7 @@ set -euo pipefail
 # - CLOUDFLARE_API_TOKEN must be available in the environment (Jenkins credential or global env)
 # - Jenkins should provide the application secrets listed in NOTES.md as env vars:
 #   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, JWT_SECRET, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET,
-#   STRIPE_PUBLISHABLE_KEY, DATABASE_URL, XATA_API_KEY, XATA_DATABASE_URL
+#   STRIPE_PUBLISHABLE_KEY, DATABASE_URL
 #
 # This script:
 # - installs frontend deps
@@ -82,8 +82,6 @@ if [[ "${SYNC_SECRETS}" == "true" ]]; then
   put_secret "STRIPE_SECRET_KEY" "${STRIPE_SECRET_KEY:-}"
   put_secret "STRIPE_WEBHOOK_SECRET" "${STRIPE_WEBHOOK_SECRET:-}"
   put_secret "DATABASE_URL" "${DATABASE_URL:-}"
-  put_secret "XATA_API_KEY" "${XATA_API_KEY:-}"
-  put_secret "XATA_DATABASE_URL" "${XATA_DATABASE_URL:-}"
   put_secret "THREADS_OAUTH_BASE" "${THREADS_OAUTH_BASE:-}"
 else
   echo "Skipping secret sync (set SYNC_SECRETS=true to update secrets and accept extra deployments)."

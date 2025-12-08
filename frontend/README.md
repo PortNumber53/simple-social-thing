@@ -36,27 +36,6 @@ export default tseslint.config([
       // other options...
     },
   },
-## Xata Database Setup
-
-This project uses Xata as the database service. To set up Xata:
-
-1. **Create a Xata account and database:**
-   - Go to [xata.io](https://xata.io) and create an account
-   - Create a new database and note down your database URL
-
-2. **Set up environment variables:**
-   - Copy `.env.example` to `.env` (if not already done)
-   - Replace `your_xata_api_key_here` with your actual Xata API key
-   - Replace `your_xata_database_url_here` with your actual database URL
-
-3. **Using Xata in your code:**
-   ```typescript
-   import { xata } from './lib/xata';
-
-   // Example usage
-   const users = await xata.db.users.getAll();
-   ```
-
 ## Google OAuth Setup
 
 This project includes Google OAuth authentication for user sign-in.

@@ -50,5 +50,3 @@ VITE_DISABLE_CF_PLUGIN=1
 USE_MOCK_AUTH=false
 
 # --- Legacy / optional Xata (if you still use it) ---
-XATA_API_KEY=
-XATA_DATABASE_URL=

@@ -165,8 +165,6 @@ pipeline {
               string(credentialsId: 'prod-stripe-webhook-secret-simple-social-thing', variable: 'STRIPE_WEBHOOK_SECRET'),
               string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
               string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'BACKEND_ORIGIN'),
-              string(credentialsId: 'prod-xata-api-key-simple-social-thing', variable: 'XATA_API_KEY'),
-              string(credentialsId: 'prod-xata-database-url-simple-social-thing', variable: 'XATA_DATABASE_URL')
             ]) {
               sh label: 'Deploy frontend via wrangler', script: 'bash deploy/jenkins-deploy-frontend.sh'
             }

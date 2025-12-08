@@ -3,9 +3,7 @@ Hyperdrive ID: 6a6669283cec49e9978addebda7e2727
 Jenkins Secret Names:
 - cloudflare-api-token
 - prod-backend-url-simple-social-thing
-- prod-xata-database-url-simple-social-thing
 - prod-database-url-simple-social-thing
-- prod-xata-api-key-simple-social-thing
 - prod-google-client-id-simple-social-thing
 - prod-google-client-secret-simple-social-thing
 - prod-jwt-secret-simple-social-thing
