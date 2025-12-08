@@ -73,7 +73,7 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
             } catch {
               /* ignore */
             }
-          }, 5000);
+          }, 15000);
           return;
         }
       } catch {
