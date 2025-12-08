@@ -37,6 +37,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 		scheduledFor time.Time
 	}
 
+	// Use an ordering that matches the partial index to avoid large sorts that can trigger OOMs.
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT id, "userId", "scheduledFor"
 		  FROM public."Posts"
@@ -45,7 +46,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 		   AND "scheduledFor" IS NOT NULL
 		   AND "scheduledFor" <= NOW()
 		   AND "lastPublishJobId" IS NULL
-		 ORDER BY "scheduledFor" ASC
+		 ORDER BY "scheduledFor" ASC, "userId", id
 		 LIMIT $1
 	`, limit)
 	if err != nil {
@@ -241,6 +242,9 @@ func (h *Handler) StartScheduledPostsWorker(ctx context.Context, interval time.D
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// Persist sweep limit across runs so we can permanently back off on OOMs.
+	sweepLimit := 25
+
 	// Log a lightweight summary periodically even when nothing is due.
 	sweepCount := 0
 	sweepStats := func() (due int, next sql.NullTime) {
@@ -269,7 +273,7 @@ func (h *Handler) StartScheduledPostsWorker(ctx context.Context, interval time.D
 
 	run := func() {
 		sweepCount++
-		limit := 25
+		limit := sweepLimit
 		backoffs := []time.Duration{700 * time.Millisecond, 1500 * time.Millisecond, 3 * time.Second}
 		var n int
 		var err error
@@ -284,8 +288,13 @@ func (h *Handler) StartScheduledPostsWorker(ctx context.Context, interval time.D
 				break
 			}
 			// If the DB reports OOM, reduce the batch size to reduce pressure and avoid repeated failures.
-			if strings.Contains(strings.ToLower(err.Error()), "out of memory") && limit > 5 {
-				limit = 5
+			if strings.Contains(strings.ToLower(err.Error()), "out of memory") {
+				if limit > 1 {
+					limit = 1
+				}
+				if sweepLimit > limit {
+					sweepLimit = limit
+				}
 			}
 			if attempt < len(backoffs) {
 				log.Printf("[ScheduledPosts] sweep error attempt=%d/%d limit=%d err=%v", attempt+1, len(backoffs)+1, limit, err)
