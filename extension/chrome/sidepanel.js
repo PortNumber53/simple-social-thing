@@ -11,6 +11,7 @@ const selectionEl = qs('#selection');
 const notesEl = qs('#notes');
 const statusEl = qs('#status');
 const selectAllEl = qs('#selectAllMedia');
+const logEl = qs('#log');
 
 let pageData = null;
 let mediaSelections = [];
@@ -57,6 +58,19 @@ async function saveConfig() {
 function setStatus(msg, kind = '') {
   statusEl.textContent = msg;
   statusEl.className = `status ${kind}`;
+}
+
+function setLog(msg) {
+  if (!logEl) return;
+  if (typeof msg === 'string') {
+    logEl.textContent = msg;
+    return;
+  }
+  try {
+    logEl.textContent = JSON.stringify(msg, null, 2);
+  } catch {
+    logEl.textContent = String(msg);
+  }
 }
 
 async function getActiveTab() {
@@ -166,6 +180,7 @@ async function sendToBackend() {
   };
   try {
     setStatus('Sending...', '');
+    setLog('');
     const res = await fetch(`${apiBase.replace(/\/$/, '')}${endpointPath}`, {
       method: 'POST',
       headers: {
@@ -174,10 +189,13 @@ async function sendToBackend() {
       credentials: useCredsEl.checked ? 'include' : 'omit',
       body: JSON.stringify(body)
     });
+    const text = await res.text().catch(() => '');
     if (!res.ok) {
+      setLog(text || `status ${res.status}`);
       const text = await res.text();
       throw new Error(`status ${res.status}: ${text.slice(0, 200)}`);
     }
+    setLog(text || 'ok');
     setStatus('Queued successfully.', 'ok');
   } catch (err) {
     setStatus(`Error: ${err.message}`, 'err');

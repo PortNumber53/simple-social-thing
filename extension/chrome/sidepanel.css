@@ -125,6 +125,12 @@ button:active {
   border-radius: 8px;
 }
 
+.log-box {
+  min-height: 80px;
+  max-height: 200px;
+  overflow: auto;
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
