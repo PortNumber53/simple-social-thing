@@ -21,6 +21,19 @@ const truncate = (str, max = 90) => {
   return `${str.slice(0, Math.floor(max / 2) - 3)}...${str.slice(-Math.floor(max / 2))}`;
 };
 
+async function injectContentScript(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content.js']
+    });
+    return true;
+  } catch (err) {
+    console.error('Failed to inject content script', err);
+    return false;
+  }
+}
+
 async function loadConfig() {
   const { apiBase = '', endpointPath = '/api/library/import', useCredentials = true } = await chrome.storage.sync.get([
     'apiBase',
@@ -103,9 +116,15 @@ async function fetchPageData() {
       throw new Error('Open a supported social page to collect media.');
     }
 
-    pageData = await chrome.tabs.sendMessage(tab.id, { type: 'getPageData' }).catch((err) => {
-      throw new Error(err?.message || 'No content script receiver on this page.');
+    const trySend = async () => chrome.tabs.sendMessage(tab.id, { type: 'getPageData' });
+
+    pageData = await trySend().catch(async () => {
+      // Attempt to inject the content script and retry once.
+      const injected = await injectContentScript(tab.id);
+      if (!injected) throw new Error('Could not inject content script on this page.');
+      return trySend();
     });
+
     if (!pageData) throw new Error('No data from content script');
     mediaSelections = (pageData.media || []).map((m, idx) => ({
       ...m,
