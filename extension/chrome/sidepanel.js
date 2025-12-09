@@ -87,7 +87,25 @@ async function fetchPageData() {
   const tab = await getActiveTab();
   if (!tab || !tab.id) return;
   try {
-    pageData = await chrome.tabs.sendMessage(tab.id, { type: 'getPageData' });
+    const url = tab.url || '';
+    const supported = [
+      'instagram.com',
+      'facebook.com',
+      'tiktok.com',
+      'pinterest.com',
+      'youtube.com',
+      'threads.net',
+      'threads.com',
+      'x.com',
+      'twitter.com'
+    ].some((host) => url.includes(host));
+    if (!supported) {
+      throw new Error('Open a supported social page to collect media.');
+    }
+
+    pageData = await chrome.tabs.sendMessage(tab.id, { type: 'getPageData' }).catch((err) => {
+      throw new Error(err?.message || 'No content script receiver on this page.');
+    });
     if (!pageData) throw new Error('No data from content script');
     mediaSelections = (pageData.media || []).map((m, idx) => ({
       ...m,
