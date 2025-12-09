@@ -58,6 +58,13 @@ header {
   color: #334155;
 }
 
+.label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .help {
   font-size: 11px;
   color: #64748b;
@@ -69,6 +76,12 @@ header {
   gap: 8px;
   font-size: 13px;
   margin: 8px 0;
+}
+
+.checkbox.inline {
+  margin: 0;
+  font-weight: 600;
+  color: #334155;
 }
 
 button {
@@ -136,6 +149,9 @@ button:active {
   padding: 6px 8px;
   background: #f8fafc;
   font-size: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .status {

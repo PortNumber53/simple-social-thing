@@ -10,8 +10,16 @@ const mediaListEl = qs('#mediaList');
 const selectionEl = qs('#selection');
 const notesEl = qs('#notes');
 const statusEl = qs('#status');
+const selectAllEl = qs('#selectAllMedia');
 
 let pageData = null;
+let mediaSelections = [];
+
+const truncate = (str, max = 90) => {
+  if (!str) return '';
+  if (str.length <= max) return str;
+  return `${str.slice(0, Math.floor(max / 2) - 3)}...${str.slice(-Math.floor(max / 2))}`;
+};
 
 async function loadConfig() {
   const { apiBase = '', endpointPath = '/api/library/import', useCredentials = true } = await chrome.storage.sync.get([
@@ -43,26 +51,53 @@ async function getActiveTab() {
   return tab;
 }
 
+function renderMediaList() {
+  mediaListEl.innerHTML = '';
+  if (!mediaSelections.length) {
+    mediaListEl.textContent = 'No media detected on this page.';
+    selectAllEl.checked = false;
+    selectAllEl.indeterminate = false;
+    return;
+  }
+
+  const allChecked = mediaSelections.every((m) => m.selected);
+  const anyChecked = mediaSelections.some((m) => m.selected);
+  selectAllEl.checked = allChecked;
+  selectAllEl.indeterminate = !allChecked && anyChecked;
+
+  mediaSelections.forEach((m) => {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'media-item';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = m.selected;
+    cb.addEventListener('change', () => {
+      m.selected = cb.checked;
+      renderMediaList();
+    });
+    const text = document.createElement('div');
+    text.innerHTML = `<strong>${m.type}</strong>: ${truncate(m.src)}`;
+    wrapper.appendChild(cb);
+    wrapper.appendChild(text);
+    mediaListEl.appendChild(wrapper);
+  });
+}
+
 async function fetchPageData() {
   const tab = await getActiveTab();
   if (!tab || !tab.id) return;
   try {
     pageData = await chrome.tabs.sendMessage(tab.id, { type: 'getPageData' });
     if (!pageData) throw new Error('No data from content script');
+    mediaSelections = (pageData.media || []).map((m, idx) => ({
+      ...m,
+      id: idx,
+      selected: true
+    }));
     urlEl.textContent = pageData.url || '';
     providerEl.textContent = pageData.provider || 'unknown';
     selectionEl.textContent = pageData.selection || '';
-    mediaListEl.innerHTML = '';
-    if (pageData.media?.length) {
-      pageData.media.forEach((m) => {
-        const div = document.createElement('div');
-        div.className = 'media-item';
-        div.textContent = `${m.type}: ${m.src}`;
-        mediaListEl.appendChild(div);
-      });
-    } else {
-      mediaListEl.textContent = 'No media detected on this page.';
-    }
+    renderMediaList();
   } catch (err) {
     setStatus(`Failed to read page: ${err.message}`, 'err');
   }
@@ -75,6 +110,11 @@ async function sendToBackend() {
     setStatus('Please set API Base URL', 'err');
     return;
   }
+  const selectedMedia = mediaSelections.filter((m) => m.selected).map(({ type, src }) => ({ type, src }));
+  if (!selectedMedia.length) {
+    setStatus('Select at least one media item.', 'err');
+    return;
+  }
   if (!pageData) {
     setStatus('No page data. Try reloading the panel.', 'err');
     return;
@@ -82,7 +122,7 @@ async function sendToBackend() {
   const body = {
     url: pageData.url,
     provider: pageData.provider,
-    media: pageData.media || [],
+    media: selectedMedia,
     selection: pageData.selection || '',
     meta: pageData.meta || {},
     notes: notesEl.value || ''
@@ -114,4 +154,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 saveBtn.addEventListener('click', saveConfig);
 sendBtn.addEventListener('click', sendToBackend);
+selectAllEl.addEventListener('change', () => {
+  const checked = selectAllEl.checked;
+  mediaSelections = mediaSelections.map((m) => ({ ...m, selected: checked }));
+  renderMediaList();
+});
 
