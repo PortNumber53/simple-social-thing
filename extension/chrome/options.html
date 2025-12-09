@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simple Social Clip - Options</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 16px;
+      color: #0f172a;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+    input {
+      padding: 8px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    label {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    button {
+      padding: 10px 12px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #2563eb, #7c3aed);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .status {
+      margin-top: 8px;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Simple Social Clip</h2>
+  <div class="field">
+    <label for="apiBase">API Base URL</label>
+    <input id="apiBase" type="text" placeholder="https://simple.truvis.co" />
+  </div>
+  <div class="field">
+    <label for="endpointPath">Endpoint Path</label>
+    <input id="endpointPath" type="text" value="/api/library/import" />
+  </div>
+  <div class="field">
+    <label><input id="useCredentials" type="checkbox" checked /> Send cookies with requests</label>
+  </div>
+  <button id="save">Save</button>
+  <div id="status" class="status"></div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
+

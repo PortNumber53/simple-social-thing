@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "Simple Social Clip",
+  "description": "Send media and post content from supported social sites into your Simple Social Thing library via the backend job queue.",
+  "version": "0.1.0",
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://localhost:18910/*",
+    "http://localhost:18912/*",
+    "https://*.portnumber53.com/*",
+    "https://*.truvis.co/*",
+    "https://*.threads.net/*",
+    "https://*.threads.com/*",
+    "https://*.instagram.com/*",
+    "https://*.facebook.com/*",
+    "https://*.tiktok.com/*",
+    "https://*.pinterest.com/*",
+    "https://*.youtube.com/*",
+    "https://*.x.com/*",
+    "https://*.twitter.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open Simple Social Clip"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.instagram.com/*",
+        "*://*.facebook.com/*",
+        "*://*.tiktok.com/*",
+        "*://*.pinterest.com/*",
+        "*://*.youtube.com/*",
+        "*://*.threads.net/*",
+        "*://*.threads.com/*",
+        "*://*.x.com/*",
+        "*://*.twitter.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html"
+}
+

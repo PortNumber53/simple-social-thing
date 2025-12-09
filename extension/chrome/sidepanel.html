@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simple Social Clip</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="title">Simple Social Clip</div>
+      <div class="subtitle">Send media to your library</div>
+    </header>
+
+    <section class="section">
+      <label class="field">
+        <span class="label">API Base URL</span>
+        <input id="apiBase" type="text" placeholder="https://simple.truvis.co" />
+      </label>
+      <label class="field">
+        <span class="label">Endpoint Path</span>
+        <input id="endpointPath" type="text" value="/api/library/import" />
+        <small class="help">Must accept POST with JSON: { url, provider, notes, media, selection }</small>
+      </label>
+      <label class="checkbox">
+        <input id="useCredentials" type="checkbox" checked />
+        <span>Send cookies (same auth as web app)</span>
+      </label>
+      <button id="saveConfig">Save settings</button>
+    </section>
+
+    <section class="section">
+      <div class="row">
+        <div>
+          <div class="label">Current URL</div>
+          <div id="currentUrl" class="mono"></div>
+        </div>
+        <div>
+          <div class="label">Provider</div>
+          <div id="provider" class="pill"></div>
+        </div>
+      </div>
+      <div class="label">Detected media</div>
+      <div id="mediaList" class="media-list"></div>
+      <div class="label">Selected text</div>
+      <pre id="selection" class="mono small"></pre>
+      <label class="field">
+        <span class="label">Notes (optional)</span>
+        <textarea id="notes" rows="3" placeholder="Add a caption or notes"></textarea>
+      </label>
+      <button id="sendToBackend">Send to Library</button>
+      <div id="status" class="status"></div>
+    </section>
+  </div>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
+
