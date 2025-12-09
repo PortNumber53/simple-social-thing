@@ -277,6 +277,7 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	// Social library (cached copies of user created content)
 	r.HandleFunc("/api/social-libraries/user/{userId}", h.ListSocialLibrariesForUser).Methods("GET")
 	r.HandleFunc("/api/social-libraries/sync/user/{userId}", h.SyncSocialLibrariesForUser).Methods("POST")
+	r.HandleFunc("/api/social-libraries/import/user/{userId}", h.ImportSocialLibraryForUser).Methods("POST")
 	// Batch delete cached library items for a user
 	r.HandleFunc("/api/social-libraries/delete/user/{userId}", h.DeleteSocialLibrariesForUser).Methods("POST")
 

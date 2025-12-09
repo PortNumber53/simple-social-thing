@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -609,6 +610,102 @@ func (h *Handler) ListSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+type importSocialLibraryRequest struct {
+	URL       string `json:"url"`
+	Provider  string `json:"provider"`
+	Notes     string `json:"notes"`
+	Selection string `json:"selection"`
+	Meta      any    `json:"meta"`
+	Media     []struct {
+		Type string `json:"type"`
+		Src  string `json:"src"`
+	} `json:"media"`
+}
+
+func (h *Handler) ImportSocialLibraryForUser(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	userID := pathVar(r, "userId")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+
+	var req importSocialLibraryRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.URL == "" {
+		writeError(w, http.StatusBadRequest, "url is required")
+		return
+	}
+	if len(req.Media) == 0 {
+		writeError(w, http.StatusBadRequest, "media is required")
+		return
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(req.Provider))
+	if provider == "" {
+		provider = "unknown"
+	}
+	first := req.Media[0]
+	contentType := "image"
+	for _, m := range req.Media {
+		if strings.Contains(strings.ToLower(m.Type), "video") {
+			contentType = "video"
+			break
+		}
+	}
+	title := strings.TrimSpace(req.Notes)
+	if title == "" {
+		title = strings.TrimSpace(req.Selection)
+	}
+	if title == "" {
+		if metaMap, ok := req.Meta.(map[string]any); ok {
+			if t, ok := metaMap["title"].(string); ok {
+				title = strings.TrimSpace(t)
+			}
+		}
+	}
+
+	rawPayload, _ := json.Marshal(req)
+	hh := sha1.Sum([]byte(req.URL + first.Src + userID))
+	hash := hex.EncodeToString(hh[:])
+	if len(hash) > 16 {
+		hash = hash[:16]
+	}
+	rowID := fmt.Sprintf("import:%s:%s", userID, hash)
+	externalID := rowID
+
+	if _, err := h.db.ExecContext(r.Context(), `
+		INSERT INTO public."SocialLibraries"
+		  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
+		VALUES
+		  ($1, $2, $3, $4, NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), NOW(), NULL, NULL, $9::jsonb, $10, NOW(), NOW())
+		ON CONFLICT (user_id, network, external_id)
+		DO UPDATE SET
+		  content_type = EXCLUDED.content_type,
+		  title = EXCLUDED.title,
+		  permalink_url = EXCLUDED.permalink_url,
+		  media_url = EXCLUDED.media_url,
+		  thumbnail_url = EXCLUDED.thumbnail_url,
+		  raw_payload = EXCLUDED.raw_payload,
+		  updated_at = NOW()
+	`, rowID, userID, provider, contentType, title, req.URL, first.Src, first.Src, string(rawPayload), externalID); err != nil {
+		log.Printf("[ImportSocialLibrary] insert failed userId=%s err=%v", userID, err)
+		http.Error(w, "failed to save", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"id": rowID,
+	})
 }
 
 // DeleteSocialLibrariesForUser deletes cached SocialLibraries rows by id for a given user.

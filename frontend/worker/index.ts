@@ -616,6 +616,9 @@ export default {
       if (url.pathname === "/api/library/delete") {
         return handleLibraryDelete(request, env);
       }
+    if (url.pathname === "/api/library/import") {
+      return handleLibraryImport(request, env);
+    }
 
       // Notifications
       if (url.pathname === "/api/notifications") {
@@ -1425,6 +1428,39 @@ async function handleLibraryDelete(request: Request, env: Env): Promise<Response
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		console.error('[LibraryDelete] backend unreachable', { backendOrigin, message, ids: ids.length, userId: sid, deleteExternal });
+		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+	}
+}
+
+async function handleLibraryImport(request: Request, env: Env): Promise<Response> {
+	const backendOrigin = getBackendOrigin(env, request);
+	const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
+	if (preflight) return preflight;
+	if (request.method !== 'POST') return new Response(null, { status: 405, headers });
+
+	const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+	if (!sid) {
+		console.warn('[LibraryImport] unauthenticated', { backendOrigin });
+		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+	}
+
+	try {
+		const bodyText = await request.text();
+		const res = await fetch(`${backendOrigin}/api/social-libraries/import/user/${encodeURIComponent(sid)}`, {
+			method: 'POST',
+			headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+			body: bodyText,
+		});
+		const text = await res.text().catch(() => '');
+		if (!res.ok) {
+			console.error('[LibraryImport] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+			return new Response(JSON.stringify({ ok: false, error: 'import_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+		}
+		headers.set('Content-Type', 'application/json');
+		return new Response(text || '{"ok":true}', { status: 200, headers });
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		console.error('[LibraryImport] backend unreachable', { backendOrigin, message });
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
 }
