@@ -22,6 +22,35 @@ export const TopNavigation: React.FC = () => {
     "text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800";
   const navItemPublicColors =
     "text-slate-700 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400";
+  const contentLinks = [
+    { href: '/content/published', label: 'Published' },
+    { href: '/content/posts', label: 'Posts' },
+    { href: '/content/videos', label: 'Videos' },
+    { href: '/content/music', label: 'Music' },
+  ];
+  const ContentLinksList: React.FC<{
+    onItemClick?: () => void;
+    itemClassName: string;
+    rounded?: boolean;
+  }> = ({ onItemClick, itemClassName, rounded = false }) => (
+    <>
+      {contentLinks.map((item, idx) => {
+        const isFirst = idx === 0;
+        const isLast = idx === contentLinks.length - 1;
+        const rounding = rounded ? `${isFirst ? 'rounded-t-md' : ''} ${isLast ? 'rounded-b-md' : ''}` : '';
+        return (
+          <a
+            key={item.href}
+            href={item.href}
+            onClick={onItemClick}
+            className={`${itemClassName} ${rounding}`.trim()}
+          >
+            {item.label}
+          </a>
+        );
+      })}
+    </>
+  );
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -123,10 +152,10 @@ export const TopNavigation: React.FC = () => {
                     </svg>
                   </button>
                   <div className="absolute left-0 top-full mt-0 w-48 rounded-md bg-white dark:bg-slate-900 shadow-lg ring-1 ring-black/5 dark:ring-white/10 opacity-0 pointer-events-none translate-y-1 group-hover:translate-y-0 group-hover:opacity-100 group-hover:pointer-events-auto transition duration-150">
-                    <a href="/content/posts" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-t-md">Posts</a>
-                    <a href="/content/videos" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800">Videos</a>
-                    <a href="/content/music" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800">Music</a>
-                    <a href="/content/published" className="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-b-md">Published</a>
+                    <ContentLinksList
+                      rounded
+                      itemClassName="block px-4 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    />
                   </div>
                 </div>
                 <a href="/reports" className={`${navItemBase} ${navItemColors}`}>
@@ -382,18 +411,10 @@ export const TopNavigation: React.FC = () => {
                       Content
                     </div>
                     <div className="p-2 grid grid-cols-1 gap-1">
-                      <a href="/content/posts" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
-                        Published
-                      </a>
-                      <a href="/content/posts" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
-                        Posts
-                      </a>
-                      <a href="/content/videos" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
-                        Videos
-                      </a>
-                      <a href="/content/music" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
-                        Music
-                      </a>
+                      <ContentLinksList
+                        onItemClick={() => setMobileOpen(false)}
+                        itemClassName={`${navItemBase} ${navItemColors} justify-start w-full`}
+                      />
                     </div>
                   </div>
 
