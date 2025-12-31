@@ -1,2 +1,1 @@
-ALTER TABLE public."Posts"
-  DROP COLUMN IF EXISTS providers;
+-- no-op: schema consolidated into 001 with snake_case tables.

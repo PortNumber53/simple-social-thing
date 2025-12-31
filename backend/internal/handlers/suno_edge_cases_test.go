@@ -55,7 +55,7 @@ func TestStoreSunoTrack_DBInsertError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	h := New(db)
 
-	mock.ExpectExec(`INSERT INTO public\."SunoTracks"`).
+	mock.ExpectExec(`INSERT INTO public\.suno_tracks`).
 		WillReturnError(sql.ErrConnDone)
 
 	rr := httptest.NewRecorder()
@@ -99,7 +99,7 @@ func TestSunoMusicCallback_InvalidJSON_MissingTaskId_NoTrack(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectQuery(`SELECT id FROM public\."SunoTracks" WHERE task_id = \$1`).
+		mock.ExpectQuery(`SELECT id FROM public\.suno_tracks WHERE task_id = \$1`).
 			WithArgs("task1").
 			WillReturnError(sql.ErrNoRows)
 
@@ -147,7 +147,7 @@ func TestUpdateSunoTrack_DownloadNon2xx_AndDBError(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectExec(`UPDATE public\."SunoTracks"`).
+		mock.ExpectExec(`UPDATE public\.suno_tracks`).
 			WillReturnError(sql.ErrConnDone)
 
 		rr := httptest.NewRecorder()

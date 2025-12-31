@@ -29,13 +29,13 @@ func TestPublishSocialPostForUser_FacebookAndInstagram_DryRun(t *testing.T) {
 	// OAuth rows needed by facebook + instagram branches
 	fbPayload := fbOAuthPayload{Pages: []fbOAuthPageRow{{ID: "pg1", AccessToken: "ptok", Tasks: []string{"CREATE_CONTENT"}}}}
 	fbRaw, _ := json.Marshal(fbPayload)
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='facebook_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='facebook_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(fbRaw))
 
 	igPayload := instagramOAuth{AccessToken: "igtok", IGBusinessID: "ig1"}
 	igRaw, _ := json.Marshal(igPayload)
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='instagram_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='instagram_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(igRaw))
 

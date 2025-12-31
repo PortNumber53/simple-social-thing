@@ -43,7 +43,7 @@ func TestCreateUser_Success(t *testing.T) {
 	h := New(db)
 	now := time.Now().UTC()
 
-	mock.ExpectQuery(`INSERT INTO public\."Users"`).
+	mock.ExpectQuery(`INSERT INTO public\.users`).
 		WithArgs("u1", "e@example.com", "Alice", "img").
 		WillReturnRows(
 			sqlmock.NewRows([]string{"id", "email", "name", "imageUrl", "createdAt"}).
@@ -96,7 +96,7 @@ func TestGetUser_NotFound(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	h := New(db)
-	mock.ExpectQuery(`SELECT id, email, name, "imageUrl", "createdAt" FROM public\."Users"`).
+	mock.ExpectQuery(`SELECT id, email, name, image_url, created_at FROM public\.users`).
 		WithArgs("missing").
 		WillReturnError(sql.ErrNoRows)
 
@@ -126,7 +126,7 @@ func TestGetUserSettings_Success(t *testing.T) {
 		AddRow("foo", []byte(`"bar"`)).
 		AddRow("obj", []byte(`{"a":1}`))
 
-	mock.ExpectQuery(`SELECT key, value FROM public\."UserSettings" WHERE user_id = \$1`).
+	mock.ExpectQuery(`SELECT key, value FROM public\.user_settings WHERE user_id = \$1`).
 		WithArgs("u1").
 		WillReturnRows(rows)
 
@@ -173,7 +173,7 @@ func TestGetPublishJob_Success(t *testing.T) {
 	createdAt := time.Now().UTC()
 	updatedAt := createdAt.Add(10 * time.Second)
 
-	mock.ExpectQuery(`FROM public\."PublishJobs"\s+WHERE id = \$1`).
+	mock.ExpectQuery(`FROM public\.publish_jobs\s+WHERE id = \$1`).
 		WithArgs("pub_123").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
@@ -231,7 +231,7 @@ func TestGetPublishJob_NotFound(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	h := New(db)
-	mock.ExpectQuery(`FROM public\."PublishJobs"\s+WHERE id = \$1`).
+	mock.ExpectQuery(`FROM public\.publish_jobs\s+WHERE id = \$1`).
 		WithArgs("missing").
 		WillReturnError(sql.ErrNoRows)
 

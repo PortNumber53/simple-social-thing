@@ -99,10 +99,10 @@ func TestPublishFacebookPages_CaptionOnly_AndInsufficientTasks(t *testing.T) {
 
 		payload := fbOAuthPayload{Pages: []fbOAuthPageRow{{ID: "pg1", AccessToken: "ptok", Tasks: []string{"CREATE_CONTENT"}}}}
 		raw, _ := json.Marshal(payload)
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='facebook_oauth'`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='facebook_oauth'`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
-		mock.ExpectExec(`INSERT INTO public\."SocialLibraries"`).
+		mock.ExpectExec(`INSERT INTO public\.social_libraries`).
 			WithArgs(sqlmock.AnyArg(), "u1", "cap", sqlmock.AnyArg(), sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -135,7 +135,7 @@ func TestPublishFacebookPages_CaptionOnly_AndInsufficientTasks(t *testing.T) {
 
 		payload := fbOAuthPayload{Pages: []fbOAuthPageRow{{ID: "pg1", AccessToken: "ptok", Tasks: []string{"READ"}}}}
 		raw, _ := json.Marshal(payload)
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='facebook_oauth'`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='facebook_oauth'`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 

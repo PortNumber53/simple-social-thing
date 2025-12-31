@@ -48,7 +48,7 @@ type mediaItem struct {
 }
 
 // SyncUser imports the latest Instagram media for a single user and upserts rows into SocialLibraries.
-// It looks up the user's stored token in public."UserSettings" key='instagram_oauth'.
+// It looks up the user's stored token in public.user_settings key='instagram_oauth'.
 func SyncUser(ctx context.Context, db *sql.DB, userID string, logger *log.Logger) (fetched int, upserted int, err error) {
 	return syncUserWithClient(ctx, db, userID, logger, &http.Client{Timeout: 15 * time.Second})
 }
@@ -66,7 +66,7 @@ func syncUserWithClient(ctx context.Context, db *sql.DB, userID string, logger *
 	}
 
 	var raw []byte
-	q := `SELECT value FROM public."UserSettings" WHERE user_id = $1 AND key = 'instagram_oauth' AND value IS NOT NULL`
+	q := `SELECT value FROM public.user_settings WHERE user_id = $1 AND key = 'instagram_oauth' AND value IS NOT NULL`
 	if err := db.QueryRowContext(ctx, q, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, 0, nil
@@ -179,10 +179,10 @@ type tokenRow struct {
 }
 
 func (i *Importer) loadTokens(ctx context.Context) ([]tokenRow, error) {
-	// We store instagram tokens in UserSettings key="instagram_oauth" as JSONB.
+	// We store instagram tokens in user_settings key="instagram_oauth" as JSONB.
 	rows, err := i.DB.QueryContext(ctx, `
 		SELECT user_id, value
-		FROM public."UserSettings"
+		FROM public.user_settings
 		WHERE key = 'instagram_oauth' AND value IS NOT NULL
 	`)
 	if err != nil {
@@ -254,7 +254,7 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 
 		id := fmt.Sprintf("instagram:%s:%s", userID, externalID)
 		_, err := i.DB.ExecContext(ctx, `
-			INSERT INTO public."SocialLibraries"
+			INSERT INTO public.social_libraries
 			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
 			VALUES
 			  ($1, $2, 'instagram', $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), $8, NULL, $9, $10::jsonb, $11, NOW(), NOW())

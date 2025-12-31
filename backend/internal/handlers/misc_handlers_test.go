@@ -23,7 +23,7 @@ func TestCreateAndListSocialConnections(t *testing.T) {
 
 	now := time.Now().UTC()
 	// CreateSocialConnection
-	mock.ExpectQuery(`INSERT INTO public\."SocialConnections"`).
+	mock.ExpectQuery(`INSERT INTO public\.social_connections`).
 		WithArgs("c1", "u1", "instagram", "pid1", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "userId", "provider", "providerId", "email", "name", "createdAt"}).
 			AddRow("c1", "u1", "instagram", "pid1", sql.NullString{}, sql.NullString{}, now))
@@ -36,7 +36,7 @@ func TestCreateAndListSocialConnections(t *testing.T) {
 	}
 
 	// GetUserSocialConnections
-	mock.ExpectQuery(`FROM public\."SocialConnections" WHERE "userId" = \$1`).
+	mock.ExpectQuery(`FROM public\.social_connections WHERE user_id = \$1`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "userId", "provider", "providerId", "email", "name", "createdAt"}).
 			AddRow("c1", "u1", "instagram", "pid1", sql.NullString{}, sql.NullString{}, now))
@@ -66,7 +66,7 @@ func TestTeams_CreateGetList(t *testing.T) {
 	owner := "u1"
 	tier := "free"
 
-	mock.ExpectQuery(`INSERT INTO public\."Teams"`).
+	mock.ExpectQuery(`INSERT INTO public\.teams`).
 		WithArgs("t1", &owner, &tier).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "owner_id", "current_tier", "posts_created_today", "usage_reset_date", "ig_llat", "stripe_customer_id", "stripe_subscription_id", "createdAt"}).
 			AddRow("t1", owner, tier, 0, nil, nil, nil, nil, now))
@@ -78,7 +78,7 @@ func TestTeams_CreateGetList(t *testing.T) {
 		t.Fatalf("expected 200 got %d body=%q", rr.Code, rr.Body.String())
 	}
 
-	mock.ExpectQuery(`FROM public\."Teams" WHERE id = \$1`).
+	mock.ExpectQuery(`FROM public\.teams WHERE id = \$1`).
 		WithArgs("t1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "owner_id", "current_tier", "posts_created_today", "usage_reset_date", "ig_llat", "stripe_customer_id", "stripe_subscription_id", "createdAt"}).
 			AddRow("t1", owner, tier, 0, nil, nil, nil, nil, now))
@@ -91,7 +91,7 @@ func TestTeams_CreateGetList(t *testing.T) {
 		t.Fatalf("expected 200 got %d body=%q", rr.Code, rr.Body.String())
 	}
 
-	mock.ExpectQuery(`FROM public\."Teams" t`).
+	mock.ExpectQuery(`FROM public\.teams t`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "owner_id", "current_tier", "posts_created_today", "usage_reset_date", "ig_llat", "stripe_customer_id", "stripe_subscription_id", "createdAt"}).
 			AddRow("t1", owner, tier, 0, nil, nil, nil, nil, now))
@@ -118,7 +118,7 @@ func TestUserSettings_GetAndUpsert(t *testing.T) {
 	h := New(db)
 
 	// GetUserSetting not found
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings" WHERE user_id = \$1 AND key = \$2`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings WHERE user_id = \$1 AND key = \$2`).
 		WithArgs("u1", "k1").
 		WillReturnError(sql.ErrNoRows)
 	rr := httptest.NewRecorder()
@@ -139,7 +139,7 @@ func TestUserSettings_GetAndUpsert(t *testing.T) {
 	}
 
 	// Upsert success
-	mock.ExpectExec(`INSERT INTO public\."UserSettings"`).
+	mock.ExpectExec(`INSERT INTO public\.user_settings`).
 		WithArgs("u1", "k1", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	rr = httptest.NewRecorder()
@@ -151,7 +151,7 @@ func TestUserSettings_GetAndUpsert(t *testing.T) {
 	}
 
 	// GetUserSetting success
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings" WHERE user_id = \$1 AND key = \$2`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings WHERE user_id = \$1 AND key = \$2`).
 		WithArgs("u1", "k1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"a":1}`)))
 	rr = httptest.NewRecorder()
@@ -163,7 +163,7 @@ func TestUserSettings_GetAndUpsert(t *testing.T) {
 	}
 
 	// GetUserSettings bundle
-	mock.ExpectQuery(`SELECT key, value FROM public\."UserSettings" WHERE user_id = \$1`).
+	mock.ExpectQuery(`SELECT key, value FROM public\.user_settings WHERE user_id = \$1`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"key", "value"}).
 			AddRow("k1", []byte(`{"a":1}`)).

@@ -24,7 +24,7 @@ func TestPinterestProvider_SyncUser_EmptyItems(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t"}`)))
 
@@ -55,7 +55,7 @@ func TestPinterestProvider_SyncUser_OneItem_Upserts(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t"}`)))
 
@@ -67,7 +67,7 @@ func TestPinterestProvider_SyncUser_OneItem_Upserts(t *testing.T) {
 		}, nil
 	})}
 
-	execRe := `INSERT INTO public\."SocialLibraries"`
+	execRe := `INSERT INTO public\.social_libraries`
 	mock.ExpectExec(execRe).
 		WithArgs("pinterest:u1:p1", "u1", "t", "https://example", "https://example", "thumb", sqlmock.AnyArg(), sqlmock.AnyArg(), "p1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -91,7 +91,7 @@ func TestPinterestProvider_SyncUser_Non2xx(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t"}`)))
 
@@ -120,7 +120,7 @@ func TestPinterestProvider_SyncUser_FallbackThumb_TitleFallback_AndSkipBlankID(t
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t"}`)))
 
@@ -135,7 +135,7 @@ func TestPinterestProvider_SyncUser_FallbackThumb_TitleFallback_AndSkipBlankID(t
 		}, nil
 	})}
 
-	execRe := `INSERT INTO public\."SocialLibraries"`
+	execRe := `INSERT INTO public\.social_libraries`
 	mock.ExpectExec(execRe).
 		WithArgs("pinterest:u1:p2", "u1", "desc", "", "", "thumb2", sqlmock.AnyArg(), sqlmock.AnyArg(), "p2").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -160,7 +160,7 @@ func TestThreadsProvider_SyncUser_EmptyData(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='threads_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='threads_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t","threadsUserId":"th"}`)))
 
@@ -191,7 +191,7 @@ func TestThreadsProvider_SyncUser_OneItem_Upserts(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='threads_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='threads_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t","threadsUserId":"th"}`)))
 
@@ -203,7 +203,7 @@ func TestThreadsProvider_SyncUser_OneItem_Upserts(t *testing.T) {
 		}, nil
 	})}
 
-	execRe := `INSERT INTO public\."SocialLibraries"`
+	execRe := `INSERT INTO public\.social_libraries`
 	mock.ExpectExec(execRe).
 		WithArgs("threads:u1:t1", "u1", "hello", "pl", "mu", "tu", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "t1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -227,7 +227,7 @@ func TestThreadsProvider_SyncUser_Non2xx(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='threads_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='threads_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t","threadsUserId":"th"}`)))
 
@@ -256,7 +256,7 @@ func TestTikTokProvider_SyncUser_EmptyVideos(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='tiktok_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='tiktok_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t","openId":"o","scope":"video.list"}`)))
 
@@ -287,7 +287,7 @@ func TestTikTokProvider_SyncUser_OneVideo_Upserts(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='tiktok_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='tiktok_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t","openId":"o","scope":"video.list"}`)))
 
@@ -299,7 +299,7 @@ func TestTikTokProvider_SyncUser_OneVideo_Upserts(t *testing.T) {
 		}, nil
 	})}
 
-	execRe := `INSERT INTO public\."SocialLibraries"`
+	execRe := `INSERT INTO public\.social_libraries`
 	mock.ExpectExec(execRe).
 		WithArgs("tiktok:u1:v1", "u1", "ti", "su", "su", "cu", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "v1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -324,7 +324,7 @@ func TestTikTokProvider_SyncUser_MissingScope(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='tiktok_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='tiktok_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t","openId":"o","scope":"user.info.basic"}`)))
 
@@ -347,7 +347,7 @@ func TestYouTubeProvider_SyncUser_EmptyChannels(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t"}`)))
 
@@ -379,7 +379,7 @@ func TestYouTubeProvider_SyncUser_NoUploadsPlaylistID(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t"}`)))
 
@@ -411,7 +411,7 @@ func TestYouTubeProvider_SyncUser_EmptyPlaylistItems(t *testing.T) {
 	}
 	defer db.Close()
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`)).
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT value FROM public.user_settings WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t"}`)))
 

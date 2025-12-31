@@ -71,7 +71,7 @@ func (r *Runner) StartProviderWorker(ctx context.Context, provider Provider, int
 		}
 		// Find users that have an oauth token for that provider in UserSettings.
 		key := name + "_oauth"
-		rows, err := r.DB.QueryContext(ctx, `SELECT DISTINCT user_id FROM public."UserSettings" WHERE key = $1 AND value IS NOT NULL`, key)
+		rows, err := r.DB.QueryContext(ctx, `SELECT DISTINCT user_id FROM public.user_settings WHERE key = $1 AND value IS NOT NULL`, key)
 		if err != nil {
 			r.Logger.Printf("[SocialWorker] list users failed provider=%s err=%v", name, err)
 			return

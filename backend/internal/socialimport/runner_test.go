@@ -39,7 +39,7 @@ func TestRunnerSyncAll_QuotaExceededAndProviderError(t *testing.T) {
 	r := &Runner{DB: db}
 
 	// ConsumeRequests increments to 2 -> exceed max 1.
-	mock.ExpectQuery(`INSERT INTO public\."SocialImportUsage"`).
+	mock.ExpectQuery(`INSERT INTO public\.social_import_usage`).
 		WithArgs(sqlmock.AnyArg(), "x", sqlmock.AnyArg(), int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"requests_used"}).AddRow(int64(2)))
 

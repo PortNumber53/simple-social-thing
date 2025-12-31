@@ -45,7 +45,7 @@ export function UploadGrid({
   fallbackToLocalPreviewIfPossible: (u: UploadPreview) => void;
 }) {
   return (
-    <div className="card p-5 space-y-3">
+    <div className="card p-5 space-y-3 h-full flex flex-col">
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Uploads</div>
         <div className="flex items-center gap-2">
@@ -94,12 +94,15 @@ export function UploadGrid({
       </div>
 
       {uploads.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-6 gap-3">
+        <div
+          className="grid gap-3 flex-1 overflow-auto"
+          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 320px))', gridAutoRows: '240px' }}
+        >
           {uploads.map((u) => (
             <div
               key={u.id}
               className={[
-                'card p-0 overflow-hidden',
+                'card p-0 overflow-hidden w-[320px] h-[240px]',
                 dragOverUploadId === u.id && dragUploadId && dragUploadId !== u.id ? 'ring-2 ring-primary-500' : '',
                 dragUploadId === u.id ? 'opacity-60' : '',
                 selectedUploadIds.has(u.id) ? 'ring-2 ring-primary-500' : '',
@@ -138,7 +141,7 @@ export function UploadGrid({
               }}
               title="Drag to reorder"
             >
-              <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
+              <div className="relative w-full h-full">
                 {u.kind === 'image' ? (
                   <img
                     src={u.url}

@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS public."UserSettings";
+-- no-op: schema consolidated into 001 with snake_case tables.

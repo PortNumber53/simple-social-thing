@@ -37,7 +37,7 @@ func TestProcessDueScheduledPostsOnce_EnqueuesJob(t *testing.T) {
 		WithArgs("p1", "u1", sqlmock.AnyArg()).
 		WillReturnRows(details)
 
-	mock.ExpectExec(`INSERT INTO public\."PublishJobs"`).
+	mock.ExpectExec(`INSERT INTO public\.publish_jobs`).
 		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), "hello", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 

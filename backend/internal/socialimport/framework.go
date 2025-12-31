@@ -94,10 +94,10 @@ func ConsumeRequests(ctx context.Context, db *sql.DB, provider string, add int64
 	day := time.Now().UTC().Format("2006-01-02")
 	id := fmt.Sprintf("%s:%s", provider, day)
 	query := `
-		INSERT INTO public."SocialImportUsage" (id, provider, day, requests_used, last_updated_at)
+		INSERT INTO public.social_import_usage (id, provider, day, requests_used, last_updated_at)
 		VALUES ($1, $2, $3::date, $4, NOW())
 		ON CONFLICT (provider, day) DO UPDATE SET
-		  requests_used = public."SocialImportUsage".requests_used + EXCLUDED.requests_used,
+		  requests_used = public.social_import_usage.requests_used + EXCLUDED.requests_used,
 		  last_updated_at = NOW()
 		RETURNING requests_used
 	`

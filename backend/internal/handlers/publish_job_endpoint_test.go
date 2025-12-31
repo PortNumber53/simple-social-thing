@@ -99,21 +99,21 @@ func TestEnqueuePublishJobForUser_Success_UnknownProvider(t *testing.T) {
 	h := New(db)
 
 	// Insert job row (jobID is rand)
-	mock.ExpectExec(`INSERT INTO public\."PublishJobs"`).
+	mock.ExpectExec(`INSERT INTO public\.publish_jobs`).
 		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), "cap", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Background job updates (unknown provider => no provider calls)
-	mock.ExpectExec(`UPDATE public\."PublishJobs".*status='running'`).
+	mock.ExpectExec(`UPDATE public\.publish_jobs.*status='running'`).
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`UPDATE public\."Posts".*"lastPublishStatus"='running'`).
+	mock.ExpectExec(`UPDATE public\.posts.*last_publish_status='running'`).
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`UPDATE public\."PublishJobs".*SET status=\$2`).
+	mock.ExpectExec(`UPDATE public\.publish_jobs.*SET status=\$2`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`UPDATE public\."Posts".*SET "lastPublishStatus"=\$2`).
+	mock.ExpectExec(`UPDATE public\.posts.*SET last_publish_status=\$2`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
@@ -159,23 +159,23 @@ func TestRunPublishJob_TikTokDryRun(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	h := New(db)
 
-	mock.ExpectExec(`UPDATE public\."PublishJobs".*status='running'`).
+	mock.ExpectExec(`UPDATE public\.publish_jobs.*status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`UPDATE public\."Posts".*"lastPublishStatus"='running'`).
+	mock.ExpectExec(`UPDATE public\.posts.*last_publish_status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	tok := tiktokOAuth{AccessToken: "tt", OpenID: "oid", Scope: "video.upload,video.publish"}
 	raw, _ := json.Marshal(tok)
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='tiktok_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='tiktok_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
-	mock.ExpectExec(`UPDATE public\."PublishJobs".*SET status=\$2`).
+	mock.ExpectExec(`UPDATE public\.publish_jobs.*SET status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`UPDATE public\."Posts".*SET "lastPublishStatus"=\$2`).
+	mock.ExpectExec(`UPDATE public\.posts.*SET last_publish_status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
@@ -199,28 +199,28 @@ func TestRunPublishJob_FacebookCaptionOnly_Success(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	h := New(db)
 
-	mock.ExpectExec(`UPDATE public\."PublishJobs".*status='running'`).
+	mock.ExpectExec(`UPDATE public\.publish_jobs.*status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`UPDATE public\."Posts".*"lastPublishStatus"='running'`).
+	mock.ExpectExec(`UPDATE public\.posts.*last_publish_status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	payload := fbOAuthPayload{Pages: []fbOAuthPageRow{{ID: "pg1", AccessToken: "ptok", Tasks: []string{"CREATE_CONTENT"}}}}
 	raw, _ := json.Marshal(payload)
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='facebook_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='facebook_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
 	// SocialLibraries upsert for caption-only post
-	mock.ExpectExec(`INSERT INTO public\."SocialLibraries"`).
+	mock.ExpectExec(`INSERT INTO public\.social_libraries`).
 		WithArgs(sqlmock.AnyArg(), "u1", "cap", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	mock.ExpectExec(`UPDATE public\."PublishJobs".*SET status=\$2`).
+	mock.ExpectExec(`UPDATE public\.publish_jobs.*SET status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`UPDATE public\."Posts".*SET "lastPublishStatus"=\$2`).
+	mock.ExpectExec(`UPDATE public\.posts.*SET last_publish_status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
@@ -259,37 +259,37 @@ func TestRunPublishJob_MultiProviders_DryRun(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	h := New(db)
 
-	mock.ExpectExec(`UPDATE public\."PublishJobs".*status='running'`).
+	mock.ExpectExec(`UPDATE public\.publish_jobs.*status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`UPDATE public\."Posts".*"lastPublishStatus"='running'`).
+	mock.ExpectExec(`UPDATE public\.posts.*last_publish_status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	igRaw, _ := json.Marshal(instagramOAuth{AccessToken: "igtok", IGBusinessID: "ig1"})
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='instagram_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='instagram_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(igRaw))
 
 	ttRaw, _ := json.Marshal(tiktokOAuth{AccessToken: "ttok", OpenID: "oid", Scope: "video.upload,video.publish"})
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='tiktok_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='tiktok_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(ttRaw))
 
 	ytRaw, _ := json.Marshal(youtubeOAuth{AccessToken: "ytok", Scope: "https://www.googleapis.com/auth/youtube.upload", ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339)})
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='youtube_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='youtube_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(ytRaw))
 
 	pinRaw, _ := json.Marshal(pinterestOAuth{AccessToken: "ptok", Scope: "pins:write,boards:read", ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339)})
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='pinterest_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='pinterest_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(pinRaw))
 
-	mock.ExpectExec(`UPDATE public\."PublishJobs".*SET status=\$2`).
+	mock.ExpectExec(`UPDATE public\.publish_jobs.*SET status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`UPDATE public\."Posts".*SET "lastPublishStatus"=\$2`).
+	mock.ExpectExec(`UPDATE public\.posts.*SET last_publish_status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 

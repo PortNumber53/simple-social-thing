@@ -1,1 +1,1 @@
-DROP INDEX IF EXISTS idx_posts_scheduled_due_claim;
+-- no-op: schema consolidated into 001 with snake_case tables.

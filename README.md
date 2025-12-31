@@ -11,9 +11,9 @@ Full-stack app for connecting social accounts, importing a user’s social conte
   - Provides realtime publish updates to the frontend via WebSocket endpoint.
 - **Backend (Go net/http + gorilla/mux + Postgres)**: `backend/` (API on **18911**)
   - Runs DB migrations on startup from `backend/db/migrations/`.
-  - Stores user/provider tokens in `public."UserSettings"` (JSONB) and maintains `SocialConnections`.
+- Stores user/provider tokens in `public.user_settings` (JSONB) and maintains `social_connections`.
   - Persists created/imported content into `SocialLibraries`.
-  - Publishes asynchronously via `PublishJobs` (backend) + Worker WebSocket streaming (frontend).
+- Publishes asynchronously via `publish_jobs` (backend) + Worker WebSocket streaming (frontend).
   - Serves uploaded media under `/media/` (required for providers that fetch public URLs, e.g. Instagram).
 
 ### Standard local dev ports
@@ -65,7 +65,7 @@ CI also runs migrations via `deploy/dbtool-migrate.sh` before deploy.
 
 ### Publishing (async + realtime)
 - Frontend submits publish requests to the Worker (`/api/posts/publish`), which enqueues a backend job.
-- Backend runs the fan-out and persists results in `PublishJobs`.
+- Backend runs the fan-out and persists results in `publish_jobs`.
 - Frontend receives progress/results via Worker WebSocket: `/api/posts/publish/ws?jobId=...`.
 
 Current publish support:
@@ -90,4 +90,3 @@ Current publish support:
 - **Provider secrets / prod credential IDs**: `NOTES.md`
 - **Deployment docs**: `deploy/README.md`
 - **Backend docs**: `backend/README.md`
-

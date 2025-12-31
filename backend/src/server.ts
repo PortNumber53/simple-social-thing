@@ -25,13 +25,13 @@ app.post('/api/db/users', async (req, res) => {
     const { id, email, name, imageUrl } = req.body || {};
     if (!id || !email || !name) return res.status(400).json({ error: 'missing_fields' });
     const q = `
-      INSERT INTO public."Users" (id, email, name, "imageUrl", "createdAt")
+      INSERT INTO public.users (id, email, name, image_url, created_at)
       VALUES ($1, $2, $3, $4, NOW())
       ON CONFLICT (id) DO UPDATE SET
         email = EXCLUDED.email,
         name = EXCLUDED.name,
-        "imageUrl" = EXCLUDED."imageUrl"
-      RETURNING id, email, name, "imageUrl";
+        image_url = EXCLUDED.image_url
+      RETURNING id, email, name, image_url;
     `;
     const { rows } = await pool.query(q, [id, email, name, imageUrl || null]);
     res.json({ ok: true, row: rows[0] });
@@ -48,15 +48,15 @@ app.post('/api/db/social-connections', async (req, res) => {
     if (!userId || !provider || !providerId) return res.status(400).json({ error: 'missing_fields' });
     const id = `${provider}:${providerId}`;
     const q = `
-      INSERT INTO public."SocialConnections" (id, "userId", provider, "providerId", email, name, "createdAt")
+      INSERT INTO public.social_connections (id, user_id, provider, provider_id, email, name, created_at)
       VALUES ($1, $2, $3, $4, $5, $6, NOW())
       ON CONFLICT (id) DO UPDATE SET
-        "userId" = EXCLUDED."userId",
+        user_id = EXCLUDED.user_id,
         provider = EXCLUDED.provider,
-        "providerId" = EXCLUDED."providerId",
+        provider_id = EXCLUDED.provider_id,
         email = EXCLUDED.email,
         name = EXCLUDED.name
-      RETURNING id, "userId", provider, "providerId", email, name;
+      RETURNING id, user_id, provider, provider_id, email, name;
     `;
     const { rows } = await pool.query(q, [id, userId, provider, providerId, email || null, name || null]);
     res.json({ ok: true, row: rows[0] });
@@ -70,7 +70,7 @@ app.post('/api/db/social-connections', async (req, res) => {
 app.get('/api/db/social-connections/:userId/:provider', async (req, res) => {
   try {
     const { userId, provider } = req.params;
-    const q = `SELECT id, "userId", provider, "providerId", email, name FROM public."SocialConnections" WHERE "userId"=$1 AND provider=$2 ORDER BY "createdAt" DESC LIMIT 5;`;
+    const q = `SELECT id, user_id, provider, provider_id, email, name FROM public.social_connections WHERE user_id=$1 AND provider=$2 ORDER BY created_at DESC LIMIT 5;`;
     const { rows } = await pool.query(q, [userId, provider]);
     res.json({ ok: true, rows });
   } catch (e: any) {

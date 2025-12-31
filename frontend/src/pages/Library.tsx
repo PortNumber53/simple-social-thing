@@ -3,6 +3,10 @@ import { Layout } from '../components/Layout';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { UploadGrid, type UploadPreview } from '../components/library/UploadGrid';
 import { useIntegrations, type ProviderKey } from '../contexts/IntegrationsContext';
+import { useAuth } from '../contexts/AuthContext';
+import { apiJson } from '../lib/api';
+import { safeStorage } from '../lib/safeStorage';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 
 type LocalPost = {
   id: string;
@@ -21,6 +25,8 @@ type LocalPost = {
 };
 
 export const Library: React.FC = () => {
+  const { user } = useAuth();
+  const storage = safeStorage();
   const { status: integrationsStatus } = useIntegrations();
   const [statusFilter, setStatusFilter] = useState<'draft' | 'scheduled'>('draft');
   const [items, setItems] = useState<LocalPost[]>([]);
@@ -46,6 +52,14 @@ export const Library: React.FC = () => {
   const [draftMediaIds, setDraftMediaIds] = useState<string[]>([]);
   const [dragOverDraftMedia, setDragOverDraftMedia] = useState(false);
   const [lastUploadError, setLastUploadError] = useState<string | null>(null);
+  const [panelSplit, setPanelSplit] = useState<number>(() => {
+    const stored = storage.getJSON<number>('drafts_split');
+    const n = stored ?? NaN;
+    if (!Number.isFinite(n) || n <= 0.15 || n >= 0.85) return 0.35;
+    return n;
+  });
+  const [panelLayout, setPanelLayout] = useState<number[]>([panelSplit * 100, 100 - panelSplit * 100]);
+  const [leftTab, setLeftTab] = useState<'list' | 'edit'>('list');
 
   const allProviders: ProviderKey[] = ['instagram', 'tiktok', 'facebook', 'youtube', 'pinterest', 'threads'];
   const providerLabels: Record<ProviderKey, string> = {
@@ -157,6 +171,52 @@ export const Library: React.FC = () => {
   useEffect(() => {
     void load(statusFilter);
   }, [load, statusFilter]);
+
+  useEffect(() => {
+    const apply = async () => {
+      if (!user?.id) return;
+      try {
+        const res = await apiJson<Record<string, unknown>>(`/api/user-settings/${encodeURIComponent(user.id)}/drafts_split`);
+        const val = res.ok && res.data && typeof (res.data as any).value === 'number' ? (res.data as any).value : null;
+        if (val !== null && Number.isFinite(val) && val > 0.15 && val < 0.85) {
+          setPanelSplit(val);
+          storage.setJSON('drafts_split', val);
+          setPanelLayout([val * 100, 100 - val * 100]);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    void apply();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  const persistSplit = useCallback(
+    async (val: number) => {
+      storage.setJSON('drafts_split', val);
+      if (!user?.id) return;
+      await apiJson(`/api/user-settings/${encodeURIComponent(user.id)}/drafts_split`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: val }),
+      });
+    },
+    [storage, user?.id],
+  );
+
+  const handleLayout = useCallback(
+    (sizes: number[]) => {
+      if (!Array.isArray(sizes) || sizes.length < 2) return;
+      const left = sizes[0];
+      const total = sizes.reduce((a, b) => a + b, 0) || 100;
+      const ratio = left / total;
+      if (!Number.isFinite(ratio) || ratio <= 0.15 || ratio >= 0.85) return;
+      setPanelLayout(sizes);
+      setPanelSplit(ratio);
+      void persistSplit(ratio);
+    },
+    [persistSplit],
+  );
 
   // Realtime: refresh the list when backend signals a post publish/update (scheduler or publish-now).
   const statusFilterRef = useRef(statusFilter);
@@ -555,11 +615,13 @@ export const Library: React.FC = () => {
   };
 
   const openNew = () => {
+    setLeftTab('edit');
     resetEditorToNewDraft();
-    scrollToEditor();
+    window.setTimeout(scrollToEditor, 0);
   };
 
   const openEdit = (p: LocalPost) => {
+    setLeftTab('edit');
     setEditing(p);
     setDraftText((p.content || '').toString());
     setDraftStatus((p.status === 'scheduled' ? 'scheduled' : 'draft'));
@@ -592,7 +654,7 @@ export const Library: React.FC = () => {
       })
       .filter(Boolean);
     setDraftMediaIds(ids);
-    scrollToEditor();
+    window.setTimeout(scrollToEditor, 0);
   };
 
   const toIsoOrNull = (localValue: string): string | null => {
@@ -712,446 +774,484 @@ export const Library: React.FC = () => {
 
   return (
     <Layout>
-      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto space-y-6">
-        <header className="space-y-2">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50">Library</h1>
-          <p className="text-slate-600 dark:text-slate-400 text-sm">
-            Drafts and scheduled content you manage locally, to be published later.
-          </p>
-        </header>
+      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto space-y-4 min-h-[70vh]">
+        <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 mt-1 mb-1 h-6">
+          <span className="text-slate-500 dark:text-slate-400">Home</span>
+          <span className="text-slate-400">/</span>
+          <span className="font-semibold text-slate-800 dark:text-slate-100">Drafts</span>
+        </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-6 items-start">
-          {/* Editor (always visible) */}
-          <div ref={editorRef} className="card p-5 space-y-4 xl:sticky xl:top-24">
-            <div className="flex items-center justify-between gap-3">
-              <div className="space-y-0.5">
-                <div className="text-lg font-semibold text-slate-900 dark:text-slate-50">
-                  {editing ? 'Edit draft' : 'New draft'}
+        <div className="min-h-[60vh]" style={{ height: 'calc(100vh - 180px)' }}>
+          <PanelGroup direction="horizontal" layout={panelLayout} onLayout={handleLayout} className="h-full w-full flex">
+            <Panel defaultSize={panelLayout[0] ?? panelSplit * 100} minSize={20}>
+              <div className="card p-0 h-full overflow-hidden flex flex-col" style={{ minWidth: '320px' }}>
+                <div className="p-4 border-b border-slate-200/60 dark:border-slate-700/40">
+                  <SegmentedControl
+                    value={leftTab}
+                    options={[
+                      { value: 'list', label: 'Drafts' },
+                      { value: 'edit', label: editing ? 'Edit draft' : 'New draft' },
+                    ]}
+                    onChange={(v) => setLeftTab(v === 'list' ? 'list' : 'edit')}
+                  />
                 </div>
-                <div className="text-xs text-slate-600 dark:text-slate-300">
-                  {editing ? `ID: ${editing.id}` : 'Create local content you can reuse and schedule later.'}
-                </div>
-              </div>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={openNew}
-                disabled={saving}
-                title="Clear the form"
-              >
-                New
-              </button>
-            </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Content</label>
-              <textarea
-                value={draftText}
-                onChange={(e) => setDraftText(e.target.value)}
-                rows={8}
-                className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
-                placeholder="Write your caption / notes…"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Status</label>
-                <select
-                  value={draftStatus}
-                  onChange={(e) => setDraftStatus(e.target.value === 'scheduled' ? 'scheduled' : 'draft')}
-                  className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
-                >
-                  <option value="draft">Draft</option>
-                  <option value="scheduled">Scheduled</option>
-                </select>
-              </div>
-            <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Scheduled for</label>
-                <input
-                  type="datetime-local"
-                  value={scheduledForLocal}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setScheduledForLocal(v);
-                    // UX: if user picks a time, implicitly schedule the post.
-                    if (v && draftStatus !== 'scheduled') setDraftStatus('scheduled');
-                  }}
-                  className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
-                      />
-                {draftStatus !== 'scheduled' && scheduledForLocal.trim() !== '' && (
-                  <div className="text-[11px] text-slate-600 dark:text-slate-300">
-                    This time will be used once the status is set to “Scheduled”.
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Networks</label>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      setDraftProviders(new Set(allProviders));
-                    }}
-                    disabled={allProviders.length === 0}
-                    title="Select all networks"
-                  >
-                    Select all
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => setDraftProviders(new Set())}
-                    disabled={draftProviders.size === 0}
-                  >
-                    Clear
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                {allProviders.map((p) => {
-                  const connected = isProviderConnected(p);
-                  const checked = draftProviders.has(p);
-                  const warn = checked && !connected;
-                  return (
-                    <div
-                      key={p}
-                      className={[
-                        'flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm',
-                        warn ? 'border-amber-300/70 dark:border-amber-700/60 bg-amber-50/40 dark:bg-amber-900/10' : '',
-                      ].join(' ')}
-                      title={connected ? '' : 'Not connected yet — you can still plan/schedule, but connect before publish time.'}
-                    >
-                      <label className="flex items-center gap-2 flex-1 min-w-0">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => {
-                            const v = e.target.checked;
-                            setDraftProviders((prev) => {
-                              const next = new Set(prev);
-                              if (v) next.add(p);
-                              else next.delete(p);
-                              return next;
-                            });
-                          }}
+                <div className="flex-1 overflow-hidden">
+                  {leftTab === 'list' ? (
+                    <div className="flex flex-col h-full">
+                      <div className="p-4 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-wrap items-center gap-2">
+                        <SegmentedControl
+                          value={statusFilter}
+                          options={[
+                            { value: 'draft', label: 'Drafts' },
+                            { value: 'scheduled', label: 'Scheduled' },
+                          ]}
+                          onChange={(v) => setStatusFilter(v)}
                         />
-                        <span className="text-slate-800 dark:text-slate-100 truncate">{providerLabels[p]}</span>
-                      </label>
-                      {!connected ? (
-                        <a
-                          className="text-xs underline hover:no-underline text-slate-600 dark:text-slate-300"
-                          href="/integrations"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          connect
-                        </a>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
 
-              {draftStatus === 'scheduled' && draftProviders.size === 0 && (
-                <div className="text-xs text-amber-700 dark:text-amber-200">
-                  Pick at least one network before scheduling.
-                </div>
-              )}
-              {draftProviders.size > 0 && Array.from(draftProviders).some((p) => !isProviderConnected(p)) && (
-                <div className="text-xs text-slate-600 dark:text-slate-300">
-                  Some selected networks are not connected yet. Connect them before the scheduled time to publish successfully.
-                </div>
-              )}
-            </div>
+                        <div className="text-xs text-slate-600 dark:text-slate-300">
+                          {loading ? 'Loading…' : `${items.length} item(s)`}
+                        </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Media</label>
-                <div className="flex items-center gap-2">
-                  {selectedUploadIds.size > 0 && (
-                    <button
-                      type="button"
-                      className="text-xs underline text-slate-600 dark:text-slate-300"
-                      onClick={() => attachUploadsToDraft(Array.from(selectedUploadIds))}
-                    >
-                      Add selected ({selectedUploadIds.size})
-                    </button>
-                  )}
-                  {draftMediaIds.length > 0 && (
-                    <button
-                      type="button"
-                      className="text-xs underline text-slate-600 dark:text-slate-300"
-                      onClick={() => setDraftMediaIds([])}
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div
-                className={[
-                  'rounded-lg border border-dashed p-3 text-sm',
-                  dragOverDraftMedia
-                    ? 'border-primary-500 bg-primary-50/60 dark:bg-primary-900/10'
-                    : 'border-slate-300/70 dark:border-slate-700/70 bg-slate-50/60 dark:bg-slate-900/20',
-                ].join(' ')}
-                onDragOver={(e) => {
-                  if (!e.dataTransfer.types.includes('application/x-sst-upload-ids')) return;
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = 'copy';
-                  setDragOverDraftMedia(true);
-                }}
-                onDragLeave={() => setDragOverDraftMedia(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const ids = parseUploadIdsFromDataTransfer(e.dataTransfer);
-                  attachUploadsToDraft(ids.length > 0 ? ids : Array.from(selectedUploadIds));
-                  setDragOverDraftMedia(false);
-                }}
-              >
-                <div className="text-slate-700 dark:text-slate-200">
-                  Drop selected uploads here to attach them to this draft.
-                </div>
-                <div className="text-xs text-slate-500 dark:text-slate-400">
-                  Tip: select multiple thumbnails, then drag any one of them onto this area.
-                </div>
-              </div>
-
-              {draftMedia.length > 0 && (
-                <div className="grid grid-cols-2 gap-3">
-                  {draftMedia.map((u) => (
-                    <div key={u.id} className="card p-0 overflow-hidden">
-                      <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
-                        {u.kind === 'image' ? (
-                          <img
-                            src={u.url}
-                            alt=""
-                            className="w-full h-full object-cover"
-                            onError={() => fallbackToLocalPreviewIfPossible(u)}
-                          />
-                        ) : u.kind === 'video' ? (
-                          <video
-                            src={u.url}
-                            className="w-full h-full object-cover"
-                            muted
-                            playsInline
-                            onError={() => fallbackToLocalPreviewIfPossible(u)}
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-slate-400">
-                            <span className="text-sm">File</span>
+                        {statusFilter === 'scheduled' && processingCount > 0 && (
+                          <div className="text-xs px-2 py-1 rounded-md border border-amber-200/70 dark:border-amber-800/60 bg-amber-50/80 dark:bg-amber-900/20 text-amber-900 dark:text-amber-200">
+                            Processing {processingCount} post(s)…
                           </div>
                         )}
-                        <button
-                          type="button"
-                          className="absolute top-2 right-2 bg-slate-900/70 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs hover:bg-slate-900/80"
-                          aria-label={`Remove ${u.filename}`}
-                          onClick={() => removeDraftMedia(u.id)}
-                        >
-                          ×
-                        </button>
-                        <div
-                          className={[
-                            'absolute left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate',
-                            u.uploading || u.error ? 'bottom-9' : 'bottom-2',
-                          ].join(' ')}
-                        >
-                          {u.filename}
+
+                        <div className="ml-auto flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => {
+                              openNew();
+                              setLeftTab('edit');
+                            }}
+                            disabled={saving}
+                          >
+                            New draft
+                          </button>
+                          <button type="button" className="btn btn-ghost" onClick={() => void load(statusFilter)} disabled={loading}>
+                            Refresh
+                          </button>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className="btn btn-primary" onClick={() => void save()} disabled={saving}>
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => {
-                  resetEditorToNewDraft();
-                  setError(null);
-                }}
-                disabled={saving}
-              >
-                Clear
-              </button>
-              {editing && (
-                <a
-                  className="btn btn-secondary"
-                  href={`/content/posts?caption=${encodeURIComponent(draftText.trim())}`}
-                  title="Open in publisher (caption-only)"
-                >
-                  Open publisher
-                </a>
-              )}
-            </div>
+                      <div className="divide-y divide-slate-200/60 dark:divide-slate-700/40 overflow-auto">
+                        {items.length === 0 ? (
+                          <div className="p-8 text-slate-500 dark:text-slate-400">{emptyState}</div>
+                        ) : (
+                          items.map((p) => {
+                            const scheduledLabel = p.scheduledFor ? new Date(p.scheduledFor).toLocaleString() : '—';
+                            const createdLabel = p.createdAt ? new Date(p.createdAt).toLocaleString() : '';
+                            const prov = Array.isArray(p.providers) ? p.providers : [];
+                            const mediaCount = Array.isArray(p.media) ? p.media.length : 0;
+                            const pub = publishStateFor(p);
+                            const canPublishNow =
+                              p.status === 'scheduled' && !['queued', 'running'].includes(String(p.lastPublishStatus || '').toLowerCase());
+                            const provLabel = prov.length
+                              ? prov
+                                  .map((x) => String(x || '').trim().toLowerCase())
+                                  .filter(Boolean)
+                                  .map((x) => (x in providerLabels ? providerLabels[x as ProviderKey] : x))
+                                  .join(', ')
+                              : '';
+                            const preview = (p.content || '').trim();
+                            return (
+                              <div key={p.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start gap-4">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
+                                      {p.status}
+                                    </span>
+                                    {p.status === 'scheduled' && (
+                                      <span
+                                        className={[
+                                          'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium',
+                                          publishBadgeClass(pub.tone),
+                                        ].join(' ')}
+                                        title={p.lastPublishJobId ? `job: ${p.lastPublishJobId}` : ''}
+                                      >
+                                        {String(p.lastPublishStatus || '').toLowerCase() === 'running' ? (
+                                          <span className="inline-block w-2 h-2 rounded-full bg-current opacity-70 animate-pulse" />
+                                        ) : null}
+                                        {pub.label}
+                                      </span>
+                                    )}
+                                    {p.status === 'scheduled' && (
+                                      <span className="text-xs text-slate-600 dark:text-slate-300">Scheduled: {scheduledLabel}</span>
+                                    )}
+                                  </div>
+                                  <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                                    Networks: {provLabel ? provLabel : '—'}
+                                  </div>
+                                  <div className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                                    Media: {mediaCount}
+                                  </div>
+                                  {p.lastPublishAttemptAt && p.status === 'scheduled' && (
+                                    <div className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                                      Last attempt: {new Date(p.lastPublishAttemptAt).toLocaleString()}
+                                    </div>
+                                  )}
+                                  {String(p.lastPublishStatus || '').toLowerCase() === 'failed' && p.lastPublishError && (
+                                    <div className="mt-1 text-xs text-rose-700 dark:text-rose-200">Error: {p.lastPublishError}</div>
+                                  )}
+                                  <div className="mt-2 text-sm text-slate-900 dark:text-slate-50 break-words">
+                                    {preview ? preview : <span className="text-slate-500 dark:text-slate-400">No content</span>}
+                                  </div>
+                                  {createdLabel && (
+                                    <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">Created: {createdLabel}</div>
+                                  )}
+                                </div>
 
-            {error && <div className="text-sm text-red-600 dark:text-red-300">{error}</div>}
-            {notice && <div className="text-sm text-emerald-700 dark:text-emerald-300">{notice}</div>}
-            <div className="text-xs text-slate-600 dark:text-slate-300">
-              Scheduled publishing runs in the background. Use “Publish Now” to trigger a scheduled item immediately for testing.
-            </div>
-          </div>
-
-          {/* List */}
-          <div className="space-y-4">
-            <UploadGrid
-              uploads={uploads}
-              selectedUploadIds={selectedUploadIds}
-              setSelectedUploadIds={setSelectedUploadIds}
-              dragUploadId={dragUploadId}
-              setDragUploadId={setDragUploadId}
-              dragOverUploadId={dragOverUploadId}
-              setDragOverUploadId={setDragOverUploadId}
-              lastUploadError={lastUploadError}
-              uploadInputRef={uploadInputRef}
-              addFiles={addFiles}
-              clearUploads={clearUploads}
-              removeUpload={removeUpload}
-              reorderUploads={reorderUploads}
-              parseUploadIdsFromDataTransfer={parseUploadIdsFromDataTransfer}
-              fallbackToLocalPreviewIfPossible={fallbackToLocalPreviewIfPossible}
-            />
-
-            <div className="card p-0 overflow-hidden">
-              <div className="p-4 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-wrap items-center gap-2">
-                <SegmentedControl
-                  value={statusFilter}
-                  options={[
-                    { value: 'draft', label: 'Drafts' },
-                    { value: 'scheduled', label: 'Scheduled' },
-                  ]}
-                  onChange={(v) => setStatusFilter(v)}
-                />
-
-                <div className="text-xs text-slate-600 dark:text-slate-300">
-                  {loading ? 'Loading…' : `${items.length} item(s)`}
-                </div>
-
-                {statusFilter === 'scheduled' && processingCount > 0 && (
-                  <div className="text-xs px-2 py-1 rounded-md border border-amber-200/70 dark:border-amber-800/60 bg-amber-50/80 dark:bg-amber-900/20 text-amber-900 dark:text-amber-200">
-                    Processing {processingCount} post(s)…
-                  </div>
-                )}
-
-                <div className="ml-auto flex items-center gap-2">
-                  <button type="button" className="btn btn-secondary" onClick={() => void load(statusFilter)} disabled={loading}>
-                    Refresh
-                  </button>
-                </div>
-              </div>
-              <div className="divide-y divide-slate-200/60 dark:divide-slate-700/40">
-                {items.length === 0 ? (
-                  <div className="p-8 text-slate-500 dark:text-slate-400">{emptyState}</div>
-                ) : (
-                  items.map((p) => {
-                    const scheduledLabel = p.scheduledFor ? new Date(p.scheduledFor).toLocaleString() : '—';
-                    const createdLabel = p.createdAt ? new Date(p.createdAt).toLocaleString() : '';
-                    const prov = Array.isArray(p.providers) ? p.providers : [];
-                    const mediaCount = Array.isArray(p.media) ? p.media.length : 0;
-                    const pub = publishStateFor(p);
-                    const canPublishNow = p.status === 'scheduled' && !['queued', 'running'].includes(String(p.lastPublishStatus || '').toLowerCase());
-                    const provLabel = prov.length
-                      ? prov
-                          .map((x) => String(x || '').trim().toLowerCase())
-                          .filter(Boolean)
-                          .map((x) => (x in providerLabels ? providerLabels[x as ProviderKey] : x))
-                          .join(', ')
-                      : '';
-                    const preview = (p.content || '').trim();
-                    return (
-                      <div key={p.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
-                              {p.status}
-                            </span>
-                            {p.status === 'scheduled' && (
-                              <span
-                                className={[
-                                  'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium',
-                                  publishBadgeClass(pub.tone),
-                                ].join(' ')}
-                                title={p.lastPublishJobId ? `job: ${p.lastPublishJobId}` : ''}
-                              >
-                                {String(p.lastPublishStatus || '').toLowerCase() === 'running' ? (
-                                  <span className="inline-block w-2 h-2 rounded-full bg-current opacity-70 animate-pulse" />
-                                ) : null}
-                                {pub.label}
-                              </span>
-                            )}
-                            {p.status === 'scheduled' && (
-                              <span className="text-xs text-slate-600 dark:text-slate-300">Scheduled: {scheduledLabel}</span>
-                            )}
-          </div>
-                          <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">
-                            Networks: {provLabel ? provLabel : '—'}
-                          </div>
-                          <div className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                            Media: {mediaCount}
-                          </div>
-                          {p.lastPublishAttemptAt && p.status === 'scheduled' && (
-                            <div className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                              Last attempt: {new Date(p.lastPublishAttemptAt).toLocaleString()}
-                            </div>
-                          )}
-                          {String(p.lastPublishStatus || '').toLowerCase() === 'failed' && p.lastPublishError && (
-                            <div className="mt-1 text-xs text-rose-700 dark:text-rose-200">
-                              Error: {p.lastPublishError}
-                            </div>
-                          )}
-                          <div className="mt-2 text-sm text-slate-900 dark:text-slate-50 break-words">
-                            {preview ? preview : <span className="text-slate-500 dark:text-slate-400">No content</span>}
-                          </div>
-                          {createdLabel && (
-                            <div className="mt-2 text-xs text-slate-600 dark:text-slate-300">Created: {createdLabel}</div>
+                                <div className="flex items-center gap-2">
+                                  {p.status === 'scheduled' && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-primary"
+                                      onClick={() => void publishNow(p)}
+                                      disabled={!canPublishNow || publishingNowId === p.id || saving || loading}
+                                      title="Enqueue this scheduled post immediately"
+                                    >
+                                      {publishingNowId === p.id ? 'Publishing…' : !canPublishNow ? 'Processing…' : 'Publish Now'}
+                                    </button>
+                                  )}
+                                  <button type="button" className="btn btn-secondary" onClick={() => openEdit(p)}>
+                                    Edit
+                                  </button>
+                                  <a
+                                    className="btn btn-ghost"
+                                    href={`/content/posts?caption=${encodeURIComponent((p.content || '').toString())}`}
+                                    title="Open in publisher (caption-only)"
+                                  >
+                                    Open publisher
+                                  </a>
+                                  <button type="button" className="btn btn-ghost text-red-600 hover:text-red-700" onClick={() => void remove(p)}>
+                                    Delete
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
                         )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div ref={editorRef} className="p-5 space-y-4 h-full overflow-auto">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="space-y-0.5">
+                          <div className="text-lg font-semibold text-slate-900 dark:text-slate-50">
+                            {editing ? 'Edit draft' : 'New draft'}
+                          </div>
+                          <div className="text-xs text-slate-600 dark:text-slate-300">
+                            {editing ? `ID: ${editing.id}` : 'Create local content you can reuse and schedule later.'}
+                          </div>
                         </div>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={openNew}
+                          disabled={saving}
+                          title="Clear the form"
+                        >
+                          New
+                        </button>
+                      </div>
 
-                        <div className="flex items-center gap-2">
-                          {p.status === 'scheduled' && (
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Content</label>
+                        <textarea
+                          value={draftText}
+                          onChange={(e) => setDraftText(e.target.value)}
+                          rows={8}
+                          className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
+                          placeholder="Write your caption / notes…"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Status</label>
+                          <select
+                            value={draftStatus}
+                            onChange={(e) => setDraftStatus(e.target.value === 'scheduled' ? 'scheduled' : 'draft')}
+                            className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
+                          >
+                            <option value="draft">Draft</option>
+                            <option value="scheduled">Scheduled</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Scheduled for</label>
+                          <input
+                            type="datetime-local"
+                            value={scheduledForLocal}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setScheduledForLocal(v);
+                              if (v && draftStatus !== 'scheduled') setDraftStatus('scheduled');
+                            }}
+                            className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
+                          />
+                          {draftStatus !== 'scheduled' && scheduledForLocal.trim() !== '' && (
+                            <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                              This time will be used once the status is set to “Scheduled”.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Networks</label>
+                          <div className="flex items-center gap-2">
                             <button
                               type="button"
-                              className="btn btn-primary"
-                              onClick={() => void publishNow(p)}
-                              disabled={!canPublishNow || publishingNowId === p.id || saving || loading}
-                              title="Enqueue this scheduled post immediately"
+                              className="btn btn-ghost"
+                              onClick={() => {
+                                setDraftProviders(new Set(allProviders));
+                              }}
+                              disabled={allProviders.length === 0}
+                              title="Select all networks"
                             >
-                              {publishingNowId === p.id ? 'Publishing…' : !canPublishNow ? 'Processing…' : 'Publish Now'}
+                              Select all
                             </button>
-                          )}
-                          <button type="button" className="btn btn-secondary" onClick={() => openEdit(p)}>
-                            Edit
-                          </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => setDraftProviders(new Set())}
+                              disabled={draftProviders.size === 0}
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          {allProviders.map((p) => {
+                            const connected = isProviderConnected(p);
+                            const checked = draftProviders.has(p);
+                            const warn = checked && !connected;
+                            return (
+                              <div
+                                key={p}
+                                className={[
+                                  'flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 px-3 py-2 text-sm',
+                                  warn ? 'border-amber-300/70 dark:border-amber-700/60 bg-amber-50/40 dark:bg-amber-900/10' : '',
+                                ].join(' ')}
+                                title={
+                                  connected ? '' : 'Not connected yet — you can still plan/schedule, but connect before publish time.'
+                                }
+                              >
+                                <label className="flex items-center gap-2 flex-1 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      const v = e.target.checked;
+                                      setDraftProviders((prev) => {
+                                        const next = new Set(prev);
+                                        if (v) next.add(p);
+                                        else next.delete(p);
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                  <span className="text-slate-800 dark:text-slate-100 truncate">{providerLabels[p]}</span>
+                                </label>
+                                {!connected ? (
+                                  <a
+                                    className="text-xs underline hover:no-underline text-slate-600 dark:text-slate-300"
+                                    href="/integrations"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    connect
+                                  </a>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {draftStatus === 'scheduled' && draftProviders.size === 0 && (
+                          <div className="text-xs text-amber-700 dark:text-amber-200">Pick at least one network before scheduling.</div>
+                        )}
+                        {draftProviders.size > 0 && Array.from(draftProviders).some((p) => !isProviderConnected(p)) && (
+                          <div className="text-xs text-slate-600 dark:text-slate-300">
+                            Some selected networks are not connected yet. Connect them before the scheduled time to publish successfully.
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Media</label>
+                          <div className="flex items-center gap-2">
+                            {selectedUploadIds.size > 0 && (
+                              <button
+                                type="button"
+                                className="text-xs underline text-slate-600 dark:text-slate-300"
+                                onClick={() => attachUploadsToDraft(Array.from(selectedUploadIds))}
+                              >
+                                Add selected ({selectedUploadIds.size})
+                              </button>
+                            )}
+                            {draftMediaIds.length > 0 && (
+                              <button
+                                type="button"
+                                className="text-xs underline text-slate-600 dark:text-slate-300"
+                                onClick={() => setDraftMediaIds([])}
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div
+                          className={[
+                            'rounded-lg border border-dashed p-3 text-sm',
+                            dragOverDraftMedia
+                              ? 'border-primary-500 bg-primary-50/60 dark:bg-primary-900/10'
+                              : 'border-slate-300/70 dark:border-slate-700/70 bg-slate-50/60 dark:bg-slate-900/20',
+                          ].join(' ')}
+                          onDragOver={(e) => {
+                            if (!e.dataTransfer.types.includes('application/x-sst-upload-ids')) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'copy';
+                            setDragOverDraftMedia(true);
+                          }}
+                          onDragLeave={() => setDragOverDraftMedia(false)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const ids = parseUploadIdsFromDataTransfer(e.dataTransfer);
+                            attachUploadsToDraft(ids.length > 0 ? ids : Array.from(selectedUploadIds));
+                            setDragOverDraftMedia(false);
+                          }}
+                        >
+                          <div className="text-slate-700 dark:text-slate-200">Drop selected uploads here to attach them to this draft.</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">
+                            Tip: select multiple thumbnails, then drag any one of them onto this area.
+                          </div>
+                        </div>
+
+                        {draftMedia.length > 0 && (
+                          <div className="grid grid-cols-2 gap-3">
+                            {draftMedia.map((u) => (
+                              <div key={u.id} className="card p-0 overflow-hidden">
+                                <div className="relative aspect-[16/10] bg-slate-100 dark:bg-slate-800">
+                                  {u.kind === 'image' ? (
+                                    <img
+                                      src={u.url}
+                                      alt=""
+                                      className="w-full h-full object-cover"
+                                      onError={() => fallbackToLocalPreviewIfPossible(u)}
+                                    />
+                                  ) : u.kind === 'video' ? (
+                                    <video
+                                      src={u.url}
+                                      className="w-full h-full object-cover"
+                                      muted
+                                      playsInline
+                                      onError={() => fallbackToLocalPreviewIfPossible(u)}
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-slate-400">
+                                      <span className="text-sm">File</span>
+                                    </div>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="absolute top-2 right-2 bg-slate-900/70 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs hover:bg-slate-900/80"
+                                    aria-label={`Remove ${u.filename}`}
+                                    onClick={() => removeDraftMedia(u.id)}
+                                  >
+                                    ×
+                                  </button>
+                                  <div
+                                    className={[
+                                      'absolute left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate',
+                                      u.uploading || u.error ? 'bottom-9' : 'bottom-2',
+                                    ].join(' ')}
+                                  >
+                                    {u.filename}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button type="button" className="btn btn-primary" onClick={() => void save()} disabled={saving}>
+                          {saving ? 'Saving…' : 'Save'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => {
+                            resetEditorToNewDraft();
+                            setError(null);
+                          }}
+                          disabled={saving}
+                        >
+                          Clear
+                        </button>
+                        {editing && (
                           <a
-                            className="btn btn-ghost"
-                            href={`/content/posts?caption=${encodeURIComponent((p.content || '').toString())}`}
+                            className="btn btn-secondary"
+                            href={`/content/posts?caption=${encodeURIComponent(draftText.trim())}`}
                             title="Open in publisher (caption-only)"
                           >
                             Open publisher
                           </a>
-                          <button type="button" className="btn btn-ghost text-red-600 hover:text-red-700" onClick={() => void remove(p)}>
-                            Delete
-                          </button>
-                        </div>
+                        )}
                       </div>
-                );
-              })
-            )}
-          </div>
-            </div>
-          </div>
+
+                      {error && <div className="text-sm text-red-600 dark:text-red-300">{error}</div>}
+                      {notice && <div className="text-sm text-emerald-700 dark:text-emerald-300">{notice}</div>}
+                      <div className="text-xs text-slate-600 dark:text-slate-300">
+                        Scheduled publishing runs in the background. Use “Publish Now” to trigger a scheduled item immediately for testing.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </Panel>
+
+            <PanelResizeHandle className="w-1.5 bg-slate-200 dark:bg-slate-700 rounded cursor-col-resize my-2" />
+
+            <Panel defaultSize={panelLayout[1] ?? (100 - panelSplit * 100)} minSize={20}>
+              <div className="card p-0 overflow-hidden h-full flex flex-col min-w-[360px]">
+                <div className="p-4 border-b border-slate-200/60 dark:border-slate-700/40">
+                  <div className="text-lg font-semibold text-slate-900 dark:text-slate-50">Media browser</div>
+                  <div className="text-xs text-slate-600 dark:text-slate-300">
+                    Select uploads, drag them onto the draft media area, or use “Add selected”.
+                  </div>
+                </div>
+                <div className="flex-1 overflow-auto p-3">
+                  <UploadGrid
+                    uploads={uploads}
+                    selectedUploadIds={selectedUploadIds}
+                    setSelectedUploadIds={setSelectedUploadIds}
+                    dragUploadId={dragUploadId}
+                    setDragUploadId={setDragUploadId}
+                    dragOverUploadId={dragOverUploadId}
+                    setDragOverUploadId={setDragOverUploadId}
+                    lastUploadError={lastUploadError}
+                    uploadInputRef={uploadInputRef}
+                    addFiles={addFiles}
+                    clearUploads={clearUploads}
+                    removeUpload={removeUpload}
+                    reorderUploads={reorderUploads}
+                    parseUploadIdsFromDataTransfer={parseUploadIdsFromDataTransfer}
+                    fallbackToLocalPreviewIfPossible={fallbackToLocalPreviewIfPossible}
+                  />
+                </div>
+              </div>
+            </Panel>
+          </PanelGroup>
         </div>
       </div>
     </Layout>

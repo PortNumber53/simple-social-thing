@@ -41,4 +41,3 @@ Side-panel extension to send media/posts from supported social networks into you
 ## Notes
 - All actions are user-initiated; no background polling.
 - Backend must accept the POST at the configured endpoint and queue the actual download/copy job.
-

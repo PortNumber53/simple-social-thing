@@ -65,7 +65,7 @@ func TestListAndDeleteSocialLibrariesForUser_Success(t *testing.T) {
 	to := toBase.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
 	now := time.Now().UTC()
 
-	mock.ExpectQuery(`FROM public\."SocialLibraries"\s+WHERE user_id = \$1`).
+	mock.ExpectQuery(`FROM public\.social_libraries\s+WHERE user_id = \$1`).
 		WithArgs("u1", "instagram", "post", from, to, "%hi%", 10, 5).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "user_id", "network", "content_type", "title", "permalink_url", "media_url", "thumbnail_url",
@@ -84,7 +84,7 @@ func TestListAndDeleteSocialLibrariesForUser_Success(t *testing.T) {
 	}
 
 	// DeleteSocialLibrariesForUser
-	mock.ExpectQuery(`DELETE FROM public\."SocialLibraries" WHERE user_id = \$1 AND id = ANY\(\$2\) RETURNING id`).
+	mock.ExpectQuery(`DELETE FROM public\.social_libraries WHERE user_id = \$1 AND id = ANY\(\$2\) RETURNING id`).
 		WithArgs("u1", sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("a").AddRow("b"))
 
@@ -236,16 +236,16 @@ func TestRunPublishJob_NoKnownProviders(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	h := New(db)
 
-	mock.ExpectExec(`UPDATE public\."PublishJobs".*status='running'`).
+	mock.ExpectExec(`UPDATE public\.publish_jobs.*status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`UPDATE public\."Posts".*"lastPublishStatus"='running'`).
+	mock.ExpectExec(`UPDATE public\.posts.*last_publish_status='running'`).
 		WithArgs("job1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`UPDATE public\."PublishJobs".*SET status=\$2`).
+	mock.ExpectExec(`UPDATE public\.publish_jobs.*SET status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`UPDATE public\."Posts".*SET "lastPublishStatus"=\$2`).
+	mock.ExpectExec(`UPDATE public\.posts.*SET last_publish_status=\$2`).
 		WithArgs("job1", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 

@@ -20,7 +20,7 @@ func TestGetTeam_NotFoundAndDBError(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectQuery(`FROM public\."Teams" WHERE id = \$1`).
+		mock.ExpectQuery(`FROM public\.teams WHERE id = \$1`).
 			WithArgs("t404").
 			WillReturnError(sql.ErrNoRows)
 
@@ -42,7 +42,7 @@ func TestGetTeam_NotFoundAndDBError(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectQuery(`FROM public\."Teams" WHERE id = \$1`).
+		mock.ExpectQuery(`FROM public\.teams WHERE id = \$1`).
 			WithArgs("t1").
 			WillReturnError(sql.ErrConnDone)
 
@@ -76,7 +76,7 @@ func TestCreateSunoTask_InvalidJSONAndDBError(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectExec(`INSERT INTO public\."SunoTracks"`).
+		mock.ExpectExec(`INSERT INTO public\.suno_tracks`).
 			WillReturnError(sql.ErrConnDone)
 
 		rr := httptest.NewRecorder()

@@ -38,7 +38,7 @@ func TestListSunoTracksForUser_QueryError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	h := New(db)
 
-	mock.ExpectQuery(`FROM public\."SunoTracks"\s+WHERE user_id = \$1`).
+	mock.ExpectQuery(`FROM public\.suno_tracks\s+WHERE user_id = \$1`).
 		WithArgs("u1").
 		WillReturnError(sqlmock.ErrCancelled)
 
@@ -86,7 +86,7 @@ func TestDeleteSocialLibrariesForUser_ValidationAndDBError(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectQuery(`DELETE FROM public\."SocialLibraries"`).
+		mock.ExpectQuery(`DELETE FROM public\.social_libraries`).
 			WithArgs("u1", sqlmock.AnyArg()).
 			WillReturnError(sqlmock.ErrCancelled)
 

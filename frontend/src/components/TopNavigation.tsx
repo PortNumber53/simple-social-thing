@@ -142,7 +142,7 @@ export const TopNavigation: React.FC = () => {
                   Dashboard
                 </a>
                 <a href="/library" className={`${navItemBase} ${navItemColors}`}>
-                  Library
+                  Drafts
                 </a>
                 <div className="relative group">
                   <button className={`${navItemBase} ${navItemColors} gap-1`}>
@@ -396,7 +396,7 @@ export const TopNavigation: React.FC = () => {
                       Dashboard
                     </a>
                     <a href="/library" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
-                      Library
+                      Drafts
                     </a>
                     <a href="/reports" onClick={() => setMobileOpen(false)} className={`${navItemBase} ${navItemColors} justify-start w-full`}>
                       Reports

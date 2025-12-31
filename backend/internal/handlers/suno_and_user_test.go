@@ -27,7 +27,7 @@ func TestUpdateUser_SuccessAndNotFound(t *testing.T) {
 		h := New(db)
 		now := time.Now().UTC()
 
-		mock.ExpectQuery(`UPDATE public\."Users"`).
+		mock.ExpectQuery(`UPDATE public\.users`).
 			WithArgs("u1", "e@example.com", "Alice", (*string)(nil)).
 			WillReturnRows(sqlmock.NewRows([]string{"id", "email", "name", "imageUrl", "createdAt"}).
 				AddRow("u1", "e@example.com", "Alice", nil, now))
@@ -51,7 +51,7 @@ func TestUpdateUser_SuccessAndNotFound(t *testing.T) {
 		}
 		defer func() { _ = db.Close() }()
 		h := New(db)
-		mock.ExpectQuery(`UPDATE public\."Users"`).
+		mock.ExpectQuery(`UPDATE public\.users`).
 			WillReturnError(sql.ErrNoRows)
 
 		rr := httptest.NewRecorder()
@@ -77,7 +77,7 @@ func TestListSunoTracksForUser_Success(t *testing.T) {
 	rows := sqlmock.NewRows([]string{"id", "user_id", "prompt", "task_id", "model", "suno_track_id", "audio_url", "file_path", "status", "created_at", "updated_at"}).
 		AddRow("st1", "u1", "p", "t1", "V4", "sid", "https://a", "/x", "completed", now, now)
 
-	mock.ExpectQuery(`FROM public\."SunoTracks"\s+WHERE user_id = \$1`).
+	mock.ExpectQuery(`FROM public\.suno_tracks\s+WHERE user_id = \$1`).
 		WithArgs("u1").
 		WillReturnRows(rows)
 
@@ -138,7 +138,7 @@ func TestStoreSunoTrack_MissingAudioURLAndSuccess(t *testing.T) {
 			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("not_found")), Header: make(http.Header)}, nil
 		}}
 
-		mock.ExpectExec(`INSERT INTO public\."SunoTracks"`).
+		mock.ExpectExec(`INSERT INTO public\.suno_tracks`).
 			WithArgs(sqlmock.AnyArg(), "u1", "p", "sid", "https://audio.test/a.mp3", sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -190,11 +190,11 @@ func TestSunoMusicCallback_SuccessPath(t *testing.T) {
 		return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("not_found")), Header: make(http.Header)}, nil
 	}}
 
-	mock.ExpectQuery(`SELECT id FROM public\."SunoTracks" WHERE task_id = \$1`).
+	mock.ExpectQuery(`SELECT id FROM public\.suno_tracks WHERE task_id = \$1`).
 		WithArgs("task1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("track1"))
 
-	mock.ExpectExec(`UPDATE public\."SunoTracks"`).
+	mock.ExpectExec(`UPDATE public\.suno_tracks`).
 		WithArgs("suno1", "https://audio.test/a.mp3", sqlmock.AnyArg(), "completed", "track1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -241,7 +241,7 @@ func TestCreateAndUpdateSunoTrack(t *testing.T) {
 	}
 
 	// CreateSunoTask success
-	mock.ExpectExec(`INSERT INTO public\."SunoTracks"`).
+	mock.ExpectExec(`INSERT INTO public\.suno_tracks`).
 		WithArgs(sqlmock.AnyArg(), "u1", "p", "task1", "V4").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	rr = httptest.NewRecorder()
@@ -265,7 +265,7 @@ func TestCreateAndUpdateSunoTrack(t *testing.T) {
 		return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("not_found")), Header: make(http.Header)}, nil
 	}}
 
-	mock.ExpectExec(`UPDATE public\."SunoTracks"`).
+	mock.ExpectExec(`UPDATE public\.suno_tracks`).
 		WithArgs("sid", "https://audio.test/a.mp3", sqlmock.AnyArg(), "completed", "track1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 

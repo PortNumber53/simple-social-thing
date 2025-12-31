@@ -38,7 +38,7 @@ func (p PinterestProvider) SyncUser(ctx context.Context, db *sql.DB, userID stri
 	}
 
 	var raw []byte
-	if err := db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, 0, nil
 		}
@@ -140,7 +140,7 @@ func (p PinterestProvider) SyncUser(ctx context.Context, db *sql.DB, userID stri
 		rawItem, _ := json.Marshal(it)
 		rowID := fmt.Sprintf("pinterest:%s:%s", userID, id)
 		_, err := db.ExecContext(ctx, `
-			INSERT INTO public."SocialLibraries"
+			INSERT INTO public.social_libraries
 			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
 			VALUES
 			  ($1, $2, 'pinterest', 'pin', NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), $7, NULL, NULL, $8::jsonb, $9, NOW(), NOW())

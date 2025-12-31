@@ -172,13 +172,13 @@ export const Dashboard: React.FC = () => {
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8 animate-slide-up">
             <div className="card card-hover">
-              <p className="text-sm text-slate-600 dark:text-slate-400 mb-1">Drafts in library</p>
+              <p className="text-sm text-slate-600 dark:text-slate-400 mb-1">Drafts</p>
               <p className="text-3xl font-bold text-slate-900 dark:text-slate-100">
                 {libraryStats ? libraryStats.drafts : '—'}
               </p>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Ready to edit or publish now.</p>
               <a className="text-sm text-primary-700 dark:text-primary-300 font-semibold hover:underline mt-3 inline-block" href="/library">
-                Go to Library →
+                Go to Drafts →
               </a>
             </div>
 
@@ -250,7 +250,7 @@ export const Dashboard: React.FC = () => {
                 </li>
                 <li>
                   <a className="text-primary-700 dark:text-primary-300 font-semibold hover:underline" href="/library">
-                    Keep an eye on the WS clock; events should keep Library fresh
+                    Keep an eye on the WS clock; events should keep Drafts fresh
                   </a>
                   <span className="block text-xs text-slate-500 dark:text-slate-400">
                     If the footer clock stops, check the Worker↔Backend events bridge.

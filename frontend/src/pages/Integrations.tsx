@@ -434,11 +434,14 @@ export const Integrations: React.FC = () => {
         </header>
 
         {notices.length > 0 && (
-          <div className="max-w-xl sm:mx-auto space-y-2">
+          <div className="fixed bottom-4 right-4 z-50 space-y-2 max-w-sm">
             {notices.map((n) => (
               <div
                 key={n.key}
-                className={`p-3 rounded-md text-sm ${noticeStyle(n.msg)} ${notices.length === 1 ? 'text-left sm:text-center' : 'text-left'}`}
+                className={`p-3 rounded-md text-sm shadow-lg border border-slate-200/70 dark:border-slate-700/70 ${noticeStyle(n.msg)}`}
+                role="status"
+                aria-live="polite"
+                title={n.msg}
               >
                 {n.msg}
               </div>

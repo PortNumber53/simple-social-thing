@@ -29,7 +29,7 @@ func TestPublishScheduledPostNowOnce_EnqueuesJob(t *testing.T) {
 		)
 
 	// Insert job row
-	mock.ExpectExec(`INSERT INTO public\."PublishJobs"`).
+	mock.ExpectExec(`INSERT INTO public\.publish_jobs`).
 		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), "hi", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 

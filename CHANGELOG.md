@@ -17,7 +17,7 @@
 - Implemented async polling of `generate/record-info` to retrieve `audioUrl` on SUCCESS.
 - Polling strategy: 30 attempts over ~3 minutes with exponential backoff (2s, 4s, 6s, 8s, then 10s) to accommodate 1-2 minute generation time.
 - Track generation lifecycle: Create task record immediately with taskId, poll for completion, update with audioUrl and status (pending/completed/failed/timeout).
-- Added `task_id`, `status`, `model`, `updated_at` columns to SunoTracks table (migration 004).
+- Added `task_id`, `status`, `model`, `updated_at` columns to `suno_tracks` table (migration 004).
 - Backend endpoints: `POST /api/suno/tasks` (create), `PUT /api/suno/tracks/{id}` (update).
 - Removed mock fallbacks; real API key required. Returns `missing_suno_api_key` (400) when absent.
 - Added detailed logging in Worker (request, taskId, poll status) and Backend (store, user-settings) to aid debugging.
@@ -39,7 +39,7 @@
 ### Backend
 - Created Go backend with Air for hot reload development
   - `backend/cmd/api/main.go` - Main application entry point
-  - `backend/internal/handlers/handlers.go` - HTTP handlers for Users, SocialConnections, Teams
+- `backend/internal/handlers/handlers.go` - HTTP handlers for users, social_connections, teams
   - `backend/internal/models/models.go` - Data models
   - `backend/db/migrate.go` - Database migration tool
   - `backend/db/migrations/001_initial_schema.up.sql` - Initial schema migration
@@ -92,7 +92,7 @@
   - Add Hyperdrive SQL client using `postgres` with dev fallback to `DATABASE_URL`.
   - Implement `sqlUpsertUser()` that updates by `email` first and returns canonical `Users.id`; insert otherwise. Populates `imageUrl`.
   - Implement `sqlUpsertSocial()` with conflict target `(provider, "providerId")` to avoid duplicate key violations and update `userId/email/name` on conflict.
-  - Use canonical `Users.id` for `SocialConnections.userId` and for the `sid` cookie to satisfy FK constraints.
+- Use canonical `users.id` for `social_connections.user_id` and for the `sid` cookie to satisfy FK constraints.
   - Status endpoint reads Instagram connection from DB; falls back to cookie when unavailable.
   - Add error logging around DB operations.
 - `frontend/wrangler.jsonc`
@@ -119,7 +119,7 @@
   - Use computed `redirect_uri` during token exchange.
   - Integrated Xata persistence using REST (no generated types).
   - Upsert `public.Users` with `id`, `email`, `name`, and `imageUrl`.
-  - Upsert `public.SocialConnections` with deterministic `id = "${provider}:${providerId}"`, plus `userId`, `provider`, `providerId`, `email`, `name`.
+- Upsert `public.social_connections` with deterministic `id = "${provider}:${providerId}"`, plus `user_id`, `provider`, `provider_id`, `email`, `name`.
   - Normalized avatar field to `imageUrl` in OAuth return payload.
   - Added `USE_MOCK_AUTH` env flag to disable localhost mock by default.
 - `frontend/src/components/GoogleLoginButton.tsx`

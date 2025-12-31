@@ -61,13 +61,13 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		INSERT INTO public."Users" (id, email, name, image_url, created_at)
+		INSERT INTO public.users (id, email, name, image_url, created_at)
 		VALUES ($1, $2, $3, $4, NOW())
 		ON CONFLICT (id) DO UPDATE SET
 			-- Avoid clobbering existing values when callers don't know them (e.g. social-only OAuth callbacks)
-			email = COALESCE(NULLIF(EXCLUDED.email, ''), public."Users".email),
-			name = COALESCE(NULLIF(EXCLUDED.name, ''), public."Users".name),
-			image_url = COALESCE(EXCLUDED.image_url, public."Users".image_url)
+			email = COALESCE(NULLIF(EXCLUDED.email, ''), public.users.email),
+			name = COALESCE(NULLIF(EXCLUDED.name, ''), public.users.name),
+			image_url = COALESCE(EXCLUDED.image_url, public.users.image_url)
 		RETURNING id, email, name, image_url, created_at
 	`
 
@@ -85,7 +85,7 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 	id := pathVar(r, "id")
 
 	var user models.User
-	query := `SELECT id, email, name, image_url, created_at FROM public."Users" WHERE id = $1`
+	query := `SELECT id, email, name, image_url, created_at FROM public.users WHERE id = $1`
 
 	err := h.db.QueryRow(query, id).Scan(&user.ID, &user.Email, &user.Name, &user.ImageURL, &user.CreatedAt)
 	if err == sql.ErrNoRows {
@@ -110,7 +110,7 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		UPDATE public."Users"
+		UPDATE public.users
 		SET email = $2, name = $3, image_url = $4
 		WHERE id = $1
 		RETURNING id, email, name, image_url, created_at
@@ -138,7 +138,7 @@ func (h *Handler) CreateSocialConnection(w http.ResponseWriter, r *http.Request)
 	}
 
 	query := `
-		INSERT INTO public."SocialConnections" (id, user_id, provider, provider_id, email, name, created_at)
+		INSERT INTO public.social_connections (id, user_id, provider, provider_id, email, name, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW())
 		ON CONFLICT (user_id, provider) DO UPDATE SET
 			provider_id = EXCLUDED.provider_id,
@@ -161,7 +161,7 @@ func (h *Handler) GetUserSocialConnections(w http.ResponseWriter, r *http.Reques
 	vars := mux.Vars(r)
 	userID := vars["userId"]
 
-	query := `SELECT id, user_id, provider, provider_id, email, name, created_at FROM public."SocialConnections" WHERE user_id = $1`
+	query := `SELECT id, user_id, provider, provider_id, email, name, created_at FROM public.social_connections WHERE user_id = $1`
 
 	rows, err := h.db.Query(query, userID)
 	if err != nil {
@@ -191,7 +191,7 @@ func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		INSERT INTO public."Teams" (id, "owner_id", "current_tier", created_at)
+		INSERT INTO public.teams (id, owner_id, current_tier, created_at)
 		VALUES ($1, $2, $3, NOW())
 		RETURNING id, "owner_id", "current_tier", "posts_created_today", "usage_reset_date", "ig_llat", "stripe_customer_id", "stripe_subscription_id", created_at
 	`
@@ -211,7 +211,7 @@ func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 	id := vars["id"]
 
 	var team models.Team
-	query := `SELECT id, "owner_id", "current_tier", "posts_created_today", "usage_reset_date", "ig_llat", "stripe_customer_id", "stripe_subscription_id", created_at FROM public."Teams" WHERE id = $1`
+	query := `SELECT id, owner_id, current_tier, posts_created_today, usage_reset_date, ig_llat, stripe_customer_id, stripe_subscription_id, created_at FROM public.teams WHERE id = $1`
 
 	err := h.db.QueryRow(query, id).Scan(&team.ID, &team.OwnerID, &team.CurrentTier, &team.PostsCreatedToday, &team.UsageResetDate, &team.IgLlat, &team.StripeCustomerID, &team.StripeSubscriptionID, &team.CreatedAt)
 	if err == sql.ErrNoRows {
@@ -231,10 +231,10 @@ func (h *Handler) GetUserTeams(w http.ResponseWriter, r *http.Request) {
 	userID := vars["userId"]
 
 	query := `
-		SELECT t.id, t."owner_id", t."current_tier", t."posts_created_today", t."usage_reset_date", t."ig_llat", t."stripe_customer_id", t."stripe_subscription_id", t.created_at
-		FROM public."Teams" t
-		LEFT JOIN public."TeamMembers" tm ON t.id = tm."team_id"
-		WHERE t."owner_id" = $1 OR tm."user_id" = $1
+		SELECT t.id, t.owner_id, t.current_tier, t.posts_created_today, t.usage_reset_date, t.ig_llat, t.stripe_customer_id, t.stripe_subscription_id, t.created_at
+		FROM public.teams t
+		LEFT JOIN public.team_members tm ON t.id = tm.team_id
+		WHERE t.owner_id = $1 OR tm.user_id = $1
 	`
 
 	rows, err := h.db.Query(query, userID)
@@ -404,7 +404,7 @@ func (h *Handler) ListSunoTracksForUser(w http.ResponseWriter, r *http.Request) 
 
 	query := `
 		SELECT id, user_id, prompt, task_id, model, suno_track_id, audio_url, file_path, status, created_at, updated_at
-		FROM public."SunoTracks"
+		FROM public.suno_tracks
 		WHERE user_id = $1
 		ORDER BY created_at DESC
 		LIMIT 100
@@ -458,6 +458,12 @@ func (h *Handler) ListSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 	toStr := r.URL.Query().Get("to")
 	limitStr := r.URL.Query().Get("limit")
 	offsetStr := r.URL.Query().Get("offset")
+	postedOnly := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("posted"))) == "true"
+	draftsOnly := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("drafts"))) == "true"
+	if postedOnly && draftsOnly {
+		http.Error(w, "posted and drafts cannot both be true", http.StatusBadRequest)
+		return
+	}
 
 	parseDate := func(s string) (*time.Time, error) {
 		if s == "" {
@@ -519,12 +525,18 @@ func (h *Handler) ListSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 	base := `
 		SELECT id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url,
 		       posted_at, views, likes, raw_payload, created_at, updated_at
-		FROM public."SocialLibraries"
+		FROM public.social_libraries
 		WHERE user_id = $1
 	`
 	args := []interface{}{userID}
 	argN := 2
 
+	if postedOnly {
+		base += " AND posted_at IS NOT NULL"
+	}
+	if draftsOnly {
+		base += " AND posted_at IS NULL"
+	}
 	if network != "" {
 		base += fmt.Sprintf(" AND network = $%d", argN)
 		args = append(args, network)
@@ -673,7 +685,10 @@ func (h *Handler) ImportSocialLibraryForUser(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	rawPayload, _ := json.Marshal(req)
+	// Do not persist the page URL in the stored payload; keep only media/meta.
+	reqForStorage := req
+	reqForStorage.URL = ""
+	rawPayload, _ := json.Marshal(reqForStorage)
 	hh := sha1.Sum([]byte(req.URL + first.Src + userID))
 	hash := hex.EncodeToString(hh[:])
 	if len(hash) > 16 {
@@ -682,11 +697,18 @@ func (h *Handler) ImportSocialLibraryForUser(w http.ResponseWriter, r *http.Requ
 	rowID := fmt.Sprintf("import:%s:%s", userID, hash)
 	externalID := rowID
 
+	// Ensure the user row exists to satisfy FK (id only; no-op if already present).
+	_, _ = h.db.ExecContext(r.Context(), `
+		INSERT INTO public.users (id, email, name)
+		VALUES ($1, '', '')
+		ON CONFLICT (id) DO NOTHING
+	`, userID)
+
 	if _, err := h.db.ExecContext(r.Context(), `
-		INSERT INTO public."SocialLibraries"
+	INSERT INTO public.social_libraries
 		  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
 		VALUES
-		  ($1, $2, $3, $4, NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), NOW(), NULL, NULL, $9::jsonb, $10, NOW(), NOW())
+		  ($1, $2, $3, $4, NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), NULLIF($8,''), NULL, NULL, NULL, $9::jsonb, $10, NOW(), NOW())
 		ON CONFLICT (user_id, network, external_id)
 		DO UPDATE SET
 		  content_type = EXCLUDED.content_type,
@@ -696,10 +718,39 @@ func (h *Handler) ImportSocialLibraryForUser(w http.ResponseWriter, r *http.Requ
 		  thumbnail_url = EXCLUDED.thumbnail_url,
 		  raw_payload = EXCLUDED.raw_payload,
 		  updated_at = NOW()
-	`, rowID, userID, provider, contentType, title, req.URL, first.Src, first.Src, string(rawPayload), externalID); err != nil {
+	`, rowID, userID, provider, contentType, title, "", first.Src, first.Src, string(rawPayload), externalID); err != nil {
 		log.Printf("[ImportSocialLibrary] insert failed userId=%s err=%v", userID, err)
 		http.Error(w, "failed to save", http.StatusInternalServerError)
 		return
+	}
+
+	// Also create a local draft post so it surfaces in Drafts.
+	draftContent := strings.TrimSpace(req.Notes)
+	if draftContent == "" {
+		draftContent = strings.TrimSpace(req.Selection)
+	}
+	if draftContent == "" {
+		draftContent = strings.TrimSpace(req.URL)
+	}
+	if draftContent == "" {
+		draftContent = "Imported draft"
+	}
+	_, _ = h.db.ExecContext(r.Context(), `
+		INSERT INTO public.posts (id, team_id, user_id, content, status, providers, media, scheduled_for, published_at, created_at, updated_at)
+		VALUES ($1, NULL, $2, $3, 'draft', ARRAY[]::text[], ARRAY[]::text[], NULL, NULL, NOW(), NOW())
+		ON CONFLICT (id) DO NOTHING
+	`, rowID, userID, draftContent)
+
+	// Kick off async media import to /media and attach to the draft post.
+	mediaURLs := make([]string, 0, len(req.Media))
+	for _, m := range req.Media {
+		s := strings.TrimSpace(m.Src)
+		if s != "" {
+			mediaURLs = append(mediaURLs, s)
+		}
+	}
+	if len(mediaURLs) > 0 && h != nil {
+		go h.importMediaForDraft(context.Background(), userID, rowID, mediaURLs)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -781,7 +832,7 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 			var networkRaw string
 			var externalIDRaw sql.NullString
 			var permalinkRaw sql.NullString
-			err := h.db.QueryRowContext(ctx, `SELECT network, external_id, permalink_url FROM public."SocialLibraries" WHERE user_id=$1 AND id=$2`, userID, id).Scan(&networkRaw, &externalIDRaw, &permalinkRaw)
+			err := h.db.QueryRowContext(ctx, `SELECT network, external_id, permalink_url FROM public.social_libraries WHERE user_id=$1 AND id=$2`, userID, id).Scan(&networkRaw, &externalIDRaw, &permalinkRaw)
 			cancel()
 			if err != nil {
 				if err == sql.ErrNoRows {
@@ -870,7 +921,7 @@ func (h *Handler) DeleteSocialLibrariesForUser(w http.ResponseWriter, r *http.Re
 
 	ctxDel, cancelDel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancelDel()
-	rows, err := h.db.QueryContext(ctxDel, `DELETE FROM public."SocialLibraries" WHERE user_id = $1 AND id = ANY($2) RETURNING id`, userID, pq.Array(idsToDeleteLocally))
+	rows, err := h.db.QueryContext(ctxDel, `DELETE FROM public.social_libraries WHERE user_id = $1 AND id = ANY($2) RETURNING id`, userID, pq.Array(idsToDeleteLocally))
 	if err != nil {
 		log.Printf("[Library][Delete] exec error userId=%s err=%v", userID, err)
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1006,7 +1057,7 @@ func (h *Handler) ListNotificationsForUser(w http.ResponseWriter, r *http.Reques
 
 	q := `
 		SELECT id, user_id, type, title, body, url, created_at, read_at
-		FROM public."Notifications"
+		FROM public.notifications
 		WHERE user_id = $1
 	`
 	args := []any{userID}
@@ -1069,7 +1120,7 @@ func (h *Handler) MarkNotificationReadForUser(w http.ResponseWriter, r *http.Req
 		return
 	}
 	res, err := h.db.Exec(`
-		UPDATE public."Notifications"
+		UPDATE public.notifications
 		   SET read_at = COALESCE(read_at, NOW())
 		 WHERE user_id = $1 AND id = $2
 	`, userID, id)
@@ -1089,7 +1140,7 @@ func (h *Handler) MarkNotificationReadForUser(w http.ResponseWriter, r *http.Req
 func (h *Handler) createNotification(userID, typ, title string, body *string, urlStr *string) string {
 	id := fmt.Sprintf("n_%d", time.Now().UTC().UnixNano())
 	_, err := h.db.Exec(`
-		INSERT INTO public."Notifications" (id, user_id, type, title, body, url, created_at)
+		INSERT INTO public.notifications (id, user_id, type, title, body, url, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW())
 	`, id, userID, typ, title, body, urlStr)
 	if err != nil {
@@ -1116,7 +1167,7 @@ func (h *Handler) createNotificationOnce(userID, typ, title string, body *string
 		var existingID string
 		err := h.db.QueryRow(`
 			SELECT id
-			  FROM public."Notifications"
+			  FROM public.notifications
 			 WHERE user_id = $1
 			   AND type = $2
 			   AND url = $3
@@ -1154,7 +1205,7 @@ func (h *Handler) ListPostsForUser(w http.ResponseWriter, r *http.Request) {
 			        scheduled_for, published_at,
 			        last_publish_job_id, last_publish_status, last_publish_error, last_publish_attempt_at,
 			        created_at, updated_at
-			 FROM public."Posts"
+			 FROM public.posts
 			 WHERE user_id = $1 AND status = $2
 			 ORDER BY created_at DESC
 			 LIMIT $3`,
@@ -1167,7 +1218,7 @@ func (h *Handler) ListPostsForUser(w http.ResponseWriter, r *http.Request) {
 			        scheduled_for, published_at,
 			        last_publish_job_id, last_publish_status, last_publish_error, last_publish_attempt_at,
 			        created_at, updated_at
-			 FROM public."Posts"
+			 FROM public.posts
 			 WHERE user_id = $1
 			 ORDER BY created_at DESC
 			 LIMIT $2`,
@@ -1296,7 +1347,7 @@ func (h *Handler) CreatePostForUser(w http.ResponseWriter, r *http.Request) {
 
 	var out models.Post
 	query := `
-		INSERT INTO public."Posts" (id, team_id, user_id, content, status, providers, media, scheduled_for, published_at, created_at, updated_at)
+		INSERT INTO public.posts (id, team_id, user_id, content, status, providers, media, scheduled_for, published_at, created_at, updated_at)
 		VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
 		RETURNING id, COALESCE(team_id,''), user_id, content, status, COALESCE(providers, ARRAY[]::text[]), COALESCE(media, ARRAY[]::text[]),
 		          scheduled_for, published_at,
@@ -1397,7 +1448,7 @@ func (h *Handler) UpdatePostForUser(w http.ResponseWriter, r *http.Request) {
 	var out models.Post
 	clearPublishState := req.Content != nil || req.Status != nil || req.ScheduledFor != nil || req.Providers != nil || req.Media != nil
 	query := `
-		UPDATE public."Posts"
+		UPDATE public.posts
 		SET
 			content = COALESCE($3, content),
 			status = COALESCE($4, status),
@@ -1449,7 +1500,7 @@ func (h *Handler) DeletePostForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := h.db.Exec(`DELETE FROM public."Posts" WHERE id = $1 AND user_id = $2`, postID, userID)
+	res, err := h.db.Exec(`DELETE FROM public.posts WHERE id = $1 AND user_id = $2`, postID, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1489,7 +1540,7 @@ func (h *Handler) publishScheduledPostNowOnce(ctx context.Context, origin, postI
 		newScheduledFor time.Time
 	)
 	err := h.db.QueryRowContext(ctx, `
-		UPDATE public."Posts"
+		UPDATE public.posts
 		   SET scheduled_for = NOW(),
 		       last_publish_job_id = $3,
 		       last_publish_status = 'queued',
@@ -1514,7 +1565,7 @@ func (h *Handler) publishScheduledPostNowOnce(ctx context.Context, origin, postI
 	if caption == "" {
 		// Don't enqueue a publish job; mark as failed so user can edit & retry.
 		_, _ = h.db.ExecContext(ctx, `
-			UPDATE public."Posts"
+			UPDATE public.posts
 			   SET last_publish_status='failed',
 			       last_publish_error='empty_content',
 			       updated_at=NOW()
@@ -1524,7 +1575,7 @@ func (h *Handler) publishScheduledPostNowOnce(ctx context.Context, origin, postI
 	}
 	if len(providers) == 0 {
 		_, _ = h.db.ExecContext(ctx, `
-			UPDATE public."Posts"
+			UPDATE public.posts
 			   SET last_publish_status='failed',
 			       last_publish_error='missing_providers',
 			       updated_at=NOW()
@@ -1537,7 +1588,7 @@ func (h *Handler) publishScheduledPostNowOnce(ctx context.Context, origin, postI
 			switch p {
 			case "instagram", "pinterest", "tiktok", "youtube":
 				_, _ = h.db.ExecContext(ctx, `
-					UPDATE public."Posts"
+					UPDATE public.posts
 					   SET last_publish_status='failed',
 					       last_publish_error='missing_media',
 					       updated_at=NOW()
@@ -1561,7 +1612,7 @@ func (h *Handler) publishScheduledPostNowOnce(ctx context.Context, origin, postI
 	now := time.Now()
 
 	_, err = h.db.ExecContext(ctx, `
-		INSERT INTO public."PublishJobs"
+		INSERT INTO public.publish_jobs
 		  (id, user_id, status, providers, caption, request_json, created_at, updated_at)
 		VALUES
 		  ($1, $2, 'queued', $3, $4, $5::jsonb, $6, $6)
@@ -1569,7 +1620,7 @@ func (h *Handler) publishScheduledPostNowOnce(ctx context.Context, origin, postI
 	if err != nil {
 		// Undo claim so it can be retried
 		_, _ = h.db.ExecContext(ctx, `
-			UPDATE public."Posts"
+			UPDATE public.posts
 			   SET last_publish_job_id=NULL,
 			       last_publish_status=NULL,
 			       last_publish_error=$4,
@@ -1609,7 +1660,7 @@ func (h *Handler) PublishNowPostForUser(w http.ResponseWriter, r *http.Request) 
 			var status string
 			var lastJob sql.NullString
 			var publishedAt sql.NullTime
-			e2 := h.db.QueryRowContext(r.Context(), `SELECT status, last_publish_job_id, published_at FROM public."Posts" WHERE id=$1 AND user_id=$2`, postID, userID).
+			e2 := h.db.QueryRowContext(r.Context(), `SELECT status, last_publish_job_id, published_at FROM public.posts WHERE id=$1 AND user_id=$2`, postID, userID).
 				Scan(&status, &lastJob, &publishedAt)
 			if e2 == sql.ErrNoRows {
 				writeError(w, http.StatusNotFound, "not found")
@@ -2129,7 +2180,7 @@ func (h *Handler) EnqueuePublishJobForUser(w http.ResponseWriter, r *http.Reques
 	reqJSON, _ := json.Marshal(reqSnapshot)
 
 	_, err = h.db.ExecContext(r.Context(), `
-		INSERT INTO public."PublishJobs"
+		INSERT INTO public.publish_jobs
 		  (id, user_id, status, providers, caption, request_json, created_at, updated_at)
 		VALUES
 		  ($1, $2, 'queued', $3, $4, $5::jsonb, $6, $6)
@@ -2182,7 +2233,7 @@ func (h *Handler) GetPublishJob(w http.ResponseWriter, r *http.Request) {
 	row := h.db.QueryRowContext(r.Context(), `
 		SELECT user_id, status, COALESCE(providers, ARRAY[]::text[]), COALESCE(caption,''), COALESCE(request_json, '{}'::jsonb), COALESCE(result_json, '{}'::jsonb),
 		       COALESCE(error,''), created_at, started_at, finished_at, updated_at
-		  FROM public."PublishJobs"
+		  FROM public.publish_jobs
 		 WHERE id = $1
 	`, jobID)
 	if err := row.Scan(&userID, &status, pq.Array(&providers), &caption, &reqJSON, &resJSON, &errText, &createdAt, &startedAt, &finishedAt, &updatedAt); err != nil {
@@ -2227,7 +2278,7 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		// Best-effort only; do not block job execution on logging.
 		_ = h.db.QueryRow(`
 			SELECT id, status, scheduled_for
-			  FROM public."Posts"
+			  FROM public.posts
 			 WHERE last_publish_job_id=$1
 			 LIMIT 1
 		`, jobID).Scan(&pid, &st, &postScheduledFor)
@@ -2249,13 +2300,13 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 			msg := fmt.Sprintf("panic: %v", rec)
 			log.Printf("[PublishJob] panic jobId=%s userId=%s err=%s\n%s", jobID, userID, msg, string(debug.Stack()))
 			_, _ = h.db.Exec(`
-				UPDATE public."PublishJobs"
+				UPDATE public.publish_jobs
 				   SET status='failed', error=$2, finished_at=NOW(), updated_at=NOW()
 				 WHERE id=$1
 			`, jobID, msg)
 			// Best-effort: if this was triggered by a scheduled post, mark it as failed too.
 			_, _ = h.db.Exec(`
-				UPDATE public."Posts"
+				UPDATE public.posts
 				   SET last_publish_status='failed',
 				       last_publish_error=$2,
 				       updated_at=NOW()
@@ -2265,13 +2316,13 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 	}()
 
 	_, _ = h.db.Exec(`
-		UPDATE public."PublishJobs"
+		UPDATE public.publish_jobs
 		   SET status='running', started_at=NOW(), updated_at=NOW()
 		 WHERE id=$1
 	`, jobID)
 	// If this is tied to a scheduled post, reflect job state there too.
 	_, _ = h.db.Exec(`
-		UPDATE public."Posts"
+		UPDATE public.posts
 		   SET last_publish_status='running',
 		       updated_at=NOW()
 		 WHERE last_publish_job_id=$1
@@ -2487,7 +2538,7 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 	}
 
 	_, _ = h.db.Exec(`
-		UPDATE public."PublishJobs"
+		UPDATE public.publish_jobs
 		   SET status=$2, result_json=$3::jsonb, error=COALESCE($4, error), finished_at=NOW(), updated_at=NOW()
 		 WHERE id=$1
 	`, jobID, finalStatus, string(resJSON), errText)
@@ -2498,7 +2549,7 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		postErr = "one_or_more_providers_failed"
 	}
 	_, _ = h.db.Exec(`
-		UPDATE public."Posts"
+		UPDATE public.posts
 		   SET last_publish_status=$2,
 		       last_publish_error=CASE WHEN $2='failed' THEN $3 ELSE NULL END,
 		       status=CASE WHEN $2='completed' THEN 'published' ELSE status END,
@@ -2612,6 +2663,105 @@ func hmacSHA256Hex(key []byte, msg string) string {
 func mediaUserHash(userID string) string {
 	userID = strings.TrimSpace(userID)
 	return hmacSHA256Hex(getMediaHMACSecret(), "user:"+userID)
+}
+
+func sanitizeFilename(base string) string {
+	base = filepath.Base(strings.TrimSpace(base))
+	base = strings.Trim(base, ".")
+	if base == "" {
+		base = randHex(12)
+	}
+	return base
+}
+
+func (h *Handler) importMediaForDraft(ctx context.Context, userID, postID string, urls []string) {
+	if h == nil || h.db == nil {
+		return
+	}
+	log.Printf("[ImportMedia][%s] start user=%s urls=%d", postID, userID, len(urls))
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	userHash := mediaUserHash(userID)
+	baseDir := filepath.Join("media", userHash, "imports")
+	_ = os.MkdirAll(baseDir, 0o755)
+
+	relPaths := make([]string, 0, len(urls))
+	for i, raw := range urls {
+		select {
+		case <-ctx.Done():
+			log.Printf("[ImportMedia][%s] cancelled: %v", postID, ctx.Err())
+			return
+		default:
+		}
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		log.Printf("[ImportMedia][%s] fetch idx=%d url=%s", postID, i, raw)
+		req, err := http.NewRequestWithContext(ctx, "GET", raw, nil)
+		if err != nil {
+			log.Printf("[ImportMedia][%s] bad_url url=%s err=%v", postID, raw, err)
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("[ImportMedia][%s] fetch_failed url=%s err=%v", postID, raw, err)
+			continue
+		}
+		if resp.Body != nil {
+			defer resp.Body.Close()
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			log.Printf("[ImportMedia][%s] non_2xx url=%s status=%d", postID, raw, resp.StatusCode)
+			continue
+		}
+		clHeader := strings.TrimSpace(resp.Header.Get("Content-Length"))
+		ct := strings.TrimSpace(resp.Header.Get("Content-Type"))
+		log.Printf("[ImportMedia][%s] response url=%s status=%d content_type=%q content_length=%q", postID, raw, resp.StatusCode, ct, clHeader)
+		// Limit size to 25MB.
+		const maxSize = 25 << 20
+		data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize+1))
+		if err != nil {
+			log.Printf("[ImportMedia][%s] read_failed url=%s err=%v", postID, raw, err)
+			continue
+		}
+		if len(data) > maxSize {
+			log.Printf("[ImportMedia][%s] skipped url=%s reason=too_large bytes=%d", postID, raw, len(data))
+			continue
+		}
+
+		fnBase := sanitizeFilename(fmt.Sprintf("%d_%s", i, filepath.Base(raw)))
+		ext := extForUpload(fnBase, ct)
+		fn := fmt.Sprintf("%s%s", randHex(8), ext)
+		path := filepath.Join(baseDir, fn)
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			log.Printf("[ImportMedia][%s] write_failed url=%s err=%v", postID, raw, err)
+			continue
+		}
+		rel := fmt.Sprintf("/media/%s/imports/%s", userHash, fn)
+		relPaths = append(relPaths, rel)
+		log.Printf("[ImportMedia][%s] saved url=%s rel=%s bytes=%d ext=%s content_type=%q", postID, raw, rel, len(data), ext, ct)
+	}
+
+	if len(relPaths) == 0 {
+		log.Printf("[ImportMedia][%s] finished with no media saved", postID)
+		return
+	}
+
+	// Attach to draft post.
+	_, err := h.db.ExecContext(ctx, `
+		UPDATE public.posts
+		   SET media = $3,
+		       updated_at = NOW()
+		 WHERE id = $1 AND user_id = $2
+	`, postID, userID, pq.Array(relPaths))
+	if err != nil {
+		log.Printf("[ImportMedia][%s] attach_failed err=%v", postID, err)
+		return
+	}
+	log.Printf("[ImportMedia][%s] attached media count=%d", postID, len(relPaths))
 }
 
 func extForUpload(filename string, contentType string) string {
@@ -2846,7 +2996,7 @@ func parsePublishPostRequest(r *http.Request) (publishPostRequest, []uploadedMed
 func (h *Handler) publishFacebookPages(ctx context.Context, userID string, caption string, pageIDs []string, media []uploadedMedia, dryRun bool) (int, error, map[string]interface{}) {
 	details := map[string]interface{}{}
 	var raw []byte
-	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='facebook_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='facebook_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, fmt.Errorf("not_connected"), details
 		}
@@ -2959,7 +3109,7 @@ func (h *Handler) publishFacebookPages(ctx context.Context, userID string, capti
 			if postID != "" {
 				rowID := fmt.Sprintf("facebook:%s:%s", userID, postID)
 				_, _ = h.db.ExecContext(ctx, `
-					INSERT INTO public."SocialLibraries"
+					INSERT INTO public.social_libraries
 					  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
 					VALUES
 					  ($1, $2, 'facebook', 'post', NULLIF($3,''), NULL, NULL, NULL, NOW(), NULL, NULL, $4::jsonb, $5, NOW(), NOW())
@@ -3031,7 +3181,7 @@ func (h *Handler) publishFacebookPages(ctx context.Context, userID string, capti
 			}
 			rowID := fmt.Sprintf("facebook:%s:%s", userID, postID)
 			_, _ = h.db.ExecContext(ctx, `
-				INSERT INTO public."SocialLibraries"
+				INSERT INTO public.social_libraries
 				  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
 				VALUES
 				  ($1, $2, 'facebook', 'post', NULLIF($3,''), NULL, NULL, NULL, NOW(), NULL, NULL, $4::jsonb, $5, NOW(), NOW())
@@ -3222,7 +3372,7 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 	}
 	// Load IG token + business account id from UserSettings
 	var raw []byte
-	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='instagram_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='instagram_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, fmt.Errorf("not_connected"), details
 		}
@@ -3404,7 +3554,7 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 		}
 		rowID := fmt.Sprintf("instagram:%s:%s", userID, mediaID)
 		_, _ = h.db.ExecContext(ctx, `
-			INSERT INTO public."SocialLibraries"
+			INSERT INTO public.social_libraries
 			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
 			VALUES
 			  ($1, $2, 'instagram', 'post', NULLIF($3,''), NULL, NULL, NULL, NOW(), NULL, NULL, $4::jsonb, $5, NOW(), NOW())
@@ -3423,7 +3573,7 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 func (h *Handler) deleteInstagramMedia(ctx context.Context, userID string, mediaID string) error {
 	// Load IG token from UserSettings.
 	var raw []byte
-	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='instagram_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='instagram_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("instagram_not_connected")
 		}
@@ -3477,7 +3627,7 @@ func (h *Handler) deleteInstagramMedia(ctx context.Context, userID string, media
 func (h *Handler) deleteFacebookObject(ctx context.Context, userID string, objectID string) error {
 	// Needs a Page access token. We'll try all page tokens we have for this user.
 	var raw []byte
-	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='facebook_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='facebook_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("facebook_not_connected")
 		}
@@ -3541,7 +3691,7 @@ func (h *Handler) deleteFacebookObject(ctx context.Context, userID string, objec
 
 func (h *Handler) deletePinterestPin(ctx context.Context, userID string, pinID string) error {
 	var raw []byte
-	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("pinterest_not_connected")
 		}
@@ -3578,7 +3728,7 @@ func (h *Handler) deletePinterestPin(ctx context.Context, userID string, pinID s
 
 func (h *Handler) deleteYouTubeVideo(ctx context.Context, userID string, videoID string) error {
 	var raw []byte
-	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("youtube_not_connected")
 		}
@@ -3621,7 +3771,7 @@ func (h *Handler) publishTikTokWithVideoURL(ctx context.Context, userID, caption
 
 	// Load token from UserSettings
 	var raw []byte
-	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='tiktok_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='tiktok_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, fmt.Errorf("not_connected"), details
 		}
@@ -3700,7 +3850,7 @@ func (h *Handler) publishPinterestWithImageURL(ctx context.Context, userID, capt
 
 	// Load token
 	var raw []byte
-	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='pinterest_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, fmt.Errorf("not_connected"), details
 		}
@@ -3891,7 +4041,7 @@ func (h *Handler) publishPinterestWithImageURL(ctx context.Context, userID, capt
 			}
 			rowID := fmt.Sprintf("pinterest:%s:%s", userID, pinID)
 			_, _ = h.db.ExecContext(ctx, `
-				INSERT INTO public."SocialLibraries"
+				INSERT INTO public.social_libraries
 				  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
 				VALUES
 				  ($1, $2, 'pinterest', 'pin', NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULL, NOW(), NULL, NULL, $6::jsonb, $7, NOW(), NOW())
@@ -3968,7 +4118,7 @@ func (h *Handler) publishYouTubeWithVideoBytes(ctx context.Context, userID, capt
 
 	// Load token
 	var raw []byte
-	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='youtube_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, fmt.Errorf("not_connected"), details
 		}
@@ -4087,7 +4237,7 @@ func (h *Handler) publishYouTubeWithVideoBytes(ctx context.Context, userID, capt
 		}
 		rowID := fmt.Sprintf("youtube:%s:%s", userID, videoID)
 		_, _ = h.db.ExecContext(ctx, `
-			INSERT INTO public."SocialLibraries"
+			INSERT INTO public.social_libraries
 			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
 			VALUES
 			  ($1, $2, 'youtube', 'video', NULLIF($3,''), $4, $4, NULL, NOW(), NULL, NULL, $5::jsonb, $6, NOW(), NOW())
@@ -4190,7 +4340,7 @@ func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		INSERT INTO public."SunoTracks" (id, user_id, prompt, suno_track_id, audio_url, file_path, status, updated_at)
+		INSERT INTO public.suno_tracks (id, user_id, prompt, suno_track_id, audio_url, file_path, status, updated_at)
 		VALUES ($1, NULLIF($2, ''), $3, NULLIF($4, ''), $5, $6, 'completed', NOW())
 	`
 	if _, err := h.db.Exec(query, id, req.UserID, req.Prompt, req.SunoTrackID, req.AudioURL, filePath); err != nil {
@@ -4254,7 +4404,7 @@ func (h *Handler) SunoMusicCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Find our internal track row by task_id.
 	var trackID string
-	if err := h.db.QueryRow(`SELECT id FROM public."SunoTracks" WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1`, taskID).Scan(&trackID); err != nil {
+	if err := h.db.QueryRow(`SELECT id FROM public.suno_tracks WHERE task_id = $1 ORDER BY created_at DESC LIMIT 1`, taskID).Scan(&trackID); err != nil {
 		log.Printf("[Suno][Callback] no track for taskId=%s err=%v payload=%s", taskID, err, string(body))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -4316,7 +4466,7 @@ func (h *Handler) SunoMusicCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = h.db.Exec(`
-		UPDATE public."SunoTracks"
+		UPDATE public.suno_tracks
 		SET suno_track_id = COALESCE(NULLIF($1, ''), suno_track_id),
 		    audio_url = COALESCE(NULLIF($2, ''), audio_url),
 		    file_path = COALESCE(NULLIF($3, ''), file_path),
@@ -4349,7 +4499,7 @@ func (h *Handler) CreateSunoTask(w http.ResponseWriter, r *http.Request) {
 
 	id := fmt.Sprintf("suno-%d", time.Now().UnixNano())
 	query := `
-		INSERT INTO public."SunoTracks" (id, user_id, prompt, task_id, model, status, created_at, updated_at)
+		INSERT INTO public.suno_tracks (id, user_id, prompt, task_id, model, status, created_at, updated_at)
 		VALUES ($1, NULLIF($2, ''), $3, $4, $5, 'pending', NOW(), NOW())
 	`
 	if _, err := h.db.Exec(query, id, req.UserID, req.Prompt, req.TaskID, req.Model); err != nil {
@@ -4419,7 +4569,7 @@ func (h *Handler) UpdateSunoTrack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		UPDATE public."SunoTracks"
+		UPDATE public.suno_tracks
 		SET title = COALESCE(NULLIF($1, ''), title),
 		    suno_track_id = COALESCE(NULLIF($2, ''), suno_track_id),
 		    audio_url = COALESCE(NULLIF($3, ''), audio_url),
@@ -4492,7 +4642,7 @@ func (h *Handler) GetUserSetting(w http.ResponseWriter, r *http.Request) {
 	settingKey := vars["key"]
 	log.Printf("[UserSettings][Get] userId=%s key=%s", userID, settingKey)
 
-	query := `SELECT value FROM public."UserSettings" WHERE user_id = $1 AND key = $2`
+	query := `SELECT value FROM public.user_settings WHERE user_id = $1 AND key = $2`
 	var raw []byte
 	err := h.db.QueryRow(query, userID, settingKey).Scan(&raw)
 	if err == sql.ErrNoRows {
@@ -4532,7 +4682,7 @@ func (h *Handler) UpsertUserSetting(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		INSERT INTO public."UserSettings" (user_id, key, value, updated_at)
+		INSERT INTO public.user_settings (user_id, key, value, updated_at)
 		VALUES ($1, $2, $3, NOW())
 		ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
 	`
@@ -4554,7 +4704,7 @@ func (h *Handler) GetUserSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `SELECT key, value FROM public."UserSettings" WHERE user_id = $1`
+	query := `SELECT key, value FROM public.user_settings WHERE user_id = $1`
 	rows, err := h.db.Query(query, userID)
 	if err != nil {
 		log.Printf("[UserSettings][GetAll] query error userId=%s err=%v", userID, err)

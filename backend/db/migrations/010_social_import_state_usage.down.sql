@@ -1,4 +1,1 @@
-DROP TABLE IF EXISTS public."SocialImportUsage";
-DROP TABLE IF EXISTS public."SocialImportStates";
-
-
+-- no-op: schema consolidated into 001 with snake_case tables.

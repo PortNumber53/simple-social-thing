@@ -41,7 +41,7 @@ func (p TikTokProvider) SyncUser(ctx context.Context, db *sql.DB, userID string,
 
 	// Load token from UserSettings
 	var raw []byte
-	if err := db.QueryRowContext(ctx, `SELECT value FROM public."UserSettings" WHERE user_id=$1 AND key='tiktok_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='tiktok_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, 0, nil
 		}
@@ -123,7 +123,7 @@ func (p TikTokProvider) SyncUser(ctx context.Context, db *sql.DB, userID string,
 		rawItem, _ := json.Marshal(v)
 		rowID := fmt.Sprintf("tiktok:%s:%s", userID, id)
 		_, err := db.ExecContext(ctx, `
-			INSERT INTO public."SocialLibraries"
+			INSERT INTO public.social_libraries
 			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
 			VALUES
 			  ($1, $2, 'tiktok', 'video', NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), $7, $8, $9, $10::jsonb, $11, NOW(), NOW())

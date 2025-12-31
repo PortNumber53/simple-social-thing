@@ -4,6 +4,7 @@ const endpointEl = qs('#endpointPath');
 const useCredsEl = qs('#useCredentials');
 const saveBtn = qs('#saveConfig');
 const sendBtn = qs('#sendToBackend');
+const refreshBtn = qs('#refreshData');
 const urlEl = qs('#currentUrl');
 const providerEl = qs('#provider');
 const mediaListEl = qs('#mediaList');
@@ -155,6 +156,8 @@ async function fetchPageData() {
 }
 
 async function sendToBackend() {
+  // Refresh page data so SPA navigations on Instagram don't reuse stale content.
+  await fetchPageData();
   const apiBase = apiBaseEl.value.trim();
   const endpointPath = endpointEl.value.trim() || '/api/library/import';
   if (!apiBase) {
@@ -209,9 +212,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 saveBtn.addEventListener('click', saveConfig);
 sendBtn.addEventListener('click', sendToBackend);
+if (refreshBtn) {
+  refreshBtn.addEventListener('click', fetchPageData);
+}
 selectAllEl.addEventListener('change', () => {
   const checked = selectAllEl.checked;
   mediaSelections = mediaSelections.map((m) => ({ ...m, selected: checked }));
   renderMediaList();
 });
-

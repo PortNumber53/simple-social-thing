@@ -53,7 +53,7 @@ func TestConsumeRequests_OK_Exceeded_Error(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	// ok path
-	mock.ExpectQuery(`INSERT INTO public\."SocialImportUsage"`).
+	mock.ExpectQuery(`INSERT INTO public\.social_import_usage`).
 		WithArgs(sqlmock.AnyArg(), "x", sqlmock.AnyArg(), int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"requests_used"}).AddRow(int64(1)))
 	ok, used, err := ConsumeRequests(context.Background(), db, "x", 1, 10)
@@ -62,7 +62,7 @@ func TestConsumeRequests_OK_Exceeded_Error(t *testing.T) {
 	}
 
 	// exceeded path (no error, ok=false)
-	mock.ExpectQuery(`INSERT INTO public\."SocialImportUsage"`).
+	mock.ExpectQuery(`INSERT INTO public\.social_import_usage`).
 		WithArgs(sqlmock.AnyArg(), "x", sqlmock.AnyArg(), int64(10)).
 		WillReturnRows(sqlmock.NewRows([]string{"requests_used"}).AddRow(int64(11)))
 	ok, used, err = ConsumeRequests(context.Background(), db, "x", 10, 10)
@@ -71,7 +71,7 @@ func TestConsumeRequests_OK_Exceeded_Error(t *testing.T) {
 	}
 
 	// error path
-	mock.ExpectQuery(`INSERT INTO public\."SocialImportUsage"`).
+	mock.ExpectQuery(`INSERT INTO public\.social_import_usage`).
 		WillReturnError(sqlmock.ErrCancelled)
 	_, _, err = ConsumeRequests(context.Background(), db, "x", 1, 10)
 	if err == nil {

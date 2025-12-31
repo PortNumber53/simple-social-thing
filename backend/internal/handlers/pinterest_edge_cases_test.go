@@ -23,7 +23,7 @@ func TestPublishPinterestWithImageURL_EdgeCases(t *testing.T) {
 		h := New(db)
 
 		raw, _ := json.Marshal(pinterestOAuth{AccessToken: "ptok", Scope: "pins:read"})
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='pinterest_oauth'`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='pinterest_oauth'`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
@@ -44,7 +44,7 @@ func TestPublishPinterestWithImageURL_EdgeCases(t *testing.T) {
 		h := New(db)
 
 		raw, _ := json.Marshal(pinterestOAuth{AccessToken: "ptok", Scope: "pins:write,boards:read", ExpiresAt: time.Now().Add(-1 * time.Hour).Format(time.RFC3339)})
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='pinterest_oauth'`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='pinterest_oauth'`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
@@ -65,7 +65,7 @@ func TestPublishPinterestWithImageURL_EdgeCases(t *testing.T) {
 		h := New(db)
 
 		raw, _ := json.Marshal(pinterestOAuth{AccessToken: "ptok", Scope: "pins:write,boards:read", ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339)})
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='pinterest_oauth'`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='pinterest_oauth'`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
@@ -85,7 +85,7 @@ func TestPublishPinterestWithImageURL_EdgeCases(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='pinterest_oauth'`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='pinterest_oauth'`).
 			WithArgs("u1").
 			WillReturnError(sql.ErrNoRows)
 
@@ -108,7 +108,7 @@ func TestPublishPinterestWithImageURL_CreateBoardAndSandboxRetry(t *testing.T) {
 		h := New(db)
 
 		raw, _ := json.Marshal(pinterestOAuth{AccessToken: "ptok", Scope: "pins:write,boards:read", ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339)})
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='pinterest_oauth'`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='pinterest_oauth'`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
@@ -144,7 +144,7 @@ func TestPublishPinterestWithImageURL_CreateBoardAndSandboxRetry(t *testing.T) {
 		h := New(db)
 
 		raw, _ := json.Marshal(pinterestOAuth{AccessToken: "ptok", Scope: "pins:write,boards:read"})
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='pinterest_oauth'`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='pinterest_oauth'`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 

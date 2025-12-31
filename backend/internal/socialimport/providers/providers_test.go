@@ -148,7 +148,7 @@ func TestFacebookProvider_SyncUser_SkipsAndSuccess(t *testing.T) {
 	{
 		db, mock, _ := sqlmock.New()
 		defer func() { _ = db.Close() }()
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*facebook_oauth`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*facebook_oauth`).
 			WithArgs("u1").
 			WillReturnError(sql.ErrNoRows)
 		f, u, err := (FacebookProvider{}).SyncUser(context.Background(), db, "u1", nil, nil, log.Default())
@@ -162,7 +162,7 @@ func TestFacebookProvider_SyncUser_SkipsAndSuccess(t *testing.T) {
 	{
 		db, mock, _ := sqlmock.New()
 		defer func() { _ = db.Close() }()
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*facebook_oauth`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*facebook_oauth`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte("{")))
 		f, u, err := (FacebookProvider{}).SyncUser(context.Background(), db, "u1", nil, nil, log.Default())
@@ -179,11 +179,11 @@ func TestFacebookProvider_SyncUser_SkipsAndSuccess(t *testing.T) {
 
 		tok := facebookOAuth{Pages: []facebookPage{{ID: "pg1", Name: ptr("Page"), AccessToken: "ptok"}}}
 		raw, _ := json.Marshal(tok)
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*facebook_oauth`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*facebook_oauth`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
-		mock.ExpectExec(`INSERT INTO public\."SocialLibraries"`).
+		mock.ExpectExec(`INSERT INTO public\.social_libraries`).
 			WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -208,7 +208,7 @@ func TestTikTokProvider_SkipsAndSuccess(t *testing.T) {
 		db, mock, _ := sqlmock.New()
 		defer func() { _ = db.Close() }()
 		raw, _ := json.Marshal(tiktokOAuth{AccessToken: "t", OpenID: "o", Scope: "user.info.basic"})
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*tiktok_oauth`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*tiktok_oauth`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 		f, u, err := (TikTokProvider{}).SyncUser(context.Background(), db, "u1", nil, nil, log.Default())
@@ -223,10 +223,10 @@ func TestTikTokProvider_SkipsAndSuccess(t *testing.T) {
 		db, mock, _ := sqlmock.New()
 		defer func() { _ = db.Close() }()
 		raw, _ := json.Marshal(tiktokOAuth{AccessToken: "t", OpenID: "o", Scope: "video.list"})
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*tiktok_oauth`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*tiktok_oauth`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
-		mock.ExpectExec(`INSERT INTO public\."SocialLibraries"`).
+		mock.ExpectExec(`INSERT INTO public\.social_libraries`).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
 		client := &http.Client{Transport: stubTransport{fn: func(r *http.Request) (*http.Response, error) {
@@ -248,7 +248,7 @@ func TestTikTokProvider_SkipsAndSuccess(t *testing.T) {
 		db, mock, _ := sqlmock.New()
 		defer func() { _ = db.Close() }()
 		raw, _ := json.Marshal(tiktokOAuth{AccessToken: "t", OpenID: "o", Scope: "video.list"})
-		mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*tiktok_oauth`).
+		mock.ExpectQuery(`SELECT value FROM public\.user_settings.*tiktok_oauth`).
 			WithArgs("u1").
 			WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 		client := &http.Client{Transport: stubTransport{fn: func(r *http.Request) (*http.Response, error) {
@@ -267,11 +267,11 @@ func TestYouTubeProvider_Success(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	raw, _ := json.Marshal(youtubeOAuth{AccessToken: "yt"})
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*youtube_oauth`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*youtube_oauth`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
-	mock.ExpectExec(`INSERT INTO public\."SocialLibraries"`).
+	mock.ExpectExec(`INSERT INTO public\.social_libraries`).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	client := &http.Client{Transport: stubTransport{fn: func(r *http.Request) (*http.Response, error) {
@@ -298,7 +298,7 @@ func TestYouTubeProvider_Non2xxChannels(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer func() { _ = db.Close() }()
 	raw, _ := json.Marshal(youtubeOAuth{AccessToken: "yt"})
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*youtube_oauth`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*youtube_oauth`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
@@ -317,11 +317,11 @@ func TestPinterestProvider_Success(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	raw, _ := json.Marshal(pinterestOAuth{AccessToken: "pt"})
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*pinterest_oauth`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*pinterest_oauth`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
-	mock.ExpectExec(`INSERT INTO public\."SocialLibraries"`).
+	mock.ExpectExec(`INSERT INTO public\.social_libraries`).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	client := &http.Client{Transport: stubTransport{fn: func(r *http.Request) (*http.Response, error) {
@@ -342,7 +342,7 @@ func TestPinterestProvider_Non2xx(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer func() { _ = db.Close() }()
 	raw, _ := json.Marshal(pinterestOAuth{AccessToken: "pt"})
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*pinterest_oauth`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*pinterest_oauth`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
@@ -361,11 +361,11 @@ func TestThreadsProvider_Success(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	raw, _ := json.Marshal(threadsOAuth{AccessToken: "tt", ThreadsUserID: "tu1"})
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*threads_oauth`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*threads_oauth`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
-	mock.ExpectExec(`INSERT INTO public\."SocialLibraries"`).
+	mock.ExpectExec(`INSERT INTO public\.social_libraries`).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	client := &http.Client{Transport: stubTransport{fn: func(r *http.Request) (*http.Response, error) {
@@ -389,7 +389,7 @@ func TestInstagramProvider_SyncUser_PassesThroughNoRows(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer func() { _ = db.Close() }()
 	// Underlying instagram.SyncUser queries instagram_oauth; return no rows.
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*instagram_oauth`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*instagram_oauth`).
 		WithArgs("u1").
 		WillReturnError(sql.ErrNoRows)
 

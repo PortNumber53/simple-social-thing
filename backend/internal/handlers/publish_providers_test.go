@@ -70,12 +70,12 @@ func TestPublishInstagramWithImageURLs_Success_Carousel(t *testing.T) {
 	// OAuth payload required by IG publish
 	oauth := instagramOAuth{AccessToken: "tok", IGBusinessID: "ig123"}
 	raw, _ := json.Marshal(oauth)
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='instagram_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='instagram_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
 	// Expect a SocialLibraries upsert on success
-	mock.ExpectExec(`INSERT INTO public\."SocialLibraries"`).
+	mock.ExpectExec(`INSERT INTO public\.social_libraries`).
 		WithArgs(sqlmock.AnyArg(), "u1", "caption", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -145,7 +145,7 @@ func TestPublishTikTokWithVideoURL_Success(t *testing.T) {
 
 	oauth := tiktokOAuth{AccessToken: "tok", OpenID: "oid", Scope: "video.upload,video.publish"}
 	raw, _ := json.Marshal(oauth)
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='tiktok_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='tiktok_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
@@ -180,11 +180,11 @@ func TestPublishYouTubeWithVideoBytes_Success(t *testing.T) {
 
 	oauth := youtubeOAuth{AccessToken: "tok", Scope: "https://www.googleapis.com/auth/youtube.upload", ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339)}
 	raw, _ := json.Marshal(oauth)
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='youtube_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='youtube_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
-	mock.ExpectExec(`INSERT INTO public\."SocialLibraries"`).
+	mock.ExpectExec(`INSERT INTO public\.social_libraries`).
 		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -229,11 +229,11 @@ func TestPublishInstagram_WritesMediaAndUsesPublicOrigin(t *testing.T) {
 	// Mock IG oauth
 	oauth := instagramOAuth{AccessToken: "tok", IGBusinessID: "ig123"}
 	raw, _ := json.Marshal(oauth)
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='instagram_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='instagram_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
-	mock.ExpectExec(`INSERT INTO public\."SocialLibraries"`).
+	mock.ExpectExec(`INSERT INTO public\.social_libraries`).
 		WithArgs(sqlmock.AnyArg(), "u1", "caption", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -310,7 +310,7 @@ func TestPublishPinterestWithImageURL_Success_Minimal(t *testing.T) {
 
 	oauth := pinterestOAuth{AccessToken: "tok", Scope: "pins:write,boards:read", ExpiresAt: time.Now().Add(1 * time.Hour).Format(time.RFC3339)}
 	raw, _ := json.Marshal(oauth)
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='pinterest_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='pinterest_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
@@ -352,7 +352,7 @@ func TestPublishFacebookPages_DryRunAndMediaPath(t *testing.T) {
 		Pages: []fbOAuthPageRow{{ID: "pg1", AccessToken: "ptok", Tasks: []string{"CREATE_CONTENT"}}},
 	}
 	raw, _ := json.Marshal(payload)
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='facebook_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='facebook_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
 
@@ -381,10 +381,10 @@ func TestPublishFacebookPages_WithImages_Success(t *testing.T) {
 		Pages: []fbOAuthPageRow{{ID: "pg1", AccessToken: "ptok", Tasks: []string{"CREATE_CONTENT"}}},
 	}
 	raw, _ := json.Marshal(payload)
-	mock.ExpectQuery(`SELECT value FROM public\."UserSettings".*key='facebook_oauth'`).
+	mock.ExpectQuery(`SELECT value FROM public\.user_settings.*key='facebook_oauth'`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(raw))
-	mock.ExpectExec(`INSERT INTO public\."SocialLibraries"`).
+	mock.ExpectExec(`INSERT INTO public\.social_libraries`).
 		WithArgs(sqlmock.AnyArg(), "u1", "cap", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 

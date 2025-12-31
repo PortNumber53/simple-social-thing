@@ -40,7 +40,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 	// Use an ordering that matches the partial index to avoid large sorts that can trigger OOMs.
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT id, user_id, scheduled_for
-		  FROM public."Posts"
+		  FROM public.posts
 		 WHERE status = 'scheduled'
 		   AND published_at IS NULL
 		   AND scheduled_for IS NOT NULL
@@ -78,7 +78,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 
 		// Try to claim atomically (prevents multiple app instances from enqueuing the same post).
 		res, err := h.db.ExecContext(ctx, `
-			UPDATE public."Posts"
+			UPDATE public.posts
 			   SET last_publish_job_id = $3,
 			       last_publish_status = 'queued',
 			       last_publish_error = NULL,
@@ -113,7 +113,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			       COALESCE(providers, ARRAY[]::text[]),
 			       COALESCE(media, ARRAY[]::text[]),
 			       scheduled_for
-			  FROM public."Posts"
+			  FROM public.posts
 			 WHERE id = $1
 			   AND user_id = $2
 			   AND last_publish_job_id = $3
@@ -123,7 +123,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 				reason = "db_out_of_memory"
 			}
 			_, _ = h.db.ExecContext(ctx, `
-				UPDATE public."Posts"
+				UPDATE public.posts
 				   SET last_publish_status='failed',
 				       last_publish_error=$4,
 				       updated_at=NOW()
@@ -137,7 +137,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 		if caption == "" {
 			// Don't enqueue a publish job; mark as failed (user can edit to clear this state).
 			_, _ = h.db.ExecContext(ctx, `
-				UPDATE public."Posts"
+				UPDATE public.posts
 				   SET last_publish_status='failed',
 				       last_publish_error='empty_content',
 				       updated_at=NOW()
@@ -148,7 +148,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 		}
 		if len(providers) == 0 {
 			_, _ = h.db.ExecContext(ctx, `
-				UPDATE public."Posts"
+				UPDATE public.posts
 				   SET last_publish_status='failed',
 				       last_publish_error='missing_providers',
 				       updated_at=NOW()
@@ -167,7 +167,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			}
 			if requires {
 				_, _ = h.db.ExecContext(ctx, `
-					UPDATE public."Posts"
+					UPDATE public.posts
 					   SET last_publish_status='failed',
 					       last_publish_error='missing_media',
 					       updated_at=NOW()
@@ -191,7 +191,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 		now := time.Now()
 
 		_, err = h.db.ExecContext(ctx, `
-			INSERT INTO public."PublishJobs"
+			INSERT INTO public.publish_jobs
 			  (id, user_id, status, providers, caption, request_json, created_at, updated_at)
 			VALUES
 			  ($1, $2, 'queued', $3, $4, $5::jsonb, $6, $6)
@@ -199,7 +199,7 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 		if err != nil {
 			// Undo claim so it can be retried (nothing published yet).
 			_, _ = h.db.ExecContext(ctx, `
-				UPDATE public."Posts"
+				UPDATE public.posts
 				   SET last_publish_job_id=NULL,
 				       last_publish_status=NULL,
 				       last_publish_error=$4,
@@ -253,7 +253,7 @@ func (h *Handler) StartScheduledPostsWorker(ctx context.Context, interval time.D
 		}
 		_ = h.db.QueryRowContext(ctx, `
 			SELECT COUNT(*)
-			  FROM public."Posts"
+			  FROM public.posts
 			 WHERE status = 'scheduled'
 			   AND published_at IS NULL
 			   AND scheduled_for IS NOT NULL
@@ -262,7 +262,7 @@ func (h *Handler) StartScheduledPostsWorker(ctx context.Context, interval time.D
 		`).Scan(&due)
 		_ = h.db.QueryRowContext(ctx, `
 			SELECT MIN(scheduled_for)
-			  FROM public."Posts"
+			  FROM public.posts
 			 WHERE status = 'scheduled'
 			   AND published_at IS NULL
 			   AND scheduled_for IS NOT NULL

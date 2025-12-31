@@ -1,2 +1,1 @@
-ALTER TABLE public."SocialConnections"
-  DROP CONSTRAINT IF EXISTS social_connections_unique_provider_provider_id;
+-- no-op: schema consolidated into 001 with snake_case tables.

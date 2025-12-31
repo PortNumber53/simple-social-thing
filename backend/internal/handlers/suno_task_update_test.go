@@ -23,7 +23,7 @@ func TestCreateSunoTask_Success(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	h := New(db)
 
-	mock.ExpectExec(`INSERT INTO public\."SunoTracks"`).
+	mock.ExpectExec(`INSERT INTO public\.suno_tracks`).
 		WithArgs(sqlmock.AnyArg(), "u1", "p", "task1", "V4").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -56,7 +56,7 @@ func TestUpdateSunoTrack_NoDownload(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	h := New(db)
 
-	mock.ExpectExec(`UPDATE public\."SunoTracks"`).
+	mock.ExpectExec(`UPDATE public\.suno_tracks`).
 		WithArgs("sid", "", "", "pending", "track1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -99,7 +99,7 @@ func TestUpdateSunoTrack_DownloadsAudioWhenCompleted(t *testing.T) {
 		return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("not_found")), Header: make(http.Header)}, nil
 	}}
 
-	mock.ExpectExec(`UPDATE public\."SunoTracks"`).
+	mock.ExpectExec(`UPDATE public\.suno_tracks`).
 		WithArgs("suno1", "https://audio.test/a.mp3", sqlmock.AnyArg(), "completed", "track1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 

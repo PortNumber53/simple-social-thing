@@ -44,7 +44,7 @@ func TestSyncUser_NoSettingsRow_ReturnsNil(t *testing.T) {
 	}
 	defer db.Close()
 
-	q := `SELECT value FROM public."UserSettings" WHERE user_id = $1 AND key = 'instagram_oauth' AND value IS NOT NULL`
+	q := `SELECT value FROM public.user_settings WHERE user_id = $1 AND key = 'instagram_oauth' AND value IS NOT NULL`
 	mock.ExpectQuery(regexp.QuoteMeta(q)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"})) // no rows -> sql.ErrNoRows
@@ -68,7 +68,7 @@ func TestSyncUser_InvalidOAuthJSON_IsIgnored(t *testing.T) {
 	}
 	defer db.Close()
 
-	q := `SELECT value FROM public."UserSettings" WHERE user_id = $1 AND key = 'instagram_oauth' AND value IS NOT NULL`
+	q := `SELECT value FROM public.user_settings WHERE user_id = $1 AND key = 'instagram_oauth' AND value IS NOT NULL`
 	mock.ExpectQuery(regexp.QuoteMeta(q)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte("{nope")))
@@ -92,7 +92,7 @@ func TestSyncUserWithClient_Success_Upserts(t *testing.T) {
 	}
 	defer db.Close()
 
-	q := `SELECT value FROM public."UserSettings" WHERE user_id = $1 AND key = 'instagram_oauth' AND value IS NOT NULL`
+	q := `SELECT value FROM public.user_settings WHERE user_id = $1 AND key = 'instagram_oauth' AND value IS NOT NULL`
 	mock.ExpectQuery(regexp.QuoteMeta(q)).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow([]byte(`{"accessToken":"t","igBusinessId":"ig","username":"x"}`)))
@@ -107,7 +107,7 @@ func TestSyncUserWithClient_Success_Upserts(t *testing.T) {
 		}),
 	}
 
-	execRe := `INSERT INTO public\."SocialLibraries"`
+	execRe := `INSERT INTO public\.social_libraries`
 	mock.ExpectExec(execRe).
 		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), "p1", "u1", "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "m1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -225,7 +225,7 @@ func TestImporter_importForUser_Upserts(t *testing.T) {
 	}
 
 	// Expect 2 upserts
-	execRe := `INSERT INTO public\."SocialLibraries"`
+	execRe := `INSERT INTO public\.social_libraries`
 	mock.ExpectExec(execRe).
 		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), "p1", "u1", "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "m1").
 		WillReturnResult(sqlmock.NewResult(1, 1))

@@ -22,7 +22,7 @@ func TestGetUser_Success(t *testing.T) {
 	h := New(db)
 
 	now := time.Now().UTC()
-	mock.ExpectQuery(`SELECT id, email, name, "imageUrl", "createdAt" FROM public\."Users" WHERE id = \$1`).
+		mock.ExpectQuery(`SELECT id, email, name, image_url, created_at FROM public\.users WHERE id = \$1`).
 		WithArgs("u1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "name", "imageUrl", "createdAt"}).
 			AddRow("u1", "e@example.com", "Alice", nil, now))
@@ -112,7 +112,7 @@ func TestGetUserSettings_QueryError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	h := New(db)
 
-	mock.ExpectQuery(`SELECT key, value FROM public\."UserSettings" WHERE user_id = \$1`).
+	mock.ExpectQuery(`SELECT key, value FROM public\.user_settings WHERE user_id = \$1`).
 		WithArgs("u1").
 		WillReturnError(sqlmock.ErrCancelled)
 

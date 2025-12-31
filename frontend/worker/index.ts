@@ -139,8 +139,8 @@ function getSql(env: Env): SqlClient {
 async function sqlUpsertUser(sql: NonNullable<SqlClient>, user: { id: string; email: string; name: string; imageUrl?: string | null }): Promise<string> {
   // Try update by email first (handles existing rows created with a different id)
   const updated = await sql<{ id: string }[]>`
-    UPDATE public."Users"
-    SET name = ${user.name}, "imageUrl" = ${user.imageUrl ?? null}
+    UPDATE public.users
+    SET name = ${user.name}, image_url = ${user.imageUrl ?? null}
     WHERE email = ${user.email}
     RETURNING id;
   `;
@@ -148,12 +148,12 @@ async function sqlUpsertUser(sql: NonNullable<SqlClient>, user: { id: string; em
 
   // If no row for that email, insert a new one using the Google id
   const inserted = await sql<{ id: string }[]>`
-    INSERT INTO public."Users" (id, email, name, "imageUrl")
+    INSERT INTO public.users (id, email, name, image_url)
     VALUES (${user.id}, ${user.email}, ${user.name}, ${user.imageUrl ?? null})
     ON CONFLICT (id) DO UPDATE SET
       email=EXCLUDED.email,
       name=EXCLUDED.name,
-      "imageUrl"=EXCLUDED."imageUrl"
+      image_url=EXCLUDED.image_url
     RETURNING id;
   `;
   return inserted[0]?.id ?? user.id;
@@ -162,10 +162,10 @@ async function sqlUpsertUser(sql: NonNullable<SqlClient>, user: { id: string; em
 async function sqlUpsertSocial(sql: NonNullable<SqlClient>, conn: { userId: string; provider: string; providerId: string; email?: string | null; name?: string | null }) {
   const id = `${conn.provider}:${conn.providerId}`;
   await sql`
-    INSERT INTO public."SocialConnections" (id, "userId", provider, "providerId", email, name, "createdAt")
+    INSERT INTO public.social_connections (id, user_id, provider, provider_id, email, name, created_at)
     VALUES (${id}, ${conn.userId}, ${conn.provider}, ${conn.providerId}, ${conn.email ?? null}, ${conn.name ?? null}, NOW())
-    ON CONFLICT (provider, "providerId") DO UPDATE SET
-      "userId" = EXCLUDED."userId",
+    ON CONFLICT (provider, provider_id) DO UPDATE SET
+      user_id = EXCLUDED.user_id,
       email = EXCLUDED.email,
       name = EXCLUDED.name;
   `;
@@ -173,12 +173,12 @@ async function sqlUpsertSocial(sql: NonNullable<SqlClient>, conn: { userId: stri
 
 async function sqlQuerySocial(sql: NonNullable<SqlClient>, userId: string, provider: string) {
   const rows = await sql<{
-    id: string; userId: string; provider: string; providerId: string; name: string | null
+    id: string; user_id: string; provider: string; provider_id: string; name: string | null
   }[]>`
-    SELECT id, "userId", provider, "providerId", name
-    FROM public."SocialConnections"
-    WHERE "userId" = ${userId} AND provider = ${provider}
-    ORDER BY "createdAt" DESC
+    SELECT id, user_id, provider, provider_id, name
+    FROM public.social_connections
+    WHERE user_id = ${userId} AND provider = ${provider}
+    ORDER BY created_at DESC
     LIMIT 1;
   `;
   return rows[0] || null;
@@ -186,15 +186,15 @@ async function sqlQuerySocial(sql: NonNullable<SqlClient>, userId: string, provi
 
 async function sqlDeleteSocial(sql: NonNullable<SqlClient>, userId: string, provider: string) {
   await sql`
-    DELETE FROM public."SocialConnections"
-    WHERE "userId" = ${userId} AND provider = ${provider};
+    DELETE FROM public.social_connections
+    WHERE user_id = ${userId} AND provider = ${provider};
   `;
 }
 
 async function sqlDeleteSocialByProviderId(sql: NonNullable<SqlClient>, provider: string, providerId: string) {
   await sql`
-    DELETE FROM public."SocialConnections"
-    WHERE provider = ${provider} AND "providerId" = ${providerId};
+    DELETE FROM public.social_connections
+    WHERE provider = ${provider} AND provider_id = ${providerId};
   `;
 }
 
@@ -1316,8 +1316,12 @@ async function handleLibraryItems(request: Request, env: Env): Promise<Response>
 
 	try {
 		const url = new URL(request.url);
-		const qs = url.search || '';
-		const res = await fetch(`${backendOrigin}/api/social-libraries/user/${encodeURIComponent(sid)}${qs}`, {
+		const qs = new URLSearchParams(url.searchParams);
+		if (!qs.has('posted')) {
+			qs.set('posted', 'true'); // Published page should only show posted items
+		}
+		const qsStr = qs.toString();
+		const res = await fetch(`${backendOrigin}/api/social-libraries/user/${encodeURIComponent(sid)}${qsStr ? `?${qsStr}` : ''}`, {
 			headers: { 'Accept': 'application/json' },
 		});
 		const text = await res.text().catch(() => '');
@@ -1456,6 +1460,38 @@ async function handleLibraryImport(request: Request, env: Env): Promise<Response
 			console.error('[LibraryImport] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800) });
 			return new Response(JSON.stringify({ ok: false, error: 'import_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
 		}
+
+		// Also create a draft in local library (Posts) so it shows in Drafts.
+		// Ensure the user exists (FK) before inserting the post.
+		let parsed: any = null;
+		try { parsed = JSON.parse(bodyText); } catch { parsed = null; }
+		const content =
+			(typeof parsed?.notes === 'string' && parsed.notes.trim()) ||
+			(typeof parsed?.selection === 'string' && parsed.selection.trim()) ||
+			(typeof parsed?.url === 'string' && parsed.url.trim()) ||
+			'';
+
+		// Best-effort user upsert (ignore errors).
+		await fetch(`${backendOrigin}/api/users`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ id: sid, email: '', name: 'Imported User', imageUrl: null }),
+		}).catch(() => {});
+
+		// Create draft post.
+		await fetch(`${backendOrigin}/api/posts/user/${encodeURIComponent(sid)}`, {
+			method: 'POST',
+			headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				content: content || 'Imported draft',
+				status: 'draft',
+				media: [],
+				providers: [],
+			}),
+		}).catch((err) => {
+			console.warn('[LibraryImport] draft create failed (ignored)', err);
+		});
+
 		headers.set('Content-Type', 'application/json');
 		return new Response(text || '{"ok":true}', { status: 200, headers });
 	} catch (err) {
