@@ -60,14 +60,14 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		INSERT INTO public."Users" (id, email, name, "imageUrl", "createdAt")
+		INSERT INTO public."Users" (id, email, name, image_url, created_at)
 		VALUES ($1, $2, $3, $4, NOW())
 		ON CONFLICT (id) DO UPDATE SET
 			-- Avoid clobbering existing values when callers don't know them (e.g. social-only OAuth callbacks)
 			email = COALESCE(NULLIF(EXCLUDED.email, ''), public."Users".email),
 			name = COALESCE(NULLIF(EXCLUDED.name, ''), public."Users".name),
-			"imageUrl" = COALESCE(EXCLUDED."imageUrl", public."Users"."imageUrl")
-		RETURNING id, email, name, "imageUrl", "createdAt"
+			image_url = COALESCE(EXCLUDED.image_url, public."Users".image_url)
+		RETURNING id, email, name, image_url, created_at
 	`
 
 	err := h.db.QueryRow(query, user.ID, user.Email, user.Name, user.ImageURL).
@@ -84,7 +84,7 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 	id := pathVar(r, "id")
 
 	var user models.User
-	query := `SELECT id, email, name, "imageUrl", "createdAt" FROM public."Users" WHERE id = $1`
+	query := `SELECT id, email, name, image_url, created_at FROM public."Users" WHERE id = $1`
 
 	err := h.db.QueryRow(query, id).Scan(&user.ID, &user.Email, &user.Name, &user.ImageURL, &user.CreatedAt)
 	if err == sql.ErrNoRows {
@@ -110,9 +110,9 @@ func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	query := `
 		UPDATE public."Users"
-		SET email = $2, name = $3, "imageUrl" = $4
+		SET email = $2, name = $3, image_url = $4
 		WHERE id = $1
-		RETURNING id, email, name, "imageUrl", "createdAt"
+		RETURNING id, email, name, image_url, created_at
 	`
 
 	err := h.db.QueryRow(query, id, user.Email, user.Name, user.ImageURL).
@@ -137,13 +137,13 @@ func (h *Handler) CreateSocialConnection(w http.ResponseWriter, r *http.Request)
 	}
 
 	query := `
-		INSERT INTO public."SocialConnections" (id, "userId", provider, "providerId", email, name, "createdAt")
+		INSERT INTO public."SocialConnections" (id, user_id, provider, provider_id, email, name, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW())
-		ON CONFLICT ("userId", provider) DO UPDATE SET
-			"providerId" = EXCLUDED."providerId",
+		ON CONFLICT (user_id, provider) DO UPDATE SET
+			provider_id = EXCLUDED.provider_id,
 			email = EXCLUDED.email,
 			name = EXCLUDED.name
-		RETURNING id, "userId", provider, "providerId", email, name, "createdAt"
+		RETURNING id, user_id, provider, provider_id, email, name, created_at
 	`
 
 	err := h.db.QueryRow(query, conn.ID, conn.UserID, conn.Provider, conn.ProviderID, conn.Email, conn.Name).
@@ -160,7 +160,7 @@ func (h *Handler) GetUserSocialConnections(w http.ResponseWriter, r *http.Reques
 	vars := mux.Vars(r)
 	userID := vars["userId"]
 
-	query := `SELECT id, "userId", provider, "providerId", email, name, "createdAt" FROM public."SocialConnections" WHERE "userId" = $1`
+	query := `SELECT id, user_id, provider, provider_id, email, name, created_at FROM public."SocialConnections" WHERE user_id = $1`
 
 	rows, err := h.db.Query(query, userID)
 	if err != nil {
@@ -190,9 +190,9 @@ func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `
-		INSERT INTO public."Teams" (id, "owner_id", "current_tier", "createdAt")
+		INSERT INTO public."Teams" (id, "owner_id", "current_tier", created_at)
 		VALUES ($1, $2, $3, NOW())
-		RETURNING id, "owner_id", "current_tier", "posts_created_today", "usage_reset_date", "ig_llat", "stripe_customer_id", "stripe_subscription_id", "createdAt"
+		RETURNING id, "owner_id", "current_tier", "posts_created_today", "usage_reset_date", "ig_llat", "stripe_customer_id", "stripe_subscription_id", created_at
 	`
 
 	err := h.db.QueryRow(query, team.ID, team.OwnerID, team.CurrentTier).
@@ -210,7 +210,7 @@ func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 	id := vars["id"]
 
 	var team models.Team
-	query := `SELECT id, "owner_id", "current_tier", "posts_created_today", "usage_reset_date", "ig_llat", "stripe_customer_id", "stripe_subscription_id", "createdAt" FROM public."Teams" WHERE id = $1`
+	query := `SELECT id, "owner_id", "current_tier", "posts_created_today", "usage_reset_date", "ig_llat", "stripe_customer_id", "stripe_subscription_id", created_at FROM public."Teams" WHERE id = $1`
 
 	err := h.db.QueryRow(query, id).Scan(&team.ID, &team.OwnerID, &team.CurrentTier, &team.PostsCreatedToday, &team.UsageResetDate, &team.IgLlat, &team.StripeCustomerID, &team.StripeSubscriptionID, &team.CreatedAt)
 	if err == sql.ErrNoRows {
@@ -230,7 +230,7 @@ func (h *Handler) GetUserTeams(w http.ResponseWriter, r *http.Request) {
 	userID := vars["userId"]
 
 	query := `
-		SELECT t.id, t."owner_id", t."current_tier", t."posts_created_today", t."usage_reset_date", t."ig_llat", t."stripe_customer_id", t."stripe_subscription_id", t."createdAt"
+		SELECT t.id, t."owner_id", t."current_tier", t."posts_created_today", t."usage_reset_date", t."ig_llat", t."stripe_customer_id", t."stripe_subscription_id", t.created_at
 		FROM public."Teams" t
 		LEFT JOIN public."TeamMembers" tm ON t.id = tm."team_id"
 		WHERE t."owner_id" = $1 OR tm."user_id" = $1
@@ -257,14 +257,17 @@ func (h *Handler) GetUserTeams(w http.ResponseWriter, r *http.Request) {
 }
 
 type sunoStoreRequest struct {
-	UserID      string `json:"userId"`
+	UserID      string `json:"user_id"`
 	Prompt      string `json:"prompt"`
 	SunoTrackID string `json:"sunoTrackId"`
+	TrackID     string `json:"trackId"`
 	AudioURL    string `json:"audioUrl"`
+	URL         string `json:"url"`
+	Title       string `json:"title"`
 }
 
 type sunoCreateTaskRequest struct {
-	UserID string `json:"userId"`
+	UserID string `json:"user_id"`
 	Prompt string `json:"prompt"`
 	TaskID string `json:"taskId"`
 	Model  string `json:"model"`
@@ -276,6 +279,7 @@ type sunoCreateTaskResponse struct {
 }
 
 type sunoUpdateTrackRequest struct {
+	Title       string `json:"title"`
 	SunoTrackID string `json:"sunoTrackId"`
 	AudioURL    string `json:"audioUrl"`
 	Status      string `json:"status"`
@@ -297,13 +301,13 @@ type sunoTrackRow struct {
 	AudioURL    *string    `json:"audioUrl,omitempty"`
 	FilePath    *string    `json:"filePath,omitempty"`
 	Status      *string    `json:"status,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
+	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
 }
 
 type socialLibraryRow struct {
 	ID           string          `json:"id"`
-	UserID       string          `json:"userId"`
+	UserID       string          `json:"user_id"`
 	Network      string          `json:"network"`
 	ContentType  string          `json:"contentType"`
 	Title        *string         `json:"title,omitempty"`
@@ -314,8 +318,8 @@ type socialLibraryRow struct {
 	Views        *int64          `json:"views,omitempty"`
 	Likes        *int64          `json:"likes,omitempty"`
 	RawPayload   json.RawMessage `json:"rawPayload"`
-	CreatedAt    time.Time       `json:"createdAt"`
-	UpdatedAt    time.Time       `json:"updatedAt"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 type deleteSocialLibrariesRequest struct {
@@ -340,12 +344,12 @@ type deleteSocialLibrariesResponse struct {
 
 type notificationRow struct {
 	ID        string     `json:"id"`
-	UserID    string     `json:"userId"`
+	UserID    string     `json:"user_id"`
 	Type      string     `json:"type"`
 	Title     string     `json:"title"`
 	Body      *string    `json:"body,omitempty"`
 	URL       *string    `json:"url,omitempty"`
-	CreatedAt time.Time  `json:"createdAt"`
+	CreatedAt time.Time  `json:"created_at"`
 	ReadAt    *time.Time `json:"readAt,omitempty"`
 }
 
@@ -833,7 +837,7 @@ func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 	}
 	resp := struct {
 		OK         bool                      `json:"ok"`
-		UserID     string                    `json:"userId"`
+		UserID     string                    `json:"user_id"`
 		DurationMs int64                     `json:"durationMs"`
 		Providers  map[string]providerResult `json:"providers"`
 	}{OK: true, UserID: userID, Providers: map[string]providerResult{}}
@@ -926,13 +930,17 @@ func (h *Handler) ListNotificationsForUser(w http.ResponseWriter, r *http.Reques
 	out := []notificationRow{}
 	for rows.Next() {
 		var n notificationRow
+		var title sql.NullString
 		var body sql.NullString
 		var urlStr sql.NullString
 		var readAt sql.NullTime
-		if err := rows.Scan(&n.ID, &n.UserID, &n.Type, &n.Title, &body, &urlStr, &n.CreatedAt, &readAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.UserID, &n.Type, &title, &body, &urlStr, &n.CreatedAt, &readAt); err != nil {
 			log.Printf("[Notifications][List] scan error userId=%s err=%v", userID, err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+		if title.Valid {
+			n.Title = title.String
 		}
 		if body.Valid {
 			b := body.String
@@ -1044,27 +1052,27 @@ func (h *Handler) ListPostsForUser(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if status != "" {
 		rows, err = h.db.Query(
-			`SELECT id, COALESCE("teamId",'') as "teamId", "userId", content, status, COALESCE(providers, ARRAY[]::text[]),
+			`SELECT id, COALESCE(team_id,'') as team_id, user_id, content, status, COALESCE(providers, ARRAY[]::text[]),
 			        COALESCE(media, ARRAY[]::text[]),
-			        "scheduledFor", "publishedAt",
-			        "lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
-			        "createdAt", "updatedAt"
+			        scheduled_for, published_at,
+			        last_publish_job_id, last_publish_status, last_publish_error, last_publish_attempt_at,
+			        created_at, updated_at
 			 FROM public."Posts"
-			 WHERE "userId" = $1 AND status = $2
-			 ORDER BY "createdAt" DESC
+			 WHERE user_id = $1 AND status = $2
+			 ORDER BY created_at DESC
 			 LIMIT $3`,
 			userID, status, limit,
 		)
 	} else {
 		rows, err = h.db.Query(
-			`SELECT id, COALESCE("teamId",'') as "teamId", "userId", content, status, COALESCE(providers, ARRAY[]::text[]),
+			`SELECT id, COALESCE(team_id,'') as team_id, user_id, content, status, COALESCE(providers, ARRAY[]::text[]),
 			        COALESCE(media, ARRAY[]::text[]),
-			        "scheduledFor", "publishedAt",
-			        "lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
-			        "createdAt", "updatedAt"
+			        scheduled_for, published_at,
+			        last_publish_job_id, last_publish_status, last_publish_error, last_publish_attempt_at,
+			        created_at, updated_at
 			 FROM public."Posts"
-			 WHERE "userId" = $1
-			 ORDER BY "createdAt" DESC
+			 WHERE user_id = $1
+			 ORDER BY created_at DESC
 			 LIMIT $2`,
 			userID, limit,
 		)
@@ -1177,6 +1185,8 @@ func (h *Handler) CreatePostForUser(w http.ResponseWriter, r *http.Request) {
 		seenMedia[mm] = true
 		mediaList = append(mediaList, mm)
 	}
+	// Only validate media requirement for providers that strictly require it
+	// Facebook and Threads allow text-only posts
 	if status == "scheduled" && len(mediaList) == 0 {
 		for _, p := range providersList {
 			switch p {
@@ -1189,12 +1199,12 @@ func (h *Handler) CreatePostForUser(w http.ResponseWriter, r *http.Request) {
 
 	var out models.Post
 	query := `
-		INSERT INTO public."Posts" (id, "teamId", "userId", content, status, providers, media, "scheduledFor", "publishedAt", "createdAt", "updatedAt")
+		INSERT INTO public."Posts" (id, team_id, user_id, content, status, providers, media, scheduled_for, published_at, created_at, updated_at)
 		VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-		RETURNING id, COALESCE("teamId",''), "userId", content, status, COALESCE(providers, ARRAY[]::text[]), COALESCE(media, ARRAY[]::text[]),
-		          "scheduledFor", "publishedAt",
-		          "lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
-		          "createdAt", "updatedAt"
+		RETURNING id, COALESCE(team_id,''), user_id, content, status, COALESCE(providers, ARRAY[]::text[]), COALESCE(media, ARRAY[]::text[]),
+		          scheduled_for, published_at,
+		          last_publish_job_id, last_publish_status, last_publish_error, last_publish_attempt_at,
+		          created_at, updated_at
 	`
 	err := h.db.QueryRow(query, id, userID, req.Content, status, pq.Array(providersList), pq.Array(mediaList), req.ScheduledFor, req.PublishedAt).
 		Scan(
@@ -1294,20 +1304,20 @@ func (h *Handler) UpdatePostForUser(w http.ResponseWriter, r *http.Request) {
 		SET
 			content = COALESCE($3, content),
 			status = COALESCE($4, status),
-			"scheduledFor" = COALESCE($5, "scheduledFor"),
-			"publishedAt" = COALESCE($6, "publishedAt"),
+			scheduled_for = COALESCE($5, scheduled_for),
+			published_at = COALESCE($6, published_at),
 			providers = COALESCE($7::text[], providers),
 			media = COALESCE($8::text[], media),
-			"lastPublishJobId" = CASE WHEN $9 THEN NULL ELSE "lastPublishJobId" END,
-			"lastPublishStatus" = CASE WHEN $9 THEN NULL ELSE "lastPublishStatus" END,
-			"lastPublishError" = CASE WHEN $9 THEN NULL ELSE "lastPublishError" END,
-			"lastPublishAttemptAt" = CASE WHEN $9 THEN NULL ELSE "lastPublishAttemptAt" END,
-			"updatedAt" = NOW()
-		WHERE id = $1 AND "userId" = $2
-		RETURNING id, COALESCE("teamId",''), "userId", content, status, COALESCE(providers, ARRAY[]::text[]), COALESCE(media, ARRAY[]::text[]),
-		          "scheduledFor", "publishedAt",
-		          "lastPublishJobId", "lastPublishStatus", "lastPublishError", "lastPublishAttemptAt",
-		          "createdAt", "updatedAt"
+			last_publish_job_id = CASE WHEN $9 THEN NULL ELSE last_publish_job_id END,
+			last_publish_status = CASE WHEN $9 THEN NULL ELSE last_publish_status END,
+			last_publish_error = CASE WHEN $9 THEN NULL ELSE last_publish_error END,
+			last_publish_attempt_at = CASE WHEN $9 THEN NULL ELSE last_publish_attempt_at END,
+			updated_at = NOW()
+		WHERE id = $1 AND user_id = $2
+		RETURNING id, COALESCE(team_id,''), user_id, content, status, COALESCE(providers, ARRAY[]::text[]), COALESCE(media, ARRAY[]::text[]),
+		          scheduled_for, published_at,
+		          last_publish_job_id, last_publish_status, last_publish_error, last_publish_attempt_at,
+		          created_at, updated_at
 	`
 	err := h.db.QueryRow(query, postID, userID, req.Content, req.Status, req.ScheduledFor, req.PublishedAt, providersArg, mediaArg, clearPublishState).
 		Scan(
@@ -1342,7 +1352,7 @@ func (h *Handler) DeletePostForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := h.db.Exec(`DELETE FROM public."Posts" WHERE id = $1 AND "userId" = $2`, postID, userID)
+	res, err := h.db.Exec(`DELETE FROM public."Posts" WHERE id = $1 AND user_id = $2`, postID, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1383,18 +1393,18 @@ func (h *Handler) publishScheduledPostNowOnce(ctx context.Context, origin, postI
 	)
 	err := h.db.QueryRowContext(ctx, `
 		UPDATE public."Posts"
-		   SET "scheduledFor" = NOW(),
-		       "lastPublishJobId" = $3,
-		       "lastPublishStatus" = 'queued',
-		       "lastPublishError" = NULL,
-		       "lastPublishAttemptAt" = NOW(),
-		       "updatedAt" = NOW()
+		   SET scheduled_for = NOW(),
+		       last_publish_job_id = $3,
+		       last_publish_status = 'queued',
+		       last_publish_error = NULL,
+		       last_publish_attempt_at = NOW(),
+		       updated_at = NOW()
 		 WHERE id = $1
-		   AND "userId" = $2
+		   AND user_id = $2
 		   AND status = 'scheduled'
-		   AND "publishedAt" IS NULL
-		   AND "lastPublishJobId" IS NULL
-		RETURNING content, COALESCE(providers, ARRAY[]::text[]), COALESCE(media, ARRAY[]::text[]), "scheduledFor"
+		   AND published_at IS NULL
+		   AND last_publish_job_id IS NULL
+		RETURNING content, COALESCE(providers, ARRAY[]::text[]), COALESCE(media, ARRAY[]::text[]), scheduled_for
 	`, postID, userID, jobID).Scan(&content, pq.Array(&providers), pq.Array(&media), &newScheduledFor)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1408,20 +1418,20 @@ func (h *Handler) publishScheduledPostNowOnce(ctx context.Context, origin, postI
 		// Don't enqueue a publish job; mark as failed so user can edit & retry.
 		_, _ = h.db.ExecContext(ctx, `
 			UPDATE public."Posts"
-			   SET "lastPublishStatus"='failed',
-			       "lastPublishError"='empty_content',
-			       "updatedAt"=NOW()
-			 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+			   SET last_publish_status='failed',
+			       last_publish_error='empty_content',
+			       updated_at=NOW()
+			 WHERE id=$1 AND user_id=$2 AND last_publish_job_id=$3
 		`, postID, userID, jobID)
 		return "", fmt.Errorf("empty_content")
 	}
 	if len(providers) == 0 {
 		_, _ = h.db.ExecContext(ctx, `
 			UPDATE public."Posts"
-			   SET "lastPublishStatus"='failed',
-			       "lastPublishError"='missing_providers',
-			       "updatedAt"=NOW()
-			 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+			   SET last_publish_status='failed',
+			       last_publish_error='missing_providers',
+			       updated_at=NOW()
+			 WHERE id=$1 AND user_id=$2 AND last_publish_job_id=$3
 		`, postID, userID, jobID)
 		return "", fmt.Errorf("missing_providers")
 	}
@@ -1431,10 +1441,10 @@ func (h *Handler) publishScheduledPostNowOnce(ctx context.Context, origin, postI
 			case "instagram", "pinterest", "tiktok", "youtube":
 				_, _ = h.db.ExecContext(ctx, `
 					UPDATE public."Posts"
-					   SET "lastPublishStatus"='failed',
-					       "lastPublishError"='missing_media',
-					       "updatedAt"=NOW()
-					 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+					   SET last_publish_status='failed',
+					       last_publish_error='missing_media',
+					       updated_at=NOW()
+					 WHERE id=$1 AND user_id=$2 AND last_publish_job_id=$3
 				`, postID, userID, jobID)
 				return "", fmt.Errorf("missing_media")
 			}
@@ -1463,12 +1473,12 @@ func (h *Handler) publishScheduledPostNowOnce(ctx context.Context, origin, postI
 		// Undo claim so it can be retried
 		_, _ = h.db.ExecContext(ctx, `
 			UPDATE public."Posts"
-			   SET "lastPublishJobId"=NULL,
-			       "lastPublishStatus"=NULL,
-			       "lastPublishError"=$4,
-			       "lastPublishAttemptAt"=NULL,
-			       "updatedAt"=NOW()
-			 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+			   SET last_publish_job_id=NULL,
+			       last_publish_status=NULL,
+			       last_publish_error=$4,
+			       last_publish_attempt_at=NULL,
+			       updated_at=NOW()
+			 WHERE id=$1 AND user_id=$2 AND last_publish_job_id=$3
 		`, postID, userID, jobID, truncate(err.Error(), 300))
 		return "", err
 	}
@@ -1502,7 +1512,7 @@ func (h *Handler) PublishNowPostForUser(w http.ResponseWriter, r *http.Request) 
 			var status string
 			var lastJob sql.NullString
 			var publishedAt sql.NullTime
-			e2 := h.db.QueryRowContext(r.Context(), `SELECT status, "lastPublishJobId", "publishedAt" FROM public."Posts" WHERE id=$1 AND "userId"=$2`, postID, userID).
+			e2 := h.db.QueryRowContext(r.Context(), `SELECT status, last_publish_job_id, published_at FROM public."Posts" WHERE id=$1 AND user_id=$2`, postID, userID).
 				Scan(&status, &lastJob, &publishedAt)
 			if e2 == sql.ErrNoRows {
 				writeError(w, http.StatusNotFound, "not found")
@@ -2089,6 +2099,7 @@ func (h *Handler) GetPublishJob(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{
 		"ok":         true,
+		"id":         jobID,
 		"jobId":      jobID,
 		"userId":     userID,
 		"status":     status,
@@ -2118,9 +2129,9 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 		var st sql.NullString
 		// Best-effort only; do not block job execution on logging.
 		_ = h.db.QueryRow(`
-			SELECT id, status, "scheduledFor"
+			SELECT id, status, scheduled_for
 			  FROM public."Posts"
-			 WHERE "lastPublishJobId"=$1
+			 WHERE last_publish_job_id=$1
 			 LIMIT 1
 		`, jobID).Scan(&pid, &st, &postScheduledFor)
 		if pid.Valid {
@@ -2148,10 +2159,10 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 			// Best-effort: if this was triggered by a scheduled post, mark it as failed too.
 			_, _ = h.db.Exec(`
 				UPDATE public."Posts"
-				   SET "lastPublishStatus"='failed',
-				       "lastPublishError"=$2,
-				       "updatedAt"=NOW()
-				 WHERE "lastPublishJobId"=$1
+				   SET last_publish_status='failed',
+				       last_publish_error=$2,
+				       updated_at=NOW()
+				 WHERE last_publish_job_id=$1
 			`, jobID, truncate(msg, 400))
 		}
 	}()
@@ -2164,9 +2175,9 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 	// If this is tied to a scheduled post, reflect job state there too.
 	_, _ = h.db.Exec(`
 		UPDATE public."Posts"
-		   SET "lastPublishStatus"='running',
-		       "updatedAt"=NOW()
-		 WHERE "lastPublishJobId"=$1
+		   SET last_publish_status='running',
+		       updated_at=NOW()
+		 WHERE last_publish_job_id=$1
 	`, jobID)
 
 	// Realtime: let the UI know we're actively processing.
@@ -2391,12 +2402,12 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 	}
 	_, _ = h.db.Exec(`
 		UPDATE public."Posts"
-		   SET "lastPublishStatus"=$2,
-		       "lastPublishError"=CASE WHEN $2='failed' THEN $3 ELSE NULL END,
+		   SET last_publish_status=$2,
+		       last_publish_error=CASE WHEN $2='failed' THEN $3 ELSE NULL END,
 		       status=CASE WHEN $2='completed' THEN 'published' ELSE status END,
-		       "publishedAt"=CASE WHEN $2='completed' THEN NOW() ELSE "publishedAt" END,
-		       "updatedAt"=NOW()
-		 WHERE "lastPublishJobId"=$1
+		       published_at=CASE WHEN $2='completed' THEN NOW() ELSE published_at END,
+		       updated_at=NOW()
+		 WHERE last_publish_job_id=$1
 	`, jobID, finalStatus, postErr)
 
 	// Summarize failures (no provider details to avoid leaking sensitive payloads).
@@ -4028,10 +4039,18 @@ func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Accept both 'url' and 'audioUrl' fields
+	if req.AudioURL == "" && req.URL != "" {
+		req.AudioURL = req.URL
+	}
 	if req.AudioURL == "" {
-		log.Printf("[Suno][Store] missing audioUrl in request: %+v", req)
+		log.Printf("[Suno][Store] missing audioUrl/url in request: %+v", req)
 		http.Error(w, "audioUrl is required", http.StatusBadRequest)
 		return
+	}
+	// Accept both 'trackId' and 'sunoTrackId' fields
+	if req.SunoTrackID == "" && req.TrackID != "" {
+		req.SunoTrackID = req.TrackID
 	}
 
 	log.Printf("[Suno][Store] downloading audio userId=%s sunoTrackId=%s url=%s", req.UserID, req.SunoTrackID, req.AudioURL)
@@ -4225,10 +4244,10 @@ func (h *Handler) CreateSunoTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Generate taskId if not provided
 	if req.TaskID == "" {
-		log.Printf("[Suno][CreateTask] missing taskId")
-		http.Error(w, "taskId is required", http.StatusBadRequest)
-		return
+		req.TaskID = fmt.Sprintf("task-%d", time.Now().UnixNano())
 	}
 
 	id := fmt.Sprintf("suno-%d", time.Now().UnixNano())
@@ -4243,9 +4262,10 @@ func (h *Handler) CreateSunoTask(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[Suno][CreateTask] created id=%s taskId=%s userId=%s", id, req.TaskID, req.UserID)
 
-	writeJSON(w, http.StatusOK, sunoCreateTaskResponse{
-		OK: true,
-		ID: id,
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":     true,
+		"id":     id,
+		"taskId": req.TaskID,
 	})
 }
 
@@ -4303,21 +4323,70 @@ func (h *Handler) UpdateSunoTrack(w http.ResponseWriter, r *http.Request) {
 
 	query := `
 		UPDATE public."SunoTracks"
-		SET suno_track_id = COALESCE(NULLIF($1, ''), suno_track_id),
-		    audio_url = COALESCE(NULLIF($2, ''), audio_url),
-		    file_path = COALESCE(NULLIF($3, ''), file_path),
-		    status = COALESCE(NULLIF($4, ''), status),
+		SET title = COALESCE(NULLIF($1, ''), title),
+		    suno_track_id = COALESCE(NULLIF($2, ''), suno_track_id),
+		    audio_url = COALESCE(NULLIF($3, ''), audio_url),
+		    file_path = COALESCE(NULLIF($4, ''), file_path),
+		    status = COALESCE(NULLIF($5, ''), status),
 		    updated_at = NOW()
-		WHERE id = $5
+		WHERE id = $6
+		RETURNING id, user_id, title, prompt, suno_track_id, audio_url, file_path, status, created_at, updated_at
 	`
-	if _, err := h.db.Exec(query, req.SunoTrackID, req.AudioURL, filePath, req.Status, trackID); err != nil {
+	var track struct {
+		ID          string     `json:"id"`
+		UserID      *string    `json:"userId,omitempty"`
+		Title       *string    `json:"title,omitempty"`
+		Prompt      *string    `json:"prompt,omitempty"`
+		SunoTrackID *string    `json:"sunoTrackId,omitempty"`
+		AudioURL    *string    `json:"audioUrl,omitempty"`
+		FilePath    *string    `json:"filePath,omitempty"`
+		Status      *string    `json:"status,omitempty"`
+		CreatedAt   time.Time  `json:"createdAt"`
+		UpdatedAt   *time.Time `json:"updatedAt,omitempty"`
+	}
+	var userID, title, prompt, sunoTrackID, audioURL, filePathDB, status sql.NullString
+	var updatedAt sql.NullTime
+	if err := h.db.QueryRow(query, req.Title, req.SunoTrackID, req.AudioURL, filePath, req.Status, trackID).Scan(
+		&track.ID, &userID, &title, &prompt, &sunoTrackID, &audioURL, &filePathDB, &status, &track.CreatedAt, &updatedAt,
+	); err != nil {
 		log.Printf("[Suno][UpdateTrack] DB update error: %v", err)
 		http.Error(w, fmt.Sprintf("failed to update track: %v", err), http.StatusInternalServerError)
 		return
 	}
-	log.Printf("[Suno][UpdateTrack] updated id=%s status=%s", trackID, req.Status)
+	if userID.Valid {
+		s := userID.String
+		track.UserID = &s
+	}
+	if title.Valid {
+		s := title.String
+		track.Title = &s
+	}
+	if prompt.Valid {
+		s := prompt.String
+		track.Prompt = &s
+	}
+	if sunoTrackID.Valid {
+		s := sunoTrackID.String
+		track.SunoTrackID = &s
+	}
+	if audioURL.Valid {
+		s := audioURL.String
+		track.AudioURL = &s
+	}
+	if filePathDB.Valid {
+		s := filePathDB.String
+		track.FilePath = &s
+	}
+	if status.Valid {
+		s := status.String
+		track.Status = &s
+	}
+	if updatedAt.Valid {
+		track.UpdatedAt = &updatedAt.Time
+	}
+	log.Printf("[Suno][UpdateTrack] updated id=%s status=%v", trackID, track.Status)
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "title": track.Title})
 }
 
 func (h *Handler) GetUserSetting(w http.ResponseWriter, r *http.Request) {
@@ -4377,7 +4446,7 @@ func (h *Handler) UpsertUserSetting(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[UserSettings][Upsert] success userId=%s key=%s", userID, settingKey)
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "key": settingKey, "value": json.RawMessage(valueBytes)})
 }
 
 func (h *Handler) GetUserSettings(w http.ResponseWriter, r *http.Request) {

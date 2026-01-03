@@ -39,14 +39,14 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 
 	// Use an ordering that matches the partial index to avoid large sorts that can trigger OOMs.
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT id, "userId", "scheduledFor"
+		SELECT id, user_id, scheduled_for
 		  FROM public."Posts"
 		 WHERE status = 'scheduled'
-		   AND "publishedAt" IS NULL
-		   AND "scheduledFor" IS NOT NULL
-		   AND "scheduledFor" <= NOW()
-		   AND "lastPublishJobId" IS NULL
-		 ORDER BY "scheduledFor" ASC, "userId", id
+		   AND published_at IS NULL
+		   AND scheduled_for IS NOT NULL
+		   AND scheduled_for <= NOW()
+		   AND last_publish_job_id IS NULL
+		 ORDER BY scheduled_for ASC, user_id, id
 		 LIMIT $1
 	`, limit)
 	if err != nil {
@@ -79,18 +79,18 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 		// Try to claim atomically (prevents multiple app instances from enqueuing the same post).
 		res, err := h.db.ExecContext(ctx, `
 			UPDATE public."Posts"
-			   SET "lastPublishJobId" = $3,
-			       "lastPublishStatus" = 'queued',
-			       "lastPublishError" = NULL,
-			       "lastPublishAttemptAt" = NOW(),
-			       "updatedAt" = NOW()
+			   SET last_publish_job_id = $3,
+			       last_publish_status = 'queued',
+			       last_publish_error = NULL,
+			       last_publish_attempt_at = NOW(),
+			       updated_at = NOW()
 			 WHERE id = $1
-			   AND "userId" = $2
+			   AND user_id = $2
 			   AND status = 'scheduled'
-			   AND "publishedAt" IS NULL
-			   AND "scheduledFor" IS NOT NULL
-			   AND "scheduledFor" <= NOW()
-			   AND "lastPublishJobId" IS NULL
+			   AND published_at IS NULL
+			   AND scheduled_for IS NOT NULL
+			   AND scheduled_for <= NOW()
+			   AND last_publish_job_id IS NULL
 		`, c.id, c.userID, jobID)
 		if err != nil {
 			log.Printf("[ScheduledPosts] claim_failed postId=%s userId=%s err=%v", c.id, c.userID, err)
@@ -112,11 +112,11 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			SELECT content,
 			       COALESCE(providers, ARRAY[]::text[]),
 			       COALESCE(media, ARRAY[]::text[]),
-			       "scheduledFor"
+			       scheduled_for
 			  FROM public."Posts"
 			 WHERE id = $1
-			   AND "userId" = $2
-			   AND "lastPublishJobId" = $3
+			   AND user_id = $2
+			   AND last_publish_job_id = $3
 		`, c.id, c.userID, jobID).Scan(&content, pq.Array(&providers), pq.Array(&media), &scheduledFor); err != nil {
 			reason := "load_failed"
 			if strings.Contains(strings.ToLower(err.Error()), "out of memory") {
@@ -124,10 +124,10 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			}
 			_, _ = h.db.ExecContext(ctx, `
 				UPDATE public."Posts"
-				   SET "lastPublishStatus"='failed',
-				       "lastPublishError"=$4,
-				       "updatedAt"=NOW()
-				 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+				   SET last_publish_status='failed',
+				       last_publish_error=$4,
+				       updated_at=NOW()
+				 WHERE id=$1 AND user_id=$2 AND last_publish_job_id=$3
 			`, c.id, c.userID, jobID, reason)
 			log.Printf("[ScheduledPosts] load_failed postId=%s userId=%s jobId=%s err=%v", c.id, c.userID, jobID, err)
 			continue
@@ -138,10 +138,10 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			// Don't enqueue a publish job; mark as failed (user can edit to clear this state).
 			_, _ = h.db.ExecContext(ctx, `
 				UPDATE public."Posts"
-				   SET "lastPublishStatus"='failed',
-				       "lastPublishError"='empty_content',
-				       "updatedAt"=NOW()
-				 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+				   SET last_publish_status='failed',
+				       last_publish_error='empty_content',
+				       updated_at=NOW()
+				 WHERE id=$1 AND user_id=$2 AND last_publish_job_id=$3
 			`, c.id, c.userID, jobID)
 			log.Printf("[ScheduledPosts] skipped postId=%s userId=%s jobId=%s reason=empty_content", c.id, c.userID, jobID)
 			continue
@@ -149,10 +149,10 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 		if len(providers) == 0 {
 			_, _ = h.db.ExecContext(ctx, `
 				UPDATE public."Posts"
-				   SET "lastPublishStatus"='failed',
-				       "lastPublishError"='missing_providers',
-				       "updatedAt"=NOW()
-				 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+				   SET last_publish_status='failed',
+				       last_publish_error='missing_providers',
+				       updated_at=NOW()
+				 WHERE id=$1 AND user_id=$2 AND last_publish_job_id=$3
 			`, c.id, c.userID, jobID)
 			log.Printf("[ScheduledPosts] skipped postId=%s userId=%s jobId=%s reason=missing_providers", c.id, c.userID, jobID)
 			continue
@@ -168,10 +168,10 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			if requires {
 				_, _ = h.db.ExecContext(ctx, `
 					UPDATE public."Posts"
-					   SET "lastPublishStatus"='failed',
-					       "lastPublishError"='missing_media',
-					       "updatedAt"=NOW()
-					 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+					   SET last_publish_status='failed',
+					       last_publish_error='missing_media',
+					       updated_at=NOW()
+					 WHERE id=$1 AND user_id=$2 AND last_publish_job_id=$3
 				`, c.id, c.userID, jobID)
 				log.Printf("[ScheduledPosts] skipped postId=%s userId=%s jobId=%s reason=missing_media", c.id, c.userID, jobID)
 				continue
@@ -200,12 +200,12 @@ func (h *Handler) processDueScheduledPostsOnce(ctx context.Context, origin strin
 			// Undo claim so it can be retried (nothing published yet).
 			_, _ = h.db.ExecContext(ctx, `
 				UPDATE public."Posts"
-				   SET "lastPublishJobId"=NULL,
-				       "lastPublishStatus"=NULL,
-				       "lastPublishError"=$4,
-				       "lastPublishAttemptAt"=NULL,
-				       "updatedAt"=NOW()
-				 WHERE id=$1 AND "userId"=$2 AND "lastPublishJobId"=$3
+				   SET last_publish_job_id=NULL,
+				       last_publish_status=NULL,
+				       last_publish_error=$4,
+				       last_publish_attempt_at=NULL,
+				       updated_at=NOW()
+				 WHERE id=$1 AND user_id=$2 AND last_publish_job_id=$3
 			`, c.id, c.userID, jobID, truncate(err.Error(), 300))
 			log.Printf("[ScheduledPosts] enqueue_failed postId=%s userId=%s jobId=%s err=%v", c.id, c.userID, jobID, err)
 			continue
@@ -255,18 +255,18 @@ func (h *Handler) StartScheduledPostsWorker(ctx context.Context, interval time.D
 			SELECT COUNT(*)
 			  FROM public."Posts"
 			 WHERE status = 'scheduled'
-			   AND "publishedAt" IS NULL
-			   AND "scheduledFor" IS NOT NULL
-			   AND "scheduledFor" <= NOW()
-			   AND "lastPublishJobId" IS NULL
+			   AND published_at IS NULL
+			   AND scheduled_for IS NOT NULL
+			   AND scheduled_for <= NOW()
+			   AND last_publish_job_id IS NULL
 		`).Scan(&due)
 		_ = h.db.QueryRowContext(ctx, `
-			SELECT MIN("scheduledFor")
+			SELECT MIN(scheduled_for)
 			  FROM public."Posts"
 			 WHERE status = 'scheduled'
-			   AND "publishedAt" IS NULL
-			   AND "scheduledFor" IS NOT NULL
-			   AND "scheduledFor" > NOW()
+			   AND published_at IS NULL
+			   AND scheduled_for IS NOT NULL
+			   AND scheduled_for > NOW()
 		`).Scan(&next)
 		return due, next
 	}
