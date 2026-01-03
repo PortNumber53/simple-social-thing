@@ -180,7 +180,64 @@ backend/
 
 ## Testing
 
+### Unit Tests
+
+Run standard Go unit tests:
+
 ```bash
 cd backend
 go test ./... -v
+```
+
+### BDD Tests (Behavior-Driven Development)
+
+The backend includes comprehensive BDD tests using [Godog](https://github.com/cucumber/godog) and Gherkin syntax.
+
+**Quick Start:**
+```bash
+# Run all BDD tests
+make -f Makefile.bdd bdd-test
+
+# Run specific feature
+make -f Makefile.bdd bdd-test-feature F=users
+
+# Run with verbose output
+make -f Makefile.bdd bdd-test-verbose
+```
+
+**Features Covered:**
+- ✅ Health Check & API availability
+- ✅ User Management (CRUD operations)
+- ✅ Social Connections (OAuth integration)
+- ✅ Teams & Team Members
+- ✅ Post Management (draft, scheduled, published)
+- ✅ Multi-platform Publishing (Facebook, Instagram, etc.)
+- ✅ Media Uploads
+- ✅ Social Library (imported content)
+- ✅ Notifications
+- ✅ User Settings
+- ✅ Suno AI Music Integration
+- ✅ Real-time WebSocket Events
+
+**Documentation:**
+See [BDD_TESTING.md](./BDD_TESTING.md) for detailed documentation on:
+- Writing feature files
+- Available step definitions
+- Running and debugging tests
+- Best practices
+- CI/CD integration
+
+**Test Setup:**
+```bash
+# One-time: Create test database
+createdb simple_social_test
+# Or using Docker: docker exec <container> psql -U postgres -c "CREATE DATABASE simple_social_test;"
+
+# Run BDD tests (automatically runs migrations)
+./run-bdd-tests.sh
+
+# The script will:
+# 1. Drop and recreate the schema (clean slate)
+# 2. Run all migrations
+# 3. Execute all BDD tests
 ```

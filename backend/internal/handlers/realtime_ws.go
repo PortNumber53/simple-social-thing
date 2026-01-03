@@ -141,7 +141,7 @@ func (h *Handler) EventsPing(w http.ResponseWriter, r *http.Request) {
 type realtimeEvent struct {
 	Type string `json:"type"`
 
-	UserID string `json:"userId"`
+	UserID string `json:"user_id"`
 	PostID string `json:"postId,omitempty"`
 	JobID  string `json:"jobId,omitempty"`
 

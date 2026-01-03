@@ -1,0 +1,36 @@
+# BDD Testing with Godog
+# Run Gherkin feature tests for the Go backend
+
+.PHONY: bdd-test bdd-test-verbose bdd-test-feature bdd-test-tags help
+
+help:
+	@echo "BDD Testing Commands:"
+	@echo "  make bdd-test              - Run all BDD feature tests"
+	@echo "  make bdd-test-verbose      - Run BDD tests with verbose output"
+	@echo "  make bdd-test-feature F=<name> - Run specific feature file"
+	@echo "  make bdd-test-tags T=<tags>    - Run tests matching tags"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make bdd-test-feature F=health"
+	@echo "  make bdd-test-feature F=users"
+	@echo "  make bdd-test-tags T=@wip"
+
+bdd-test:
+	@echo "Running BDD feature tests..."
+	go test -v -run TestFeatures
+
+bdd-test-verbose:
+	@echo "Running BDD feature tests (verbose)..."
+	go test -v -run TestFeatures -godog.format=pretty
+
+bdd-test-feature:
+	@echo "Running feature: $(F)"
+	go test -v -run TestFeatures -godog.paths=features/$(F).feature
+
+bdd-test-tags:
+	@echo "Running tests with tags: $(T)"
+	go test -v -run TestFeatures -godog.tags="$(T)"
+
+bdd-clean:
+	@echo "Cleaning test artifacts..."
+	rm -rf tmp/bdd-*
