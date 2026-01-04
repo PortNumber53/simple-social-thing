@@ -342,12 +342,34 @@ func parseIGTimestamp(ts string) *time.Time {
 	if ts == "" {
 		return nil
 	}
-	// IG returns RFC3339-ish timestamps
-	t, err := time.Parse(time.RFC3339, ts)
-	if err != nil {
+	// IG returns RFC3339-ish timestamps, but in practice we can see:
+	// - 2024-01-02T03:04:05Z
+	// - 2024-01-02T03:04:05+00:00
+	// - 2024-01-02T03:04:05+0000   (no colon in offset)
+	// - fractional seconds variants of the above
+	ts = strings.TrimSpace(ts)
+	if ts == "" {
 		return nil
 	}
-	return &t
+
+	// Try the standard formats first.
+	if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+		tt := t.UTC()
+		return &tt
+	}
+
+	// Try offset-without-colon formats.
+	for _, layout := range []string{
+		"2006-01-02T15:04:05-0700",
+		"2006-01-02T15:04:05.999999999-0700",
+	} {
+		if t, err := time.Parse(layout, ts); err == nil {
+			tt := t.UTC()
+			return &tt
+		}
+	}
+
+	return nil
 }
 
 func normalizeTitle(s string) string {

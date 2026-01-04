@@ -386,4 +386,16 @@ func TestHelpers(t *testing.T) {
 	if ts := parseIGTimestamp(time.Now().UTC().Format(time.RFC3339)); ts == nil {
 		t.Fatalf("expected timestamp")
 	}
+	// IG may return offsets without a colon (e.g. +0000).
+	if ts := parseIGTimestamp("2024-01-02T03:04:05+0000"); ts == nil {
+		t.Fatalf("expected timestamp for +0000 offset")
+	}
+	// And fractional seconds.
+	if ts := parseIGTimestamp("2024-01-02T03:04:05.123+0000"); ts == nil {
+		t.Fatalf("expected timestamp for fractional seconds +0000 offset")
+	}
+	// And standard +00:00 offset.
+	if ts := parseIGTimestamp("2024-01-02T03:04:05+00:00"); ts == nil {
+		t.Fatalf("expected timestamp for +00:00 offset")
+	}
 }
