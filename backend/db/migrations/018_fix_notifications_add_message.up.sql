@@ -1,17 +1,53 @@
 -- Add message column to Notifications for backward compatibility with test code
 -- This allows using either message (simple) or title+body (structured)
-ALTER TABLE public."Notifications"
-  ADD COLUMN IF NOT EXISTS message text;
+DO $$
+DECLARE
+  t text;
+BEGIN
+  -- Support both legacy quoted table names and new snake_case schema.
+  IF to_regclass('public.notifications') IS NOT NULL THEN
+    t := 'notifications';
+  ELSIF to_regclass('public."Notifications"') IS NOT NULL THEN
+    t := 'Notifications';
+  ELSE
+    RAISE NOTICE 'notifications table not found (public.notifications or public."Notifications"); skipping migration 018';
+    RETURN;
+  END IF;
 
--- Add is_read boolean column for simpler read status checking
-ALTER TABLE public."Notifications"
-  ADD COLUMN IF NOT EXISTS is_read boolean DEFAULT false;
+  EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS message text', t);
+  EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS is_read boolean DEFAULT false', t);
 
--- Update is_read based on read_at for existing records
-UPDATE public."Notifications"
-  SET is_read = (read_at IS NOT NULL)
-  WHERE is_read IS NULL;
+  -- Best-effort backfill based on read_at when both columns exist.
+  IF EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND (table_name = t OR table_name = lower(t))
+       AND column_name = 'read_at'
+  ) AND EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND (table_name = t OR table_name = lower(t))
+       AND column_name = 'is_read'
+  ) THEN
+    EXECUTE format('UPDATE public.%I SET is_read = (read_at IS NOT NULL) WHERE is_read IS NULL', t);
+  END IF;
 
--- Create index on is_read for faster queries
-CREATE INDEX IF NOT EXISTS idx_notifications_user_is_read
-  ON public."Notifications" (user_id, is_read);
+  -- Add index when the required columns exist.
+  IF EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND (table_name = t OR table_name = lower(t))
+       AND column_name = 'user_id'
+  ) AND EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND (table_name = t OR table_name = lower(t))
+       AND column_name = 'is_read'
+  ) THEN
+    EXECUTE format('CREATE INDEX IF NOT EXISTS idx_notifications_user_is_read ON public.%I (user_id, is_read)', t);
+  END IF;
+END $$;

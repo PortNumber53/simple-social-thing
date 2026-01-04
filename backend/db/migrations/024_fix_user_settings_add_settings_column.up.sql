@@ -3,8 +3,21 @@
 -- We need to support both approaches
 
 -- Add a settings column for the aggregated approach
-ALTER TABLE public."UserSettings"
-  ADD COLUMN IF NOT EXISTS settings jsonb;
+DO $$
+DECLARE
+  t text;
+BEGIN
+  IF to_regclass('public.user_settings') IS NOT NULL THEN
+    t := 'user_settings';
+  ELSIF to_regclass('public."UserSettings"') IS NOT NULL THEN
+    t := 'UserSettings';
+  ELSE
+    RAISE NOTICE 'user_settings table not found (public.user_settings or public."UserSettings"); skipping migration 024';
+    RETURN;
+  END IF;
+
+  EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS settings jsonb', t);
+END $$;
 
 -- For backward compatibility, we'll keep the existing structure
 -- Applications can use either:
