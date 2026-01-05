@@ -611,7 +611,9 @@ export const Library: React.FC = () => {
   const scrollToEditor = () => {
     const el = editorRef.current;
     if (!el) return;
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // JSDOM (tests) doesn't implement scrollIntoView; guard for it.
+    const fn = (el as any).scrollIntoView;
+    if (typeof fn === 'function') fn.call(el, { behavior: 'smooth', block: 'start' });
   };
 
   const openNew = () => {
@@ -669,7 +671,22 @@ export const Library: React.FC = () => {
     const content = draftText.trim();
     const scheduledForIso = toIsoOrNull(scheduledForLocal);
     const providers = Array.from(draftProviders);
-    const media = draftMedia
+    // Treat selected uploads as "pending attach" so scheduling doesn't require an extra click.
+    // Only count uploads that finished successfully (not uploading, not errored).
+    const selectedMediaIds = Array.from(selectedUploadIds).filter((id) => {
+      const u = uploadById.get(id);
+      if (!u) return false;
+      if (u.uploading) return false;
+      if (u.error) return false;
+      return true;
+    });
+    const mediaIdsForSave = [
+      ...draftMediaIds,
+      ...selectedMediaIds.filter((id) => !draftMediaIds.includes(id)),
+    ];
+    const media = mediaIdsForSave
+      .map((id) => uploadById.get(id))
+      .filter((x): x is UploadPreview => !!x)
       .map((u) => {
         const raw = String(u?.url || '').trim();
         if (!raw) return null;
@@ -701,6 +718,17 @@ export const Library: React.FC = () => {
     setSaving(true);
     setError(null);
     try {
+      // If the user had selected uploads (but not explicitly attached them), persist them as draft media after a successful save.
+      const persistAutoAttached = () => {
+        if (selectedMediaIds.length === 0) return;
+        setDraftMediaIds(mediaIdsForSave);
+        setSelectedUploadIds((prev) => {
+          if (prev.size === 0) return prev;
+          const next = new Set(prev);
+          selectedMediaIds.forEach((id) => next.delete(id));
+          return next;
+        });
+      };
       if (editing) {
         const res = await fetch(`/api/local-library/items/${encodeURIComponent(editing.id)}`, {
           method: 'PUT',
@@ -713,6 +741,7 @@ export const Library: React.FC = () => {
           setError('Failed to save.');
         return;
       }
+        persistAutoAttached();
         const updated = data as LocalPost;
         // If the update moves the post between tabs, switch tabs.
         if (updated.status === 'draft' || updated.status === 'scheduled') {
@@ -735,6 +764,7 @@ export const Library: React.FC = () => {
           setError('Failed to create.');
           return;
         }
+        persistAutoAttached();
         const created = data as LocalPost;
         if (created.status === 'draft' || created.status === 'scheduled') {
           if (created.status !== statusFilter) setStatusFilter(created.status);

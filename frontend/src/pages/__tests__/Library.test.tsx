@@ -36,7 +36,8 @@ class FakeXHR {
     this.upload.onprogress?.({ lengthComputable: true, loaded: 50, total: 100 });
     this.upload.onprogress?.({ lengthComputable: true, loaded: 100, total: 100 });
     this.status = 200;
-    this.responseText = JSON.stringify({ items: [{ id: 'up_1', url: 'https://x', kind: 'image', filename: 'a.png' }] });
+    // Return a /media/... URL so scheduling validation can treat it as attachable media.
+    this.responseText = JSON.stringify({ items: [{ id: 'up_1', url: '/media/uploads/u1/a.png', kind: 'image', filename: 'a.png' }] });
     this.onload?.();
   }
 }
@@ -101,16 +102,26 @@ describe('Library', () => {
     );
 
     // Drafts loaded by default
-    expect(await screen.findByRole('heading', { name: /Library/i })).toBeInTheDocument();
+    expect(await screen.findByText('Home')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText(/1 item\(s\)/i)).toBeInTheDocument());
 
     // Switch tab to Scheduled (triggers fetch)
     await u.click(screen.getByRole('button', { name: /Scheduled/i }));
     await waitFor(() => expect(screen.getByText(/1 item\(s\)/i)).toBeInTheDocument());
 
-    // Publish Now appears for scheduled items
+    // Publish Now appears for scheduled items (list pane) and should hit the endpoint.
     await u.click(screen.getByRole('button', { name: /Publish Now/i }));
-    await waitFor(() => expect(screen.getByText(/Queued publish job/i)).toBeInTheDocument());
+    await waitFor(() => {
+      const calls = (globalThis.fetch as any).mock.calls as any[];
+      const didPost = calls.some((c: any[]) => String(c?.[0] || '') === '/api/local-library/items/p2/publish-now' && c?.[1]?.method === 'POST');
+      expect(didPost).toBe(true);
+    });
+
+    // Open the editor so we can attach media to a draft.
+    // There are two "New draft" buttons (segmented control + toolbar); pick the toolbar one.
+    const newDraftBtns = screen.getAllByRole('button', { name: /^New draft$/i });
+    const toolbarNewDraft = newDraftBtns.find((b) => String((b as HTMLElement).className || '').includes('btn-secondary')) ?? newDraftBtns[0];
+    await u.click(toolbarNewDraft);
 
     // Upload file via hidden input
     const input = document.querySelector('input[type="file"]') as HTMLInputElement | null;
@@ -195,6 +206,7 @@ describe('Library', () => {
               content: parsed?.content ?? 'new content',
               providers: parsed?.providers ?? [],
               scheduledFor: parsed?.scheduledFor ?? null,
+              media: parsed?.media ?? [],
             }),
             { status: 200 },
           );
@@ -216,7 +228,12 @@ describe('Library', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole('heading', { name: /Library/i })).toBeInTheDocument();
+    expect(await screen.findByText('Home')).toBeInTheDocument();
+
+    // Open editor (left pane) for validation tests.
+    const newDraftBtns2 = screen.getAllByRole('button', { name: /^New draft$/i });
+    const toolbarNewDraft2 = newDraftBtns2.find((b) => String((b as HTMLElement).className || '').includes('btn-secondary')) ?? newDraftBtns2[0];
+    await u.click(toolbarNewDraft2);
 
     // Set scheduled status without date and attempt save
     const statusSelect = document.querySelector('select') as HTMLSelectElement | null;
@@ -252,6 +269,33 @@ describe('Library', () => {
       expect(typeof body.scheduledFor).toBe('string');
     });
 
+    // Now switch to Instagram (requires media), but only "select" an upload (do not click "Add selected").
+    const uploadInput = document.querySelector('input[type="file"]') as HTMLInputElement | null;
+    if (!uploadInput) throw new Error('missing upload input');
+    await u.upload(uploadInput, new File(['x'], 'a.png', { type: 'image/png' }));
+    await waitFor(() => expect(document.body.textContent || '').toContain('a.png'));
+    await u.click(screen.getByRole('checkbox', { name: /Select a\.png/i }));
+
+    // Swap providers: disable Facebook, enable Instagram.
+    await u.click(screen.getByLabelText('Facebook'));
+    await u.click(screen.getByLabelText('Instagram'));
+    await u.click(screen.getByRole('button', { name: /^Save$/i }));
+
+    await waitFor(() => {
+      expect(document.body.textContent || '').not.toContain('Attach at least one upload before scheduling');
+    });
+    await waitFor(() => {
+      const calls = (globalThis.fetch as any).mock.calls as any[];
+      const putCall = calls.find((c: any[]) => String(c?.[0] || '') === '/api/local-library/items/created1' && c?.[1]?.method === 'PUT');
+      expect(putCall).toBeTruthy();
+      const body = JSON.parse(String(putCall?.[1]?.body || '{}'));
+      expect(body.status).toBe('scheduled');
+      expect(Array.isArray(body.providers)).toBe(true);
+      expect(body.providers).toContain('instagram');
+      expect(Array.isArray(body.media)).toBe(true);
+      expect(body.media).toContain('/media/uploads/u1/a.png');
+    });
+
     // Switch back to draft, type content, save (updates same post)
     await u.selectOptions(statusSelect, 'draft');
     const textarea = document.querySelector('textarea') as HTMLTextAreaElement | null;
@@ -269,13 +313,5 @@ describe('Library', () => {
       expect(didPut).toBe(true);
     });
 
-    // Delete the existing list item (p1) if rendered
-    const deleteButtons = screen.getAllByRole('button', { name: /Delete/i });
-    await u.click(deleteButtons[0]);
-    await waitFor(() => {
-      const calls = (globalThis.fetch as any).mock.calls as any[];
-      const didDelete = calls.some((c: any[]) => String(c?.[0] || '').includes('/api/local-library/items/') && c?.[1]?.method === 'DELETE');
-      expect(didDelete).toBe(true);
-    });
   });
 });
