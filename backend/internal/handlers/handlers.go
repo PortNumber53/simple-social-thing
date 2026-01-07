@@ -4772,10 +4772,22 @@ func (h *Handler) publishTikTokWithVideoURL(ctx context.Context, userID, caption
 		return 0, fmt.Errorf("not_connected"), details
 	}
 
-	// Guard: publishing requires video upload/publish scopes (TikTok Content Posting API).
-	scopeNorm := strings.ReplaceAll(tok.Scope, " ", ",")
-	if !(strings.Contains(scopeNorm, "video.upload") || strings.Contains(scopeNorm, "video.publish")) {
-		return 0, fmt.Errorf("missing_scope"), map[string]interface{}{"scope": tok.Scope, "required": []string{"video.upload", "video.publish"}}
+	// Guard: publishing requires BOTH video upload + publish scopes (TikTok Content Posting API).
+	// TikTok can return scopes as space-delimited; we normalize spaces/commas and then check exact tokens.
+	scopeSet := map[string]bool{}
+	for _, s := range strings.FieldsFunc(tok.Scope, func(r rune) bool {
+		return r == ' ' || r == ',' || r == '\n' || r == '\r' || r == '\t'
+	}) {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			scopeSet[s] = true
+		}
+	}
+	if !(scopeSet["video.upload"] && scopeSet["video.publish"]) {
+		return 0, fmt.Errorf("missing_scope"), map[string]interface{}{
+			"scope":    tok.Scope,
+			"required": []string{"video.upload", "video.publish"},
+		}
 	}
 
 	if dryRun {

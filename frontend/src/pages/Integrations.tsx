@@ -23,7 +23,13 @@ export const Integrations: React.FC = () => {
   const [igAccount, setIgAccount] = useState<{ id: string; username: string | null } | null>(null);
   const [ttStatus, setTtStatus] = useState<string | null>(null);
   const [ttAccount, setTtAccount] = useState<{ id: string; displayName: string | null } | null>(null);
-  const [ttScopes, setTtScopes] = useState<{ scope: string | null; requestedScopes: string | null; hasVideoList: boolean } | null>(null);
+  const [ttScopes, setTtScopes] = useState<{
+    scope: string | null;
+    requestedScopes: string | null;
+    hasVideoList: boolean;
+    hasVideoUpload: boolean;
+    hasVideoPublish: boolean;
+  } | null>(null);
   const [fbStatus, setFbStatus] = useState<string | null>(null);
   const [fbAccount, setFbAccount] = useState<{ id: string; name: string | null } | null>(null);
   const [ytStatus, setYtStatus] = useState<string | null>(null);
@@ -292,6 +298,8 @@ export const Integrations: React.FC = () => {
           scope: typeof obj.scope === 'string' ? obj.scope : null,
           requestedScopes: typeof obj.requestedScopes === 'string' ? obj.requestedScopes : null,
           hasVideoList: obj.hasVideoList === true,
+          hasVideoUpload: obj.hasVideoUpload === true,
+          hasVideoPublish: obj.hasVideoPublish === true,
         });
       } catch { void 0; }
     };
@@ -324,6 +332,11 @@ export const Integrations: React.FC = () => {
   const enableTikTokVideoImport = () => {
     // Requests the extra `video.list` scope so backend imports can fetch videos.
     window.location.href = `/api/integrations/tiktok/auth?scope=video.list`;
+  };
+  const enableTikTokPosting = () => {
+    // Publishing requires TikTok Content Posting API approval and the scopes below.
+    // We include video.list too so video import remains enabled after re-auth.
+    window.location.href = `/api/integrations/tiktok/auth?scope=video.list,video.upload,video.publish`;
   };
 
   const startFacebookAuth = () => {
@@ -688,6 +701,11 @@ export const Integrations: React.FC = () => {
                   <button onClick={enableTikTokVideoImport} className="btn btn-secondary w-full sm:w-auto" type="button">
                     Enable video import
                   </button>
+                  {ttScopes && !(ttScopes.hasVideoUpload && ttScopes.hasVideoPublish) && (
+                    <button onClick={enableTikTokPosting} className="btn btn-secondary w-full sm:w-auto" type="button" title="Requires TikTok Content Posting API approval">
+                      Enable posting
+                    </button>
+                  )}
                   <a
                     href="https://developers.tiktok.com/"
                     target="_blank"
@@ -698,9 +716,17 @@ export const Integrations: React.FC = () => {
                   </a>
                 </div>
                 {ttScopes && (
-                  <span className={`text-xs ${ttScopes.hasVideoList ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'} break-words`}>
-                    {ttScopes.hasVideoList ? 'Video import enabled' : 'Video import NOT enabled (needs video.list)'}
-                  </span>
+                  <div className="space-y-1">
+                    <span className={`block text-xs ${ttScopes.hasVideoList ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'} break-words`}>
+                      {ttScopes.hasVideoList ? 'Video import enabled' : 'Video import NOT enabled (needs video.list)'}
+                    </span>
+                    <span
+                      className={`block text-xs ${(ttScopes.hasVideoUpload && ttScopes.hasVideoPublish) ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'} break-words`}
+                      title="TikTok Content Posting API uses video.upload + video.publish scopes"
+                    >
+                      {(ttScopes.hasVideoUpload && ttScopes.hasVideoPublish) ? 'Posting enabled' : 'Posting NOT enabled (needs video.upload + video.publish)'}
+                    </span>
+                  </div>
                 )}
               </>
             ) : (

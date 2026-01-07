@@ -3062,7 +3062,7 @@ async function handleTikTokScopes(request: Request, env: Env): Promise<Response>
     });
     if (res.status === 404) {
       headers.set('Content-Type', 'application/json');
-      return new Response(JSON.stringify({ ok: true, scope: null, hasVideoList: false }), { status: 200, headers });
+      return new Response(JSON.stringify({ ok: true, scope: null, requestedScopes: null, hasVideoList: false, hasVideoUpload: false, hasVideoPublish: false }), { status: 200, headers });
     }
     const data: unknown = await res.json().catch(() => null);
     const obj = asRecord(data);
@@ -3071,8 +3071,10 @@ async function handleTikTokScopes(request: Request, env: Env): Promise<Response>
     const requestedScopes = getString(valueObj?.['requestedScopes']);
     const norm = (scope || '').replace(/\s+/g, ',');
     const hasVideoList = norm.split(',').map(s => s.trim()).includes('video.list');
+    const hasVideoUpload = norm.split(',').map(s => s.trim()).includes('video.upload');
+    const hasVideoPublish = norm.split(',').map(s => s.trim()).includes('video.publish');
     headers.set('Content-Type', 'application/json');
-    return new Response(JSON.stringify({ ok: true, scope: scope ?? null, requestedScopes: requestedScopes ?? null, hasVideoList }), { status: 200, headers });
+    return new Response(JSON.stringify({ ok: true, scope: scope ?? null, requestedScopes: requestedScopes ?? null, hasVideoList, hasVideoUpload, hasVideoPublish }), { status: 200, headers });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
