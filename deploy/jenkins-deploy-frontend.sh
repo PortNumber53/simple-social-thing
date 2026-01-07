@@ -44,15 +44,6 @@ export VITE_STRIPE_PUBLISHABLE_KEY="${VITE_STRIPE_PUBLISHABLE_KEY:-${STRIPE_PUBL
 echo "=== Frontend: syncing Cloudflare Worker secrets ==="
 # Default to syncing secrets on deploy; set SYNC_SECRETS=false to skip.
 SYNC_SECRETS="${SYNC_SECRETS:-true}"
-put_secret() {
-  local key="$1"
-  local value="${2:-}"
-  if [[ -z "$value" ]]; then
-    echo "WARN: skipping secret ${key} (empty)"
-    return 0
-  fi
-  printf '%s' "$value" | npx --yes wrangler secret put "$key" --config wrangler.jsonc
-}
 
 # Require OAuth/provider secrets we actively use in production flows.
 require_env "GOOGLE_CLIENT_ID"
@@ -67,23 +58,52 @@ require_env "FACEBOOK_WEBHOOK_TOKEN"
 require_env "BACKEND_ORIGIN"
 
 if [[ "${SYNC_SECRETS}" == "true" ]]; then
-  echo "Syncing secrets via wrangler secret put..."
-  put_secret "GOOGLE_CLIENT_ID" "${GOOGLE_CLIENT_ID:-}"
-  put_secret "GOOGLE_CLIENT_SECRET" "${GOOGLE_CLIENT_SECRET:-}"
-  put_secret "INSTAGRAM_APP_ID" "${INSTAGRAM_APP_ID:-}"
-  put_secret "INSTAGRAM_APP_SECRET" "${INSTAGRAM_APP_SECRET:-}"
-  put_secret "TIKTOK_CLIENT_KEY" "${TIKTOK_CLIENT_KEY:-}"
-  put_secret "TIKTOK_CLIENT_SECRET" "${TIKTOK_CLIENT_SECRET:-}"
-  put_secret "PINTEREST_CLIENT_ID" "${PINTEREST_CLIENT_ID:-}"
-  put_secret "PINTEREST_CLIENT_SECRET" "${PINTEREST_CLIENT_SECRET:-}"
-  put_secret "BACKEND_ORIGIN" "${BACKEND_ORIGIN:-}"
-  put_secret "FACEBOOK_WEBHOOK_TOKEN" "${FACEBOOK_WEBHOOK_TOKEN:-}"
-  put_secret "JWT_SECRET" "${JWT_SECRET:-}"
-  put_secret "STRIPE_SECRET_KEY" "${STRIPE_SECRET_KEY:-}"
-  put_secret "STRIPE_WEBHOOK_SECRET" "${STRIPE_WEBHOOK_SECRET:-}"
-  put_secret "DATABASE_URL" "${DATABASE_URL:-}"
-  put_secret "THREADS_OAUTH_BASE" "${THREADS_OAUTH_BASE:-}"
-  put_secret "LOG_LEVEL" "${LOG_LEVEL:-}"
+  echo "Syncing secrets via wrangler secret bulk..."
+  # NOTE: Doing this in one call avoids creating many separate Worker versions in Cloudflare.
+  # Wrangler accepts either JSON {"KEY":"VALUE"} or .dev.vars format; JSON is safer for escaping.
+  SECRETS_JSON="$(mktemp)"
+  trap 'rm -f "${SECRETS_JSON}"' EXIT
+
+  SECRETS_JSON="${SECRETS_JSON}" python3 - <<'PY'
+import json, os, sys
+
+keys = [
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_SECRET",
+  "INSTAGRAM_APP_ID",
+  "INSTAGRAM_APP_SECRET",
+  "TIKTOK_CLIENT_KEY",
+  "TIKTOK_CLIENT_SECRET",
+  "PINTEREST_CLIENT_ID",
+  "PINTEREST_CLIENT_SECRET",
+  "BACKEND_ORIGIN",
+  "FACEBOOK_WEBHOOK_TOKEN",
+  "JWT_SECRET",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "DATABASE_URL",
+  "THREADS_OAUTH_BASE",
+  "LOG_LEVEL",
+]
+
+out = {}
+for k in keys:
+  v = os.environ.get(k, "")
+  if v == "":
+    # Keep behavior consistent with prior put_secret(): skip empty values with a warning.
+    print(f"WARN: skipping secret {k} (empty)", file=sys.stderr)
+    continue
+  out[k] = v
+
+path = os.environ.get("SECRETS_JSON", "")
+if not path:
+  raise SystemExit("SECRETS_JSON env var is required")
+
+with open(path, "w", encoding="utf-8") as f:
+  json.dump(out, f)
+PY
+
+  npx --yes wrangler secret bulk "${SECRETS_JSON}" --config wrangler.jsonc
 else
   echo "Skipping secret sync (set SYNC_SECRETS=true to update secrets and accept extra deployments)."
 fi
