@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
 import { IntegrationsProvider } from '../../contexts/IntegrationsContext';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 
 import { Home } from '../Home';
 import { Features } from '../Features';
@@ -20,9 +21,11 @@ import { ContentPublished } from '../ContentPublished';
 function renderWithProviders(ui: React.ReactElement, { route = '/' } = {}) {
   return render(
     <MemoryRouter initialEntries={[route]}>
-      <AuthProvider>
-        <IntegrationsProvider>{ui}</IntegrationsProvider>
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <IntegrationsProvider>{ui}</IntegrationsProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </MemoryRouter>,
   );
 }

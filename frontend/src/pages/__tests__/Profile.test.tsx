@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 import { Profile } from '../Profile';
 
 describe('Profile page', () => {
@@ -15,9 +16,11 @@ describe('Profile page', () => {
     const u = userEvent.setup();
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <Profile />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <Profile />
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 
@@ -42,9 +45,11 @@ describe('Profile page', () => {
     const u = userEvent.setup();
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <Profile />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <Profile />
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 

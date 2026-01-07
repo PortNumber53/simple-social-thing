@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
 import { IntegrationsProvider } from '../../contexts/IntegrationsContext';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 import { Library } from '../Library';
 
 class FakeXHR {
@@ -93,11 +94,13 @@ describe('Library', () => {
     const u = userEvent.setup();
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <IntegrationsProvider>
-            <Library />
-          </IntegrationsProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <IntegrationsProvider>
+              <Library />
+            </IntegrationsProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 

@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 import { Dashboard } from '../Dashboard';
 
 vi.mock('../../contexts/IntegrationsContext', () => {
@@ -43,9 +44,11 @@ describe('Dashboard', () => {
   it('shows dashboard tasks and live state pulled from the app contexts', async () => {
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <Dashboard />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <Dashboard />
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 

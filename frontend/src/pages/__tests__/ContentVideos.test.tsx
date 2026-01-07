@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 import { ContentVideos } from '../ContentVideos';
 
 describe('ContentVideos', () => {
@@ -15,9 +16,11 @@ describe('ContentVideos', () => {
     const u = userEvent.setup();
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <ContentVideos />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <ContentVideos />
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 

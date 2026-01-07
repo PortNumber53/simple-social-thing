@@ -227,36 +227,54 @@ export const Integrations: React.FC = () => {
       const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
       const username = typeof a.username === 'string' ? a.username : null;
       if (id) setIgAccount({ id, username });
+    } else {
+      setIgAccount(null);
+      try { localStorage.removeItem('ig_conn'); } catch { void 0; }
     }
     if (obj.tiktok?.connected) {
       const a = obj.tiktok.account || {};
       const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
       const displayName = typeof a.displayName === 'string' ? a.displayName : null;
       if (id) setTtAccount({ id, displayName });
+    } else {
+      setTtAccount(null);
+      try { localStorage.removeItem('tt_conn'); } catch { void 0; }
     }
     if (obj.facebook?.connected) {
       const a = obj.facebook.account || {};
       const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
       const name = typeof a.name === 'string' ? a.name : null;
       if (id) setFbAccount({ id, name });
+    } else {
+      setFbAccount(null);
+      try { localStorage.removeItem('fb_conn'); } catch { void 0; }
     }
     if (obj.youtube?.connected) {
       const a = obj.youtube.account || {};
       const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
       const name = typeof a.name === 'string' ? a.name : null;
       if (id) setYtAccount({ id, name });
+    } else {
+      setYtAccount(null);
+      try { localStorage.removeItem('yt_conn'); } catch { void 0; }
     }
     if (obj.pinterest?.connected) {
       const a = obj.pinterest.account || {};
       const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
       const name = typeof a.name === 'string' ? a.name : null;
       if (id) setPinAccount({ id, name });
+    } else {
+      setPinAccount(null);
+      try { localStorage.removeItem('pin_conn'); } catch { void 0; }
     }
     if (obj.threads?.connected) {
       const a = obj.threads.account || {};
       const id = typeof a.id === 'string' ? a.id : String(a.id ?? '');
       const name = typeof a.name === 'string' ? a.name : null;
       if (id) setThAccount({ id, name });
+    } else {
+      setThAccount(null);
+      try { localStorage.removeItem('th_conn'); } catch { void 0; }
     }
   }, [integrationsStatus]);
 

@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 import { ContentMusic } from '../ContentMusic';
 
 describe('ContentMusic', () => {
@@ -36,9 +37,11 @@ describe('ContentMusic', () => {
 
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <ContentMusic />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <ContentMusic />
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 

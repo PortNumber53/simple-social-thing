@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
 import { IntegrationsProvider } from '../../contexts/IntegrationsContext';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 import { Integrations } from '../Integrations';
 
 describe('Integrations', () => {
@@ -33,11 +34,13 @@ describe('Integrations', () => {
 
     render(
       <MemoryRouter initialEntries={['/integrations']}>
-        <AuthProvider>
-          <IntegrationsProvider>
-            <Integrations />
-          </IntegrationsProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <IntegrationsProvider>
+              <Integrations />
+            </IntegrationsProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 
@@ -68,11 +71,13 @@ describe('Integrations', () => {
 
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <IntegrationsProvider>
-            <Integrations />
-          </IntegrationsProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <IntegrationsProvider>
+              <Integrations />
+            </IntegrationsProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 
@@ -107,11 +112,13 @@ describe('Integrations', () => {
 
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <IntegrationsProvider>
-            <Integrations />
-          </IntegrationsProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <IntegrationsProvider>
+              <Integrations />
+            </IntegrationsProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 
@@ -159,15 +166,53 @@ describe('Integrations', () => {
 
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <IntegrationsProvider>
-            <Integrations />
-          </IntegrationsProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <IntegrationsProvider>
+              <Integrations />
+            </IntegrationsProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 
     // The TikTok card should show the derived scopes status line.
     expect(await screen.findByText(/Video import enabled/i)).toBeInTheDocument();
+  });
+
+  it('clears cached localStorage connection when server status reports disconnected (cross-device refresh)', async () => {
+    // Seed stale cached connection (e.g. other device disconnected).
+    localStorage.setItem('tt_conn', JSON.stringify({ id: 'tt1', displayName: 'stale' }));
+    window.history.replaceState({}, '', '/integrations');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/api/integrations/status')) {
+          return new Response(JSON.stringify({ tiktok: { connected: false } }), { status: 200 });
+        }
+        if (url.endsWith('/api/integrations/suno/api-key')) {
+          return new Response(JSON.stringify({ ok: true, value: { apiKey: '' } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+
+    render(
+      <MemoryRouter>
+        <ThemeProvider>
+          <AuthProvider>
+            <IntegrationsProvider>
+              <Integrations />
+            </IntegrationsProvider>
+          </AuthProvider>
+        </ThemeProvider>
+      </MemoryRouter>,
+    );
+
+    // Once status is fetched, we should clear the stale cache and show "Connect TikTok".
+    await waitFor(() => expect(localStorage.getItem('tt_conn')).toBeNull());
+    expect(await screen.findByRole('button', { name: /Connect\s+TikTok/i })).toBeInTheDocument();
   });
 });

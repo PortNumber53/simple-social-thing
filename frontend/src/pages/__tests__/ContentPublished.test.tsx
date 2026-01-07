@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 import { ContentPublished } from '../ContentPublished';
 
 describe('ContentPublished', () => {
@@ -34,9 +35,11 @@ describe('ContentPublished', () => {
 
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <ContentPublished />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <ContentPublished />
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 

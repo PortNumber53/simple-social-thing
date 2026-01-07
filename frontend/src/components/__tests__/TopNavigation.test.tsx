@@ -3,14 +3,17 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 import { TopNavigation } from '../TopNavigation';
 
 function renderNav() {
   return render(
     <MemoryRouter initialEntries={['/']}>
-      <AuthProvider>
-        <TopNavigation />
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <TopNavigation />
+        </AuthProvider>
+      </ThemeProvider>
     </MemoryRouter>,
   );
 }

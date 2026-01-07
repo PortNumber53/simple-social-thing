@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 import { Settings } from '../Settings';
 
 describe('Settings page', () => {
@@ -15,9 +16,11 @@ describe('Settings page', () => {
     localStorage.setItem('user', JSON.stringify({ id: 'u1', email: 'e', name: 'User' }));
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <Settings />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <Settings />
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 

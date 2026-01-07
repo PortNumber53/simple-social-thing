@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
+import { ThemeProvider } from '../../contexts/ThemeContext';
 
 // Mock integrations context to control connected providers without depending on network.
 vi.mock('../../contexts/IntegrationsContext', () => {
@@ -47,9 +48,11 @@ describe('ContentPosts', () => {
     const u = userEvent.setup();
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <ContentPosts />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <ContentPosts />
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 
@@ -68,9 +71,11 @@ describe('ContentPosts', () => {
     const u = userEvent.setup();
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <ContentPosts />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <ContentPosts />
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 
