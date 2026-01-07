@@ -108,13 +108,13 @@ export function UploadGrid({
       {uploads.length > 0 && (
         <div
           className="grid gap-3 flex-1 overflow-auto"
-          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}
+          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 240px))', gridAutoRows: '240px' }}
         >
           {uploads.map((u) => (
             <div
               key={u.id}
               className={[
-                'card p-0 overflow-hidden w-full aspect-square',
+                'card p-0 overflow-hidden w-[240px] h-[240px]',
                 dragOverUploadId === u.id && dragUploadId && dragUploadId !== u.id ? 'ring-2 ring-primary-500' : '',
                 dragUploadId === u.id ? 'opacity-60' : '',
                 selectedUploadIds.has(u.id) ? 'ring-2 ring-primary-500' : '',
