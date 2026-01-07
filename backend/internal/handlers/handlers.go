@@ -1716,7 +1716,13 @@ func (h *Handler) PublishNowPostForUser(w http.ResponseWriter, r *http.Request) 
 					return
 				}
 				if lastJob.Valid && strings.TrimSpace(lastJob.String) != "" {
-					writeError(w, http.StatusConflict, "already_queued")
+					// Make publish-now idempotent: if we've already claimed/enqueued a job, return the job id
+					// so callers can track it instead of treating this as a provider conflict.
+					writeJSON(w, http.StatusOK, map[string]any{
+						"ok":     true,
+						"jobId":  strings.TrimSpace(lastJob.String),
+						"status": "already_queued",
+					})
 					return
 				}
 				if strings.TrimSpace(status) != "scheduled" {
