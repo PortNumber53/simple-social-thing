@@ -1,5 +1,63 @@
 # Changelog
 
+## 2026-01-03
+
+### Database Schema Migration
+- **BREAKING: Migrated all database tables to use snake_case column naming**
+  - Created 10 new migrations (018-027) for schema standardization
+  - Updated all handler SQL queries (199 replacements across 3 files)
+  - Posts table: All columns renamed to snake_case (`teamId` → `team_id`, etc.)
+  - SocialConnections table: Columns renamed to snake_case
+  - Users table: `imageUrl` → `image_url`, `createdAt` → `created_at`
+  - Teams table: `createdAt` → `created_at`
+  - TeamMembers table: `createdAt` → `created_at`
+  - Notifications table: Added `message` and `is_read` columns, made `title` nullable
+  - SunoTracks table: Added `title` column
+  - UserSettings table: Added `settings` column
+  - Posts table: Made `providers` column nullable
+  - Created Python script `update_sql_columns.py` for safe SQL query updates
+  - Fixed JSON struct tags in handler code
+  - Fixed nullable column handling in notification queries
+  - Fixed validation logic for scheduled posts (Facebook allows text-only)
+  - Fixed API response formats (GetPublishJob, UpdateSunoTrack, UpsertUserSetting)
+  - Fixed Suno endpoints to accept flexible field names (url/audioUrl, trackId/sunoTrackId)
+  - Auto-generate taskId in CreateSunoTask if not provided
+  - **Final Result: 43/48 BDD tests passing (90%)**
+
+### Backend Testing
+- **Added comprehensive BDD testing infrastructure using Godog/Gherkin**
+  - Integrated `github.com/cucumber/godog` for Behavior-Driven Development
+  - Created 12 feature files covering all major backend functionality:
+    - `health.feature` - API health check endpoint
+    - `users.feature` - User management (create, read, update, upsert)
+    - `social_connections.feature` - OAuth social media connections
+    - `teams.feature` - Team creation and membership
+    - `posts.feature` - Post CRUD operations (draft, scheduled, published)
+    - `publishing.feature` - Multi-platform social media publishing
+    - `uploads.feature` - Media file upload management
+    - `social_library.feature` - Imported social content management
+    - `notifications.feature` - User notification system
+    - `user_settings.feature` - Per-user configuration
+    - `suno.feature` - AI music generation integration
+    - `realtime.feature` - WebSocket real-time events
+  - Implemented comprehensive step definitions in `bdd_test.go`:
+    - Database setup and cleanup steps
+    - HTTP request/response assertions
+    - Data verification and state management
+    - Support for JSON payloads and file uploads
+  - Added `Makefile.bdd` with convenient test commands:
+    - `make -f Makefile.bdd bdd-test` - Run all BDD tests
+    - `make -f Makefile.bdd bdd-test-feature F=<name>` - Run specific feature
+    - `make -f Makefile.bdd bdd-test-verbose` - Verbose output
+  - Created `BDD_TESTING.md` with comprehensive documentation:
+    - Setup instructions and prerequisites
+    - Writing feature files and step definitions
+    - Running and debugging tests
+    - Best practices and CI/CD integration
+  - Added `.env.test.example` for test environment configuration
+  - Updated `README.md` with BDD testing section
+  - Updated `.windsurf_plan.md` with testing strategy
+
 ## 2025-11-05
 
 - Frontend Worker: Hardened error handling for Suno API key endpoint
