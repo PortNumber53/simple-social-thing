@@ -26,6 +26,7 @@ export const TopNavigation: React.FC = () => {
     { href: '/content/published', label: 'Published' },
     { href: '/content/posts', label: 'Posts' },
     { href: '/content/videos', label: 'Videos' },
+    { href: '/content/video-editor', label: 'Video Editor' },
     { href: '/content/music', label: 'Music' },
   ];
   const ContentLinksList: React.FC<{

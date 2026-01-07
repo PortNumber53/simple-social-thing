@@ -1,4 +1,4 @@
-import type React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 export type UploadPreview = {
   id: string;
@@ -8,7 +8,7 @@ export type UploadPreview = {
   uploading?: boolean;
   progress?: number;
   error?: string | null;
-  kind: 'image' | 'video' | 'other';
+  kind: 'image' | 'video' | 'audio' | 'other';
 };
 
 export function UploadGrid({
@@ -44,6 +44,18 @@ export function UploadGrid({
   parseUploadIdsFromDataTransfer: (dt: DataTransfer) => string[];
   fallbackToLocalPreviewIfPossible: (u: UploadPreview) => void;
 }) {
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const previewUpload = useMemo(() => uploads.find((u) => u.id === previewId) || null, [previewId, uploads]);
+
+  useEffect(() => {
+    if (!previewUpload) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPreviewId(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [previewUpload]);
+
   return (
     <div className="card p-5 space-y-3 h-full flex flex-col">
       <div className="flex items-center justify-between gap-3">
@@ -78,7 +90,7 @@ export function UploadGrid({
         <input
           ref={uploadInputRef}
           type="file"
-          accept="image/*,video/*"
+          accept="image/*,video/*,audio/*"
           multiple
           className="hidden"
           onChange={(e) => addFiles(e.target.files)}
@@ -88,7 +100,7 @@ export function UploadGrid({
             Drag & drop files here, or click <span className="font-medium">Add files</span>.
           </div>
           <div className="sm:ml-auto text-xs text-slate-500 dark:text-slate-400">
-            Images & videos · multiple files
+            Images, videos & audio · multiple files
           </div>
         </div>
       </div>
@@ -108,6 +120,10 @@ export function UploadGrid({
                 selectedUploadIds.has(u.id) ? 'ring-2 ring-primary-500' : '',
               ].join(' ')}
               draggable={!u.uploading && !u.error}
+              onClick={() => {
+                if (u.uploading || u.error) return;
+                setPreviewId(u.id);
+              }}
               onDragStart={(e) => {
                 if (u.uploading || u.error) return;
                 const ids = selectedUploadIds.size > 0 && selectedUploadIds.has(u.id) ? Array.from(selectedUploadIds) : [u.id];
@@ -158,6 +174,10 @@ export function UploadGrid({
                     playsInline
                     onError={() => fallbackToLocalPreviewIfPossible(u)}
                   />
+                ) : u.kind === 'audio' ? (
+                  <div className="w-full h-full flex items-center justify-center bg-slate-100 dark:bg-slate-800">
+                    <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">Audio</div>
+                  </div>
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-slate-400">
                     <span className="text-sm">File</span>
@@ -189,7 +209,10 @@ export function UploadGrid({
                   type="button"
                   className="absolute top-2 right-2 bg-slate-900/70 text-white rounded-full w-7 h-7 flex items-center justify-center text-xs hover:bg-slate-900/80"
                   aria-label={`Remove ${u.filename}`}
-                  onClick={() => removeUpload(u.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeUpload(u.id);
+                  }}
                 >
                   ×
                 </button>
@@ -216,9 +239,69 @@ export function UploadGrid({
                 <div className="absolute bottom-2 left-2 right-2 rounded-md bg-black/60 text-white text-[11px] px-2 py-1 truncate">
                   {u.filename}
                 </div>
+
+                {!u.uploading && !u.error && (
+                  <div className="absolute inset-x-2 bottom-10 pointer-events-none">
+                    <div className="rounded-md bg-black/35 text-white text-[11px] px-2 py-1 inline-flex items-center gap-2">
+                      <span className="font-semibold">Preview</span>
+                      <span className="opacity-80">Click to open</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {previewUpload && (
+        <div className="fixed inset-0 z-[80]">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setPreviewId(null)} />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="w-full max-w-4xl rounded-xl border border-slate-200/60 dark:border-slate-700/50 bg-white dark:bg-slate-900 shadow-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-200/60 dark:border-slate-700/50 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-50 truncate">{previewUpload.filename}</div>
+                  <div className="text-xs text-slate-600 dark:text-slate-300">{previewUpload.kind}</div>
+                </div>
+                <button type="button" className="btn btn-ghost" onClick={() => setPreviewId(null)}>
+                  Close
+                </button>
+              </div>
+              <div className="p-4">
+                {previewUpload.kind === 'image' ? (
+                  <img
+                    src={previewUpload.url}
+                    alt=""
+                    className="w-full max-h-[70vh] object-contain bg-black/90 rounded-lg"
+                    onError={() => fallbackToLocalPreviewIfPossible(previewUpload)}
+                  />
+                ) : previewUpload.kind === 'video' ? (
+                  <video
+                    src={previewUpload.url}
+                    className="w-full max-h-[70vh] object-contain bg-black rounded-lg"
+                    controls
+                    autoPlay
+                    playsInline
+                    onError={() => fallbackToLocalPreviewIfPossible(previewUpload)}
+                  />
+                ) : previewUpload.kind === 'audio' ? (
+                  <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/50 bg-slate-50/60 dark:bg-slate-950/20 p-4">
+                    <audio src={previewUpload.url} controls autoPlay className="w-full" />
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/50 bg-slate-50/60 dark:bg-slate-950/20 p-4 text-sm text-slate-700 dark:text-slate-200">
+                    <div className="font-semibold">No preview available</div>
+                    <div className="mt-2">
+                      <a className="underline" href={previewUpload.url} target="_blank" rel="noreferrer">
+                        Open file
+                      </a>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

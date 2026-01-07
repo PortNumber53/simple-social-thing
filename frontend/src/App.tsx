@@ -7,6 +7,7 @@ import { Integrations } from './pages/Integrations';
 import { ContentMusic } from './pages/ContentMusic';
 import { ContentPosts } from './pages/ContentPosts';
 import { ContentVideos } from './pages/ContentVideos';
+import { ContentVideoEditor } from './pages/ContentVideoEditor';
 import { Library } from './pages/Library';
 import { ContentPublished } from './pages/ContentPublished';
 import { PrivacyPolicy } from './pages/PrivacyPolicy';
@@ -55,6 +56,14 @@ function App() {
           element={
             <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <ContentVideos />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/content/video-editor"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
+              <ContentVideoEditor />
             </ProtectedRoute>
           }
         />

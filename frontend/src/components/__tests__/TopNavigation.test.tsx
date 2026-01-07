@@ -33,7 +33,7 @@ describe('TopNavigation', () => {
     localStorage.setItem('user', JSON.stringify({ id: 'u1', email: 'e', name: 'User' }));
     renderNav();
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
-    expect(screen.getByText('Library')).toBeInTheDocument();
+    expect(screen.getByText('Drafts')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 

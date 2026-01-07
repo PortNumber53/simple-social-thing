@@ -346,12 +346,12 @@ export default {
               const pinRow = await sqlQuerySocial(sql, sid, 'pinterest');
               const thRow = await sqlQuerySocial(sql, sid, 'threads');
               return Response.json({
-                instagram: igRow ? { connected: true, account: { id: igRow.providerId, username: igRow.name || null } } : (conn ? { connected: true, account: conn } : { connected: false }),
-                tiktok: ttRow ? { connected: true, account: { id: ttRow.providerId, displayName: ttRow.name || null } } : (ttConn ? { connected: true, account: ttConn } : { connected: false }),
-                facebook: fbRow ? { connected: true, account: { id: fbRow.providerId, name: fbRow.name || null } } : (fbConn ? { connected: true, account: fbConn } : { connected: false }),
-                youtube: ytRow ? { connected: true, account: { id: ytRow.providerId, name: ytRow.name || null } } : (ytConn ? { connected: true, account: ytConn } : { connected: false }),
-                pinterest: pinRow ? { connected: true, account: { id: pinRow.providerId, name: pinRow.name || null } } : (pinConn ? { connected: true, account: pinConn } : { connected: false }),
-                threads: thRow ? { connected: true, account: { id: thRow.providerId, name: thRow.name || null } } : (thConn ? { connected: true, account: thConn } : { connected: false }),
+                instagram: igRow ? { connected: true, account: { id: igRow.provider_id, username: igRow.name || null } } : (conn ? { connected: true, account: conn } : { connected: false }),
+                tiktok: ttRow ? { connected: true, account: { id: ttRow.provider_id, displayName: ttRow.name || null } } : (ttConn ? { connected: true, account: ttConn } : { connected: false }),
+                facebook: fbRow ? { connected: true, account: { id: fbRow.provider_id, name: fbRow.name || null } } : (fbConn ? { connected: true, account: fbConn } : { connected: false }),
+                youtube: ytRow ? { connected: true, account: { id: ytRow.provider_id, name: ytRow.name || null } } : (ytConn ? { connected: true, account: ytConn } : { connected: false }),
+                pinterest: pinRow ? { connected: true, account: { id: pinRow.provider_id, name: pinRow.name || null } } : (pinConn ? { connected: true, account: pinConn } : { connected: false }),
+                threads: thRow ? { connected: true, account: { id: thRow.provider_id, name: thRow.name || null } } : (thConn ? { connected: true, account: thConn } : { connected: false }),
               });
             } catch { void 0; }
           }
@@ -641,11 +641,17 @@ export default {
       if (url.pathname === "/api/local-library/uploads") {
         return handleLocalLibraryUploads(request, env);
       }
+      if (url.pathname === "/api/local-library/uploads/folders") {
+        return handleLocalLibraryUploadsFolders(request, env);
+      }
       if (url.pathname === "/api/local-library/uploads/delete") {
         return handleLocalLibraryUploadsDelete(request, env);
       }
       if (url.pathname.startsWith("/api/local-library/uploads/file/")) {
         return handleLocalLibraryUploadsFile(request, env);
+      }
+      if (url.pathname === "/api/local-library/video-editor/export") {
+        return handleLocalLibraryVideoEditorExport(request, env);
       }
 
       // Publishing: caption-only post fan-out (backend does per-provider posting)
@@ -1704,6 +1710,7 @@ async function handleLocalLibraryPublishNow(request: Request, env: Env): Promise
 
 async function handleLocalLibraryUploads(request: Request, env: Env): Promise<Response> {
   const backendOrigin = getBackendOrigin(env, request);
+  const url = new URL(request.url);
   const { headers, preflight } = withCors(request, { methods: 'GET,POST,OPTIONS' });
   if (preflight) return preflight;
   if (request.method !== 'GET' && request.method !== 'POST') return new Response(null, { status: 405, headers });
@@ -1713,7 +1720,9 @@ async function handleLocalLibraryUploads(request: Request, env: Env): Promise<Re
 
   try {
     if (request.method === 'GET') {
-      const res = await fetch(`${backendOrigin}/api/uploads/user/${encodeURIComponent(sid)}`, {
+      const folder = (url.searchParams.get('folder') || '').trim();
+      const qs = folder ? `?folder=${encodeURIComponent(folder)}` : '';
+      const res = await fetch(`${backendOrigin}/api/uploads/user/${encodeURIComponent(sid)}${qs}`, {
         headers: { 'Accept': 'application/json' },
       });
       const text = await res.text().catch(() => '');
@@ -1756,7 +1765,9 @@ async function handleLocalLibraryUploads(request: Request, env: Env): Promise<Re
       headersToSend = { ...headersToSend, 'Content-Type': ct };
     }
 
-    const res = await fetch(`${backendOrigin}/api/uploads/user/${encodeURIComponent(sid)}`, {
+    const folder = (url.searchParams.get('folder') || '').trim();
+    const qs = folder ? `?folder=${encodeURIComponent(folder)}` : '';
+    const res = await fetch(`${backendOrigin}/api/uploads/user/${encodeURIComponent(sid)}${qs}`, {
       method: 'POST',
       headers: headersToSend,
       body: bodyToSend,
@@ -1771,6 +1782,33 @@ async function handleLocalLibraryUploads(request: Request, env: Env): Promise<Re
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[LocalLibraryUploads] backend unreachable', { backendOrigin, message });
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
+}
+
+async function handleLocalLibraryUploadsFolders(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
+  if (preflight) return preflight;
+  if (request.method !== 'GET') return new Response(null, { status: 405, headers });
+
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+  if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+  try {
+    const res = await fetch(`${backendOrigin}/api/uploads/folders/user/${encodeURIComponent(sid)}`, {
+      headers: { 'Accept': 'application/json' },
+    });
+    const text = await res.text().catch(() => '');
+    if (!res.ok) {
+      console.error('[LocalLibraryUploadsFolders] backend non-2xx', { backendOrigin, status: res.status, body: text.slice(0, 800) });
+      return new Response(JSON.stringify({ ok: false, error: 'folders_failed', status: res.status, details: text.slice(0, 2000) }), { status: 502, headers });
+    }
+    headers.set('Content-Type', 'application/json');
+    return new Response(text || '{"ok":true,"folders":[]}', { status: 200, headers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[LocalLibraryUploadsFolders] backend unreachable', { backendOrigin, message });
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
 }
@@ -1832,6 +1870,32 @@ async function handleLocalLibraryUploadsFile(request: Request, env: Env): Promis
     const message = err instanceof Error ? err.message : String(err);
     console.error('[LocalLibraryUploadsFile] backend unreachable', { backendOrigin, message });
     return new Response(null, { status: 502, headers });
+  }
+}
+
+async function handleLocalLibraryVideoEditorExport(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendOrigin(env, request);
+  const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
+  if (preflight) return preflight;
+  if (request.method !== 'POST') return new Response(null, { status: 405, headers });
+
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+  if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+  try {
+    const bodyText = await request.text().catch(() => '');
+    const res = await fetch(`${backendOrigin}/api/video-editor/export/user/${encodeURIComponent(sid)}`, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      body: bodyText || '{}',
+    });
+    const text = await res.text().catch(() => '');
+    headers.set('Content-Type', 'application/json');
+    return new Response(text || '{"ok":false}', { status: res.status, headers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[LocalLibraryVideoEditorExport] backend unreachable', { backendOrigin, message });
+    return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
 }
 

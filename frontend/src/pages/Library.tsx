@@ -44,6 +44,8 @@ export const Library: React.FC = () => {
   const editorRef = useRef<HTMLDivElement | null>(null);
 
   const [uploads, setUploads] = useState<UploadPreview[]>([]);
+  const [uploadFolders, setUploadFolders] = useState<Array<{ id: string; name: string }>>([{ id: '', name: 'Root' }]);
+  const [uploadFolder, setUploadFolder] = useState<string>(''); // '' means Root
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const uploadsRef = useRef<UploadPreview[]>([]);
   const [dragUploadId, setDragUploadId] = useState<string | null>(null);
@@ -315,7 +317,7 @@ export const Library: React.FC = () => {
     const temps = arr.map((f) => {
       const type = (f.type || '').toLowerCase();
       const kind: UploadPreview['kind'] =
-        type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : 'other';
+        type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : type.startsWith('audio/') ? 'audio' : 'other';
       const tempId = `temp_${crypto.randomUUID()}`;
       const localUrl = URL.createObjectURL(f);
       tempUrlById.set(tempId, localUrl);
@@ -341,7 +343,8 @@ export const Library: React.FC = () => {
     const uploadOneWithProgress = (tempId: string, file: File): Promise<{ id: string; url: string; kind: UploadPreview['kind']; filename: string }> => {
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', '/api/local-library/uploads', true);
+        const qs = uploadFolder ? `?folder=${encodeURIComponent(uploadFolder)}` : '';
+        xhr.open('POST', `/api/local-library/uploads${qs}`, true);
         xhr.withCredentials = true;
         xhr.timeout = 2 * 60 * 1000; // 2 minutes per file
 
@@ -376,7 +379,8 @@ export const Library: React.FC = () => {
           const id = typeof it?.id === 'string' ? (it!.id as string) : (typeof it?.filename === 'string' ? (it!.filename as string) : '');
           const url = typeof it?.url === 'string' ? (it!.url as string) : '';
           const kindRaw = typeof it?.kind === 'string' ? (it!.kind as string) : '';
-          const kind: UploadPreview['kind'] = kindRaw === 'image' || kindRaw === 'video' || kindRaw === 'other' ? (kindRaw as any) : 'other';
+          const kind: UploadPreview['kind'] =
+            kindRaw === 'image' || kindRaw === 'video' || kindRaw === 'audio' || kindRaw === 'other' ? (kindRaw as any) : 'other';
           if (!id || !url) {
             reject(new Error(`upload_failed_bad_response: ${(xhr.responseText || '').slice(0, 800)}`));
             return;
@@ -522,9 +526,10 @@ export const Library: React.FC = () => {
 
   useEffect(() => {
     // Load existing uploaded files from backend so uploads persist across reloads.
-    void (async () => {
+    const loadUploads = async (folder: string) => {
       try {
-        const res = await fetch('/api/local-library/uploads', { credentials: 'include' });
+        const qs = folder ? `?folder=${encodeURIComponent(folder)}` : '';
+        const res = await fetch(`/api/local-library/uploads${qs}`, { credentials: 'include' });
         const data: unknown = await res.json().catch(() => null);
         const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
         const itemsUnknown = obj ? obj.items : null;
@@ -536,22 +541,38 @@ export const Library: React.FC = () => {
           const filename = typeof it?.filename === 'string' ? it.filename : id;
           const rawUrl = typeof it?.url === 'string' ? it.url : '';
           const url = rawUrl ? rawUrl : (id ? fileUrlForId(id) : '');
-          const kind = it?.kind === 'image' || it?.kind === 'video' || it?.kind === 'other' ? it.kind : 'other';
+          const kind = it?.kind === 'image' || it?.kind === 'video' || it?.kind === 'audio' || it?.kind === 'other' ? it.kind : 'other';
           if (!id || !url) continue;
           next.push({ id, url, filename, kind, uploading: false, error: null });
         }
-        if (next.length > 0) {
-          setUploads((prev) => {
-            if (prev.length === 0) return next;
-            const seen = new Set(prev.map((u) => u.id));
-            const merged = [...prev];
-            for (const u of next) {
-              if (!seen.has(u.id)) merged.push(u);
-            }
-            return merged;
-          });
-        }
+        setUploads(next);
       } catch { /* ignore */ }
+    };
+
+    void loadUploads(uploadFolder);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploadFolder]);
+
+  useEffect(() => {
+    // Load folder list for the media gallery.
+    void (async () => {
+      try {
+        const res = await fetch('/api/local-library/uploads/folders', { credentials: 'include' });
+        const data: unknown = await res.json().catch(() => null);
+        const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
+        const raw = obj?.folders;
+        const arr: unknown[] = Array.isArray(raw) ? raw : [];
+        const next: Array<{ id: string; name: string }> = [];
+        for (const it of arr) {
+          const r = it && typeof it === 'object' ? (it as Record<string, unknown>) : null;
+          const id = typeof r?.id === 'string' ? r.id : '';
+          const name = typeof r?.name === 'string' ? r.name : (id || 'Root');
+          next.push({ id, name });
+        }
+        if (next.length > 0) setUploadFolders(next);
+      } catch {
+        /* ignore */
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -816,57 +837,52 @@ export const Library: React.FC = () => {
             <Panel defaultSize={panelLayout[0] ?? panelSplit * 100} minSize={20}>
               <div className="card p-0 h-full overflow-hidden flex flex-col" style={{ minWidth: '320px' }}>
                 <div className="p-4 border-b border-slate-200/60 dark:border-slate-700/40">
-                  <SegmentedControl
-                    value={leftTab}
-                    options={[
-                      { value: 'list', label: 'Drafts' },
-                      { value: 'edit', label: editing ? 'Edit draft' : 'New draft' },
-                    ]}
-                    onChange={(v) => setLeftTab(v === 'list' ? 'list' : 'edit')}
-                  />
+                  {/* Unified toolbar: Drafts/Scheduled + New draft + Refresh */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <SegmentedControl
+                      value={statusFilter}
+                      options={[
+                        { value: 'draft', label: 'Drafts' },
+                        { value: 'scheduled', label: 'Scheduled' },
+                      ]}
+                      onChange={(v) => {
+                        setStatusFilter(v);
+                        setLeftTab('list');
+                      }}
+                    />
+
+                    <div className="text-xs text-slate-600 dark:text-slate-300">
+                      {loading ? 'Loading…' : `${items.length} item(s)`}
+                    </div>
+
+                    {statusFilter === 'scheduled' && processingCount > 0 && (
+                      <div className="text-xs px-2 py-1 rounded-md border border-amber-200/70 dark:border-amber-800/60 bg-amber-50/80 dark:bg-amber-900/20 text-amber-900 dark:text-amber-200">
+                        Processing {processingCount} post(s)…
+                      </div>
+                    )}
+
+                    <div className="ml-auto flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => {
+                          openNew();
+                          setLeftTab('edit');
+                        }}
+                        disabled={saving}
+                      >
+                        New draft
+                      </button>
+                      <button type="button" className="btn btn-ghost" onClick={() => void load(statusFilter)} disabled={loading}>
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="flex-1 overflow-hidden">
                   {leftTab === 'list' ? (
                     <div className="flex flex-col h-full">
-                      <div className="p-4 border-b border-slate-200/60 dark:border-slate-700/40 flex flex-wrap items-center gap-2">
-                        <SegmentedControl
-                          value={statusFilter}
-                          options={[
-                            { value: 'draft', label: 'Drafts' },
-                            { value: 'scheduled', label: 'Scheduled' },
-                          ]}
-                          onChange={(v) => setStatusFilter(v)}
-                        />
-
-                        <div className="text-xs text-slate-600 dark:text-slate-300">
-                          {loading ? 'Loading…' : `${items.length} item(s)`}
-                        </div>
-
-                        {statusFilter === 'scheduled' && processingCount > 0 && (
-                          <div className="text-xs px-2 py-1 rounded-md border border-amber-200/70 dark:border-amber-800/60 bg-amber-50/80 dark:bg-amber-900/20 text-amber-900 dark:text-amber-200">
-                            Processing {processingCount} post(s)…
-                          </div>
-                        )}
-
-                        <div className="ml-auto flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => {
-                              openNew();
-                              setLeftTab('edit');
-                            }}
-                            disabled={saving}
-                          >
-                            New draft
-                          </button>
-                          <button type="button" className="btn btn-ghost" onClick={() => void load(statusFilter)} disabled={loading}>
-                            Refresh
-                          </button>
-                        </div>
-                      </div>
-
                       <div className="divide-y divide-slate-200/60 dark:divide-slate-700/40 overflow-auto">
                         {items.length === 0 ? (
                           <div className="p-8 text-slate-500 dark:text-slate-400">{emptyState}</div>
@@ -977,15 +993,26 @@ export const Library: React.FC = () => {
                             {editing ? `ID: ${editing.id}` : 'Create local content you can reuse and schedule later.'}
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={openNew}
-                          disabled={saving}
-                          title="Clear the form"
-                        >
-                          New
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => setLeftTab('list')}
+                            disabled={saving}
+                            title="Back to list"
+                          >
+                            Back
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={openNew}
+                            disabled={saving}
+                            title="Clear the form"
+                          >
+                            New
+                          </button>
+                        </div>
                       </div>
 
                       <div className="space-y-2">
@@ -1258,6 +1285,38 @@ export const Library: React.FC = () => {
                   <div className="text-lg font-semibold text-slate-900 dark:text-slate-50">Media browser</div>
                   <div className="text-xs text-slate-600 dark:text-slate-300">
                     Select uploads, drag them onto the draft media area, or use “Add selected”.
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Folder</label>
+                    <select
+                      className="rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary-400"
+                      value={uploadFolder}
+                      onChange={(e) => setUploadFolder(e.target.value)}
+                    >
+                      {uploadFolders.map((f) => (
+                        <option key={f.id || '__root__'} value={f.id}>
+                          {f.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => {
+                        const name = window.prompt('New folder name (letters/numbers/_-):', 'Exports') || '';
+                        const trimmed = name.trim();
+                        if (!trimmed) return;
+                        // Optimistically add; backend creates folder on first upload into it.
+                        setUploadFolders((prev) => {
+                          if (prev.some((x) => x.id === trimmed)) return prev;
+                          return [...prev, { id: trimmed, name: trimmed }].sort((a, b) => (a.id === '' ? -1 : b.id === '' ? 1 : a.name.localeCompare(b.name)));
+                        });
+                        setUploadFolder(trimmed);
+                      }}
+                      title="Create folder"
+                    >
+                      + Folder
+                    </button>
                   </div>
                 </div>
                 <div className="flex-1 overflow-auto p-3">

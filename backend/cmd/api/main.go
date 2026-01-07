@@ -304,6 +304,8 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	r.HandleFunc("/api/uploads/user/{userId}", h.ListUploadsForUser).Methods("GET")
 	r.HandleFunc("/api/uploads/user/{userId}", h.UploadUploadsForUser).Methods("POST")
 	r.HandleFunc("/api/uploads/delete/user/{userId}", h.DeleteUploadsForUser).Methods("POST")
+	r.HandleFunc("/api/uploads/folders/user/{userId}", h.ListUploadFoldersForUser).Methods("GET")
+	r.HandleFunc("/api/video-editor/export/user/{userId}", h.ExportVideoEditor).Methods("POST")
 
 	// Team endpoints
 	r.HandleFunc("/api/teams", h.CreateTeam).Methods("POST")

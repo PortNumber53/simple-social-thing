@@ -52,7 +52,7 @@ describe('Dashboard', () => {
     expect(screen.getByText(/delivery dashboard/i)).toBeInTheDocument();
 
     // Top metric cards
-    await waitFor(() => expect(screen.getByText(/drafts in library/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Ready to edit or publish now/i)).toBeInTheDocument());
     expect(screen.getByText(/scheduled posts/i)).toBeInTheDocument();
     expect(screen.getByText(/publish-ready networks/i)).toBeInTheDocument();
     // With 3 connected publish-capable providers in the mock: instagram, facebook, youtube
@@ -64,7 +64,7 @@ describe('Dashboard', () => {
     expect(screen.getByText(/Publishing pipeline/i)).toBeInTheDocument();
     expect(screen.getByText(/Local library \+ scheduler/i)).toBeInTheDocument();
     expect(screen.getByText(/AI music \(Suno\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/Instagram video tool/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Instagram video tool$/i)).toBeInTheDocument();
     expect(screen.getByText(/Backend \+ deploy/i)).toBeInTheDocument();
   });
 });

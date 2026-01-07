@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
@@ -370,6 +371,7 @@ type uploadItem struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	URL         string `json:"url"`
+	Folder      string `json:"folder,omitempty"` // optional folder name (e.g., "Exports")
 	ContentType string `json:"contentType,omitempty"`
 	Size        int    `json:"size,omitempty"`
 	Kind        string `json:"kind,omitempty"` // image | video | other
@@ -383,6 +385,48 @@ type uploadsListResponse struct {
 type uploadsUploadResponse struct {
 	OK    bool         `json:"ok"`
 	Items []uploadItem `json:"items"`
+}
+
+type videoEditorExportSegment struct {
+	Kind      string  `json:"kind"`      // video | image | audio
+	StartSec  float64 `json:"startSec"`  // timeline start (seconds)
+	SourceURL string  `json:"sourceUrl"` // must be a /media/... URL for this user
+	InSec     float64 `json:"inSec"`     // trim in
+	OutSec    float64 `json:"outSec"`    // trim out
+}
+
+type videoEditorExportText struct {
+	StartSec    float64 `json:"startSec"`
+	DurationSec float64 `json:"durationSec"`
+	Text        string  `json:"text"`
+}
+
+type videoEditorExportRequest struct {
+	ProjectID       string                     `json:"projectId"`
+	FPS             int                        `json:"fps"`
+	AspectW         int                        `json:"aspectW"`
+	AspectH         int                        `json:"aspectH"`
+	TargetLong      int                        `json:"targetLong"`      // e.g., 1280
+	VideoBitrateBps int                        `json:"videoBitrateBps"` // e.g., 2500000
+	AudioBitrateBps int                        `json:"audioBitrateBps"` // e.g., 128000
+	Video           []videoEditorExportSegment `json:"video"`
+	Audio           []videoEditorExportSegment `json:"audio"`
+	Text            []videoEditorExportText    `json:"text"`
+}
+
+type videoEditorExportResponse struct {
+	OK   bool       `json:"ok"`
+	Item uploadItem `json:"item"`
+}
+
+type uploadFolderItem struct {
+	ID   string `json:"id"`   // "" means Root
+	Name string `json:"name"` // display label
+}
+
+type uploadsFoldersResponse struct {
+	OK      bool               `json:"ok"`
+	Folders []uploadFolderItem `json:"folders"`
 }
 
 type deleteUploadsRequest struct {
@@ -1710,6 +1754,9 @@ func uploadKind(contentType string, filename string) string {
 	if strings.HasPrefix(ct, "video/") {
 		return "video"
 	}
+	if strings.HasPrefix(ct, "audio/") {
+		return "audio"
+	}
 	ext := strings.ToLower(filepath.Ext(filename))
 	if ext != "" {
 		if byExt := mime.TypeByExtension(ext); byExt != "" {
@@ -1719,6 +1766,9 @@ func uploadKind(contentType string, filename string) string {
 			}
 			if strings.HasPrefix(byExt, "video/") {
 				return "video"
+			}
+			if strings.HasPrefix(byExt, "audio/") {
+				return "audio"
 			}
 		}
 	}
@@ -1735,32 +1785,26 @@ func (h *Handler) ListUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	folderFilter := strings.TrimSpace(r.URL.Query().Get("folder"))
+	// Normalize some common aliases.
+	if strings.EqualFold(folderFilter, "root") || strings.EqualFold(folderFilter, "default") {
+		folderFilter = ""
+	}
+	if strings.EqualFold(folderFilter, "all") {
+		folderFilter = ""
+	}
+	folderFilter = sanitizeFolderName(folderFilter)
+
 	userHash := mediaUserHash(userID)
 	baseDir := filepath.Join("media", userHash)
-	shards, err := os.ReadDir(baseDir)
-	if err != nil {
-		// If directory doesn't exist yet, return empty list.
-		if os.IsNotExist(err) {
-			writeJSON(w, http.StatusOK, uploadsListResponse{OK: true, Items: []uploadItem{}})
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 
 	items := make([]uploadItem, 0, 64)
-	for _, shard := range shards {
-		if shard == nil || !shard.IsDir() {
-			continue
-		}
-		shardName := strings.TrimSpace(shard.Name())
-		if shardName == "" {
-			continue
-		}
-		dir := filepath.Join(baseDir, shardName)
+
+	// Helper to list a directory of files and append items.
+	appendFromDir := func(dir string, urlPrefix string, folder string) {
 		files, err := os.ReadDir(dir)
 		if err != nil {
-			continue
+			return
 		}
 		for _, e := range files {
 			if e == nil || e.IsDir() {
@@ -1785,7 +1829,8 @@ func (h *Handler) ListUploadsForUser(w http.ResponseWriter, r *http.Request) {
 			items = append(items, uploadItem{
 				ID:          fn, // stable identifier used for delete selection
 				Filename:    fn,
-				URL:         fmt.Sprintf("/media/%s/%s/%s", userHash, shardName, fn),
+				URL:         fmt.Sprintf("%s/%s", strings.TrimRight(urlPrefix, "/"), fn),
+				Folder:      folder,
 				ContentType: ct,
 				Size:        size,
 				Kind:        kind,
@@ -1793,9 +1838,127 @@ func (h *Handler) ListUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Root uploads (legacy): media/<userHash>/<shard>/<filename>
+	if folderFilter == "" {
+		shards, err := os.ReadDir(baseDir)
+		if err == nil {
+			for _, shard := range shards {
+				if shard == nil || !shard.IsDir() {
+					continue
+				}
+				shardName := strings.TrimSpace(shard.Name())
+				if shardName == "" || shardName == "folders" {
+					continue
+				}
+				dir := filepath.Join(baseDir, shardName)
+				appendFromDir(dir, fmt.Sprintf("/media/%s/%s", userHash, shardName), "")
+			}
+		} else if os.IsNotExist(err) {
+			// keep empty if user dir doesn't exist
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Folder uploads: media/<userHash>/folders/<folder>/<shard>/<filename>
+	foldersBase := filepath.Join(baseDir, "folders")
+	if folderFilter != "" {
+		// only one folder
+		fdir := filepath.Join(foldersBase, folderFilter)
+		shards, err := os.ReadDir(fdir)
+		if err == nil {
+			for _, shard := range shards {
+				if shard == nil || !shard.IsDir() {
+					continue
+				}
+				shardName := strings.TrimSpace(shard.Name())
+				if shardName == "" {
+					continue
+				}
+				dir := filepath.Join(fdir, shardName)
+				appendFromDir(dir, fmt.Sprintf("/media/%s/folders/%s/%s", userHash, folderFilter, shardName), folderFilter)
+			}
+		}
+	} else {
+		// all folders
+		folders, err := os.ReadDir(foldersBase)
+		if err == nil {
+			for _, fe := range folders {
+				if fe == nil || !fe.IsDir() {
+					continue
+				}
+				fname := sanitizeFolderName(strings.TrimSpace(fe.Name()))
+				if fname == "" {
+					continue
+				}
+				fdir := filepath.Join(foldersBase, fname)
+				shards, err2 := os.ReadDir(fdir)
+				if err2 != nil {
+					continue
+				}
+				for _, shard := range shards {
+					if shard == nil || !shard.IsDir() {
+						continue
+					}
+					shardName := strings.TrimSpace(shard.Name())
+					if shardName == "" {
+						continue
+					}
+					dir := filepath.Join(fdir, shardName)
+					appendFromDir(dir, fmt.Sprintf("/media/%s/folders/%s/%s", userHash, fname, shardName), fname)
+				}
+			}
+		}
+	}
+
 	// Keep stable-ish ordering for UI (by filename which includes a randomish hash).
-	sort.Slice(items, func(i, j int) bool { return items[i].Filename < items[j].Filename })
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Folder != items[j].Folder {
+			return items[i].Folder < items[j].Folder
+		}
+		return items[i].Filename < items[j].Filename
+	})
 	writeJSON(w, http.StatusOK, uploadsListResponse{OK: true, Items: items})
+}
+
+// ListUploadFoldersForUser lists folder names used in the uploads gallery.
+// Folders are stored under `media/<hmac(userId)>/folders/<folder>/...`.
+func (h *Handler) ListUploadFoldersForUser(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := strings.TrimSpace(vars["userId"])
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+	userHash := mediaUserHash(userID)
+	foldersBase := filepath.Join("media", userHash, "folders")
+
+	folders := make([]uploadFolderItem, 0, 16)
+	folders = append(folders, uploadFolderItem{ID: "", Name: "Root"})
+	if entries, err := os.ReadDir(foldersBase); err == nil {
+		for _, e := range entries {
+			if e == nil || !e.IsDir() {
+				continue
+			}
+			name := sanitizeFolderName(strings.TrimSpace(e.Name()))
+			if name == "" {
+				continue
+			}
+			folders = append(folders, uploadFolderItem{ID: name, Name: name})
+		}
+	}
+	sort.Slice(folders, func(i, j int) bool {
+		// Root always first.
+		if folders[i].ID == "" && folders[j].ID != "" {
+			return true
+		}
+		if folders[j].ID == "" && folders[i].ID != "" {
+			return false
+		}
+		return folders[i].Name < folders[j].Name
+	})
+	writeJSON(w, http.StatusOK, uploadsFoldersResponse{OK: true, Folders: folders})
 }
 
 // UploadUploadsForUser accepts multipart files and stores them under `media/<hmac(userId)>/...`.
@@ -1826,6 +1989,14 @@ func (h *Handler) UploadUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing files")
 		return
 	}
+
+	folder := strings.TrimSpace(r.URL.Query().Get("folder"))
+	if folder == "" && r.MultipartForm != nil && r.MultipartForm.Value != nil {
+		if v := r.MultipartForm.Value["folder"]; len(v) > 0 {
+			folder = strings.TrimSpace(v[0])
+		}
+	}
+	folder = sanitizeFolderName(folder)
 	files := r.MultipartForm.File["files"]
 	if len(files) == 0 {
 		files = r.MultipartForm.File["media"]
@@ -1869,7 +2040,7 @@ func (h *Handler) UploadUploadsForUser(w http.ResponseWriter, r *http.Request) {
 		orig = append(orig, map[string]any{"name": fh.Filename, "contentType": contentType, "size": len(b)})
 	}
 
-	rel, _, err := saveUploadedMedia(userID, media)
+	rel, _, err := saveUploadedMedia(userID, folder, media)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1889,6 +2060,7 @@ func (h *Handler) UploadUploadsForUser(w http.ResponseWriter, r *http.Request) {
 			ID:          fn,
 			Filename:    fn,
 			URL:         p,
+			Folder:      folder,
 			ContentType: ctype,
 			Size:        sz,
 			Kind:        uploadKind(ctype, fn),
@@ -1955,14 +2127,14 @@ func (h *Handler) DeleteUploadsForUser(w http.ResponseWriter, r *http.Request) {
 	// New hashed layout
 	userHash := mediaUserHash(userID)
 	baseDir := filepath.Join("media", userHash)
-	known := map[string]string{} // filename -> absolute path
+	known := map[string][]string{} // filename -> absolute path(s)
 	if shards, err := os.ReadDir(baseDir); err == nil {
 		for _, shard := range shards {
 			if shard == nil || !shard.IsDir() {
 				continue
 			}
 			shardName := strings.TrimSpace(shard.Name())
-			if shardName == "" {
+			if shardName == "" || shardName == "folders" {
 				continue
 			}
 			dir := filepath.Join(baseDir, shardName)
@@ -1980,13 +2152,61 @@ func (h *Handler) DeleteUploadsForUser(w http.ResponseWriter, r *http.Request) {
 				}
 				// Only map the specific ids requested (keeps scan cheap).
 				if seen[fn] {
-					known[fn] = filepath.Join(dir, fn)
+					known[fn] = append(known[fn], filepath.Join(dir, fn))
+				}
+			}
+		}
+	}
+
+	// Also scan folder layout: media/<userHash>/folders/<folder>/<shard>/<filename>
+	foldersBase := filepath.Join(baseDir, "folders")
+	if folders, err := os.ReadDir(foldersBase); err == nil {
+		for _, fe := range folders {
+			if fe == nil || !fe.IsDir() {
+				continue
+			}
+			fname := sanitizeFolderName(strings.TrimSpace(fe.Name()))
+			if fname == "" {
+				continue
+			}
+			fdir := filepath.Join(foldersBase, fname)
+			shards, err2 := os.ReadDir(fdir)
+			if err2 != nil {
+				continue
+			}
+			for _, shard := range shards {
+				if shard == nil || !shard.IsDir() {
+					continue
+				}
+				shardName := strings.TrimSpace(shard.Name())
+				if shardName == "" {
+					continue
+				}
+				dir := filepath.Join(fdir, shardName)
+				files, err3 := os.ReadDir(dir)
+				if err3 != nil {
+					continue
+				}
+				for _, f := range files {
+					if f == nil || f.IsDir() {
+						continue
+					}
+					fn := strings.TrimSpace(f.Name())
+					if fn == "" {
+						continue
+					}
+					if seen[fn] {
+						known[fn] = append(known[fn], filepath.Join(dir, fn))
+					}
 				}
 			}
 		}
 	}
 	for _, id := range ids {
-		if p := known[id]; p != "" {
+		for _, p := range known[id] {
+			if p == "" {
+				continue
+			}
 			if err := os.Remove(p); err == nil {
 				deleted++
 			}
@@ -2007,6 +2227,427 @@ func (h *Handler) DeleteUploadsForUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, deleteUploadsResponse{OK: true, Deleted: deleted})
+}
+
+func mediaURLToLocalPathForUser(userID string, src string) (string, error) {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return "", fmt.Errorf("empty_source")
+	}
+	p := src
+	if u, err := url.Parse(src); err == nil && u != nil {
+		if u.Scheme != "" || u.Host != "" {
+			p = u.Path
+		}
+	}
+	if !strings.HasPrefix(p, "/media/") {
+		return "", fmt.Errorf("unsupported_source")
+	}
+	userHash := mediaUserHash(strings.TrimSpace(userID))
+	prefix := "/media/" + userHash + "/"
+	if !strings.HasPrefix(p, prefix) {
+		return "", fmt.Errorf("source_not_owned")
+	}
+	local := strings.TrimPrefix(p, "/media/")
+	joined := filepath.Clean(filepath.Join("media", local))
+	absJoined, err := filepath.Abs(joined)
+	if err != nil {
+		return "", err
+	}
+	absMedia, err := filepath.Abs("media")
+	if err != nil {
+		return "", err
+	}
+	absMedia = filepath.Clean(absMedia) + string(filepath.Separator)
+	if !strings.HasPrefix(absJoined, absMedia) {
+		return "", fmt.Errorf("invalid_path")
+	}
+	return absJoined, nil
+}
+
+func escapeFFmpegDrawText(s string) string {
+	// For drawtext, escape characters that have special meaning in filter args.
+	// We keep it minimal and predictable: backslash, colon, single-quote, percent, and newlines.
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, ":", "\\:")
+	s = strings.ReplaceAll(s, "'", "\\'")
+	s = strings.ReplaceAll(s, "%", "\\%")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
+}
+
+func (h *Handler) ExportVideoEditor(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	userID := strings.TrimSpace(pathVar(r, "userId"))
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+
+	var req videoEditorExportRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+
+	fps := req.FPS
+	if fps <= 0 {
+		fps = 30
+	}
+	if fps > 60 {
+		fps = 60
+	}
+	aspectW := req.AspectW
+	aspectH := req.AspectH
+	if aspectW <= 0 {
+		aspectW = 9
+	}
+	if aspectH <= 0 {
+		aspectH = 16
+	}
+	targetLong := req.TargetLong
+	if targetLong <= 0 {
+		targetLong = 1280
+	}
+	// Determine output dimensions, keeping even numbers.
+	ar := float64(aspectW) / float64(aspectH)
+	outW, outH := 0, 0
+	if ar >= 1 {
+		outW = targetLong
+		outH = int(float64(targetLong) / ar)
+	} else {
+		outH = targetLong
+		outW = int(float64(targetLong) * ar)
+	}
+	if outW%2 == 1 {
+		outW++
+	}
+	if outH%2 == 1 {
+		outH++
+	}
+
+	videoBps := req.VideoBitrateBps
+	if videoBps <= 0 {
+		videoBps = 2_500_000
+	}
+	audioBps := req.AudioBitrateBps
+	if audioBps <= 0 {
+		audioBps = 128_000
+	}
+
+	// Flatten and sort segments; we only support non-overlapping timelines (MVP).
+	type seg struct {
+		kind     string
+		startSec float64
+		inSec    float64
+		outSec   float64
+		srcURL   string
+		srcPath  string
+		durSec   float64
+	}
+
+	buildSegs := func(in []videoEditorExportSegment, want string) ([]seg, error) {
+		out := make([]seg, 0, len(in))
+		for _, s := range in {
+			k := strings.ToLower(strings.TrimSpace(s.Kind))
+			if k != want {
+				continue
+			}
+			if s.OutSec <= s.InSec {
+				return nil, fmt.Errorf("invalid_trim")
+			}
+			p, err := mediaURLToLocalPathForUser(userID, s.SourceURL)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, seg{
+				kind:     k,
+				startSec: s.StartSec,
+				inSec:    s.InSec,
+				outSec:   s.OutSec,
+				srcURL:   s.SourceURL,
+				srcPath:  p,
+				durSec:   s.OutSec - s.InSec,
+			})
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].startSec < out[j].startSec })
+		// non-overlap check
+		end := 0.0
+		for i, s := range out {
+			if i == 0 {
+				end = s.startSec + s.durSec
+				continue
+			}
+			if s.startSec < end-0.001 {
+				return nil, fmt.Errorf("overlap_not_supported")
+			}
+			end = s.startSec + s.durSec
+		}
+		return out, nil
+	}
+
+	videoSegs, err := buildSegs(req.Video, "video")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	imageSegs, err := buildSegs(req.Video, "image")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	visualSegs := append(videoSegs, imageSegs...)
+	sort.Slice(visualSegs, func(i, j int) bool { return visualSegs[i].startSec < visualSegs[j].startSec })
+	// re-check non-overlap across visual types
+	visEnd := 0.0
+	for i, s := range visualSegs {
+		if i == 0 {
+			visEnd = s.startSec + s.durSec
+			continue
+		}
+		if s.startSec < visEnd-0.001 {
+			writeError(w, http.StatusBadRequest, "overlap_not_supported")
+			return
+		}
+		visEnd = s.startSec + s.durSec
+	}
+
+	audioSegs, err := buildSegs(req.Audio, "audio")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Total duration (for silent audio fallback).
+	totalDur := 0.0
+	for _, s := range visualSegs {
+		totalDur = maxFloat(totalDur, s.startSec+s.durSec)
+	}
+	for _, s := range audioSegs {
+		totalDur = maxFloat(totalDur, s.startSec+s.durSec)
+	}
+	for _, t := range req.Text {
+		totalDur = maxFloat(totalDur, t.StartSec+t.DurationSec)
+	}
+	if totalDur <= 0.01 {
+		writeError(w, http.StatusBadRequest, "empty_timeline")
+		return
+	}
+
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		writeError(w, http.StatusInternalServerError, "ffmpeg_not_available")
+		return
+	}
+
+	// Build ffmpeg args
+	args := []string{"-y", "-hide_banner", "-loglevel", "error"}
+
+	// Visual inputs
+	for _, s := range visualSegs {
+		if s.kind == "image" {
+			args = append(args, "-loop", "1", "-t", fmt.Sprintf("%.3f", s.durSec), "-i", s.srcPath)
+		} else {
+			args = append(args, "-i", s.srcPath)
+		}
+	}
+	// Audio inputs
+	for _, s := range audioSegs {
+		args = append(args, "-i", s.srcPath)
+	}
+
+	// Construct filter graph with gaps.
+	filterParts := make([]string, 0, 64)
+
+	// Visual chain with gaps.
+	vLabels := make([]string, 0, len(visualSegs)*2+2)
+	prev := 0.0
+	for i, s := range visualSegs {
+		if s.startSec > prev+0.001 {
+			gap := s.startSec - prev
+			gLabel := fmt.Sprintf("vgap%d", i)
+			filterParts = append(filterParts, fmt.Sprintf("color=c=black:s=%dx%d:d=%.3f,fps=%d,format=yuv420p,setsar=1[%s]", outW, outH, gap, fps, gLabel))
+			vLabels = append(vLabels, fmt.Sprintf("[%s]", gLabel))
+		}
+		inIdx := i // visual inputs were added in the same order as visualSegs
+		vLabel := fmt.Sprintf("v%d", i)
+		if s.kind == "video" {
+			filterParts = append(filterParts,
+				fmt.Sprintf("[%d:v]trim=start=%.3f:end=%.3f,setpts=PTS-STARTPTS,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p,setsar=1,fps=%d[%s]",
+					inIdx, s.inSec, s.outSec, outW, outH, outW, outH, fps, vLabel),
+			)
+		} else {
+			filterParts = append(filterParts,
+				fmt.Sprintf("[%d:v]setpts=PTS-STARTPTS,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p,setsar=1,fps=%d[%s]",
+					inIdx, outW, outH, outW, outH, fps, vLabel),
+			)
+		}
+		vLabels = append(vLabels, fmt.Sprintf("[%s]", vLabel))
+		prev = s.startSec + s.durSec
+	}
+	if prev < totalDur-0.001 {
+		gap := totalDur - prev
+		gLabel := "vgap_end"
+		filterParts = append(filterParts, fmt.Sprintf("color=c=black:s=%dx%d:d=%.3f,fps=%d,format=yuv420p,setsar=1[%s]", outW, outH, gap, fps, gLabel))
+		vLabels = append(vLabels, fmt.Sprintf("[%s]", gLabel))
+	}
+	if len(vLabels) == 0 {
+		// No visuals: create a black background for the whole duration.
+		filterParts = append(filterParts, fmt.Sprintf("color=c=black:s=%dx%d:d=%.3f,fps=%d,format=yuv420p,setsar=1[vbase]", outW, outH, totalDur, fps))
+	} else {
+		filterParts = append(filterParts, fmt.Sprintf("%sconcat=n=%d:v=1:a=0[vbase]", strings.Join(vLabels, ""), len(vLabels)))
+	}
+
+	// Text overlays
+	currV := "vbase"
+	for i, t := range req.Text {
+		txt := strings.TrimSpace(t.Text)
+		if txt == "" || t.DurationSec <= 0 {
+			continue
+		}
+		start := t.StartSec
+		end := t.StartSec + t.DurationSec
+		next := fmt.Sprintf("vtxt%d", i)
+		escaped := escapeFFmpegDrawText(txt)
+		filterParts = append(filterParts,
+			fmt.Sprintf("[%s]drawtext=text='%s':x=(w-text_w)/2:y=(h-text_h)/2:fontsize=%d:fontcolor=white:box=1:boxcolor=black@0.55:enable='between(t,%.3f,%.3f)'[%s]",
+				currV, escaped, maxInt(18, int(float64(outH)*0.055)), start, end, next),
+		)
+		currV = next
+	}
+	filterParts = append(filterParts, fmt.Sprintf("[%s]format=yuv420p,setsar=1[vout]", currV))
+
+	// Audio chain with gaps (or silence fallback).
+	if len(audioSegs) == 0 {
+		filterParts = append(filterParts, fmt.Sprintf("anullsrc=r=48000:cl=stereo:d=%.3f[aout]", totalDur))
+	} else {
+		aLabels := make([]string, 0, len(audioSegs)*2+2)
+		prevA := 0.0
+		audioInputBase := len(visualSegs)
+		for i, s := range audioSegs {
+			if s.startSec > prevA+0.001 {
+				gap := s.startSec - prevA
+				gLabel := fmt.Sprintf("agap%d", i)
+				filterParts = append(filterParts, fmt.Sprintf("anullsrc=r=48000:cl=stereo:d=%.3f[%s]", gap, gLabel))
+				aLabels = append(aLabels, fmt.Sprintf("[%s]", gLabel))
+			}
+			inIdx := audioInputBase + i
+			aLabel := fmt.Sprintf("a%d", i)
+			filterParts = append(filterParts, fmt.Sprintf("[%d:a]atrim=start=%.3f:end=%.3f,asetpts=PTS-STARTPTS,aresample=48000[%s]",
+				inIdx, s.inSec, s.outSec, aLabel))
+			aLabels = append(aLabels, fmt.Sprintf("[%s]", aLabel))
+			prevA = s.startSec + s.durSec
+		}
+		if prevA < totalDur-0.001 {
+			gap := totalDur - prevA
+			gLabel := "agap_end"
+			filterParts = append(filterParts, fmt.Sprintf("anullsrc=r=48000:cl=stereo:d=%.3f[%s]", gap, gLabel))
+			aLabels = append(aLabels, fmt.Sprintf("[%s]", gLabel))
+		}
+		filterParts = append(filterParts, fmt.Sprintf("%sconcat=n=%d:v=0:a=1[aout]", strings.Join(aLabels, ""), len(aLabels)))
+	}
+
+	filterComplex := strings.Join(filterParts, ";")
+	args = append(args,
+		"-filter_complex", filterComplex,
+		"-map", "[vout]",
+		"-map", "[aout]",
+		"-c:v", "libx264",
+		"-pix_fmt", "yuv420p",
+		"-preset", "veryfast",
+		"-b:v", fmt.Sprintf("%dk", maxInt(100, videoBps/1000)),
+		"-c:a", "aac",
+		"-b:a", fmt.Sprintf("%dk", maxInt(32, audioBps/1000)),
+		"-movflags", "+faststart",
+		"-r", fmt.Sprintf("%d", fps),
+	)
+
+	// Output path (single stable file per project; no multiple copies).
+	userHash := mediaUserHash(userID)
+	folder := "Exports"
+	shard := "video-editor"
+	baseName := sanitizeFilename(req.ProjectID)
+	if baseName == "" {
+		baseName = randHex(8)
+	}
+	outFile := fmt.Sprintf("video_editor_%s.mp4", baseName)
+	outDir := filepath.Join("media", userHash, "folders", folder, shard)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed_to_create_export_dir")
+		return
+	}
+	// Important: ffmpeg chooses container format from extension; ensure temp file still ends with .mp4.
+	tmpPath := filepath.Join(outDir, outFile+".tmp.mp4")
+	finalPath := filepath.Join(outDir, outFile)
+	_ = os.Remove(tmpPath)
+	args = append(args, tmpPath)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.Remove(tmpPath)
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		writeError(w, http.StatusBadRequest, "export_failed:"+truncate(msg, 1200))
+		return
+	}
+
+	info, err := os.Stat(tmpPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "export_missing_output")
+		return
+	}
+	if info.Size() <= 0 {
+		_ = os.Remove(tmpPath)
+		writeError(w, http.StatusInternalServerError, "export_empty_output")
+		return
+	}
+
+	// Replace existing export file (keeps a single copy).
+	_ = os.Remove(finalPath)
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		_ = os.Remove(tmpPath)
+		writeError(w, http.StatusInternalServerError, "export_move_failed")
+		return
+	}
+
+	relURL := fmt.Sprintf("/media/%s/folders/%s/%s/%s", userHash, folder, shard, outFile)
+	item := uploadItem{
+		ID:          outFile,
+		Filename:    outFile,
+		URL:         relURL,
+		Folder:      folder,
+		ContentType: "video/mp4",
+		Size:        int(minInt64(info.Size(), 1<<31-1)),
+		Kind:        "video",
+	}
+	writeJSON(w, http.StatusOK, videoEditorExportResponse{OK: true, Item: item})
+}
+
+func maxFloat(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 type publishPostRequest struct {
@@ -2158,7 +2799,7 @@ func (h *Handler) EnqueuePublishJobForUser(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Store uploaded media immediately so the background job can reference it.
-	relMedia, saveDetails, err := saveUploadedMedia(userID, mediaFiles)
+	relMedia, saveDetails, err := saveUploadedMedia(userID, "", mediaFiles)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -2388,21 +3029,168 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 
 	// Instagram (requires public image URLs)
 	if want["instagram"] {
-		log.Printf("[PublishJob] provider_start jobId=%s userId=%s postId=%s provider=instagram images=%d origin=%s", jobID, userID, postID, len(relMedia), origin)
-		imageURLs := make([]string, 0, len(relMedia))
-		for _, u := range relMedia {
-			imageURLs = append(imageURLs, strings.TrimRight(origin, "/")+u)
+		received := make([]map[string]interface{}, 0, len(mediaFiles))
+		for i := range mediaFiles {
+			received = append(received, map[string]interface{}{
+				"filename":    mediaFiles[i].Filename,
+				"contentType": mediaFiles[i].ContentType,
+				"size":        len(mediaFiles[i].Bytes),
+			})
 		}
-		posted, err, details := h.publishInstagramWithImageURLs(context.Background(), userID, caption, imageURLs, req.DryRun)
-		if err != nil {
-			results["instagram"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
+		isImage := func(ct string, rel string, fn string) bool {
+			ct = strings.ToLower(strings.TrimSpace(ct))
+			if semi := strings.Index(ct, ";"); semi >= 0 {
+				ct = strings.TrimSpace(ct[:semi])
+			}
+			fn = strings.ToLower(strings.TrimSpace(fn))
+			rel = strings.ToLower(strings.TrimSpace(rel))
+			if strings.HasPrefix(ct, "image/") {
+				return true
+			}
+			// fallback by extension
+			if strings.HasSuffix(rel, ".jpg") || strings.HasSuffix(rel, ".jpeg") || strings.HasSuffix(rel, ".png") || strings.HasSuffix(rel, ".webp") || strings.HasSuffix(rel, ".gif") {
+				return true
+			}
+			if strings.HasSuffix(fn, ".jpg") || strings.HasSuffix(fn, ".jpeg") || strings.HasSuffix(fn, ".png") || strings.HasSuffix(fn, ".webp") || strings.HasSuffix(fn, ".gif") {
+				return true
+			}
+			return false
+		}
+		isVideo := func(ct string, rel string, fn string) bool {
+			ct = strings.ToLower(strings.TrimSpace(ct))
+			if semi := strings.Index(ct, ";"); semi >= 0 {
+				ct = strings.TrimSpace(ct[:semi])
+			}
+			fn = strings.ToLower(strings.TrimSpace(fn))
+			rel = strings.ToLower(strings.TrimSpace(rel))
+			if strings.HasPrefix(ct, "video/") {
+				return true
+			}
+			if strings.HasSuffix(rel, ".mp4") || strings.HasSuffix(rel, ".mov") || strings.HasSuffix(rel, ".webm") || strings.HasSuffix(rel, ".m4v") {
+				return true
+			}
+			if strings.HasSuffix(fn, ".mp4") || strings.HasSuffix(fn, ".mov") || strings.HasSuffix(fn, ".webm") || strings.HasSuffix(fn, ".m4v") {
+				return true
+			}
+			return false
+		}
+
+		// Prefer Reels/video publish if a video is present.
+		videoIdx := -1
+		for i, rel := range relMedia {
+			ct := ""
+			fn := ""
+			if i < len(mediaFiles) {
+				ct = mediaFiles[i].ContentType
+				fn = mediaFiles[i].Filename
+			} else {
+				fn = filepath.Base(rel)
+			}
+			if isVideo(ct, rel, fn) {
+				if videoIdx >= 0 && videoIdx != i {
+					results["instagram"] = publishProviderResult{OK: false, Error: "instagram_requires_single_video", Details: map[string]interface{}{"received": received}}
+					overallOK = false
+					log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=instagram posted=%v err=%s", jobID, userID, postID, 0, "instagram_requires_single_video")
+					goto afterInstagramProvider
+				}
+				videoIdx = i
+			}
+		}
+
+		if videoIdx >= 0 {
+			ct := ""
+			fn := ""
+			sz := 0
+			if videoIdx < len(mediaFiles) {
+				ct = mediaFiles[videoIdx].ContentType
+				fn = mediaFiles[videoIdx].Filename
+				sz = len(mediaFiles[videoIdx].Bytes)
+			} else {
+				fn = filepath.Base(relMedia[videoIdx])
+			}
+			ctLower := strings.ToLower(strings.TrimSpace(ct))
+			if semi := strings.Index(ctLower, ";"); semi >= 0 {
+				ctLower = strings.TrimSpace(ctLower[:semi])
+			}
+			relLower := strings.ToLower(relMedia[videoIdx])
+			fnLower := strings.ToLower(fn)
+			// Instagram Content Publishing expects MP4 URLs for video (WebM isn't supported).
+			if !(ctLower == "video/mp4" || strings.HasSuffix(relLower, ".mp4") || strings.HasSuffix(fnLower, ".mp4")) {
+				results["instagram"] = publishProviderResult{
+					OK:      false,
+					Error:   "instagram_requires_mp4",
+					Details: map[string]interface{}{"received": received, "contentType": ctLower, "filename": fn},
+				}
+				overallOK = false
+				log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=instagram posted=%v err=%s", jobID, userID, postID, 0, "instagram_requires_mp4")
+				goto afterInstagramProvider
+			}
+			if sz > 0 && sz > instagramMaxReelsBytes {
+				results["instagram"] = publishProviderResult{
+					OK:      false,
+					Error:   "instagram_video_too_large",
+					Details: map[string]interface{}{"sizeBytes": sz, "maxBytes": instagramMaxReelsBytes, "received": received},
+				}
+				overallOK = false
+				log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=instagram posted=%v err=%s", jobID, userID, postID, 0, "instagram_video_too_large")
+				goto afterInstagramProvider
+			}
+
+			videoURL := strings.TrimRight(origin, "/") + relMedia[videoIdx]
+			log.Printf("[PublishJob] provider_start jobId=%s userId=%s postId=%s provider=instagram reels=1 origin=%s", jobID, userID, postID, origin)
+			posted, err, details := h.publishInstagramReelWithVideoURL(context.Background(), userID, caption, videoURL, req.DryRun)
+			if err != nil {
+				results["instagram"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
+				overallOK = false
+				log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=instagram posted=%v err=%s", jobID, userID, postID, posted, truncate(err.Error(), 400))
+			} else {
+				results["instagram"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+				log.Printf("[PublishJob] provider_ok jobId=%s userId=%s postId=%s provider=instagram posted=%v", jobID, userID, postID, posted)
+			}
+			goto afterInstagramProvider
+		}
+
+		// Image publishing path (photos/carousels)
+		imageURLs := make([]string, 0, len(relMedia))
+		skipped := 0
+		for i, rel := range relMedia {
+			ct := ""
+			fn := ""
+			if i < len(mediaFiles) {
+				ct = mediaFiles[i].ContentType
+				fn = mediaFiles[i].Filename
+			} else {
+				fn = filepath.Base(rel)
+			}
+			if isImage(ct, rel, fn) {
+				imageURLs = append(imageURLs, strings.TrimRight(origin, "/")+rel)
+			} else {
+				skipped++
+			}
+		}
+
+		log.Printf("[PublishJob] provider_start jobId=%s userId=%s postId=%s provider=instagram images=%d skipped=%d origin=%s", jobID, userID, postID, len(imageURLs), skipped, origin)
+		if len(imageURLs) == 0 {
+			results["instagram"] = publishProviderResult{
+				OK:      false,
+				Error:   "instagram_requires_image_or_video",
+				Details: map[string]interface{}{"received": received},
+			}
 			overallOK = false
-			log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=instagram posted=%v err=%s", jobID, userID, postID, posted, truncate(err.Error(), 400))
+			log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=instagram posted=%v err=%s", jobID, userID, postID, 0, "instagram_requires_image_or_video")
 		} else {
-			results["instagram"] = publishProviderResult{OK: true, Posted: posted, Details: details}
-			log.Printf("[PublishJob] provider_ok jobId=%s userId=%s postId=%s provider=instagram posted=%v", jobID, userID, postID, posted)
+			posted, err, details := h.publishInstagramWithImageURLs(context.Background(), userID, caption, imageURLs, req.DryRun)
+			if err != nil {
+				results["instagram"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
+				overallOK = false
+				log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=instagram posted=%v err=%s", jobID, userID, postID, posted, truncate(err.Error(), 400))
+			} else {
+				results["instagram"] = publishProviderResult{OK: true, Posted: posted, Details: details}
+				log.Printf("[PublishJob] provider_ok jobId=%s userId=%s postId=%s provider=instagram posted=%v", jobID, userID, postID, posted)
+			}
 		}
 	}
+afterInstagramProvider:
 
 	// TikTok (requires a public video URL)
 	if want["tiktok"] {
@@ -2674,6 +3462,22 @@ func sanitizeFilename(base string) string {
 	return base
 }
 
+func sanitizeFolderName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	name = reSafeFilename.ReplaceAllString(name, "_")
+	name = strings.Trim(name, "._-")
+	if name == "" {
+		return ""
+	}
+	if len(name) > 64 {
+		name = name[:64]
+	}
+	return name
+}
+
 func (h *Handler) importMediaForDraft(ctx context.Context, userID, postID string, urls []string) {
 	if h == nil || h.db == nil {
 		return
@@ -2811,7 +3615,7 @@ func randHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func saveUploadedMedia(userID string, media []uploadedMedia) ([]string, map[string]interface{}, error) {
+func saveUploadedMedia(userID string, folder string, media []uploadedMedia) ([]string, map[string]interface{}, error) {
 	details := map[string]interface{}{}
 	if len(media) == 0 {
 		return nil, details, nil
@@ -2819,6 +3623,7 @@ func saveUploadedMedia(userID string, media []uploadedMedia) ([]string, map[stri
 	userHash := mediaUserHash(userID)
 	rel := make([]string, 0, len(media))
 	files := make([]map[string]interface{}, 0, len(media))
+	folder = sanitizeFolderName(folder)
 	for _, m := range media {
 		orig := strings.TrimSpace(m.Filename)
 		if orig == "" {
@@ -2837,7 +3642,12 @@ func saveUploadedMedia(userID string, media []uploadedMedia) ([]string, map[stri
 			prefix = "00000"
 		}
 		fn := fileHash + ext
-		dir := filepath.Join("media", userHash, prefix)
+		dir := ""
+		if folder != "" {
+			dir = filepath.Join("media", userHash, "folders", folder, prefix)
+		} else {
+			dir = filepath.Join("media", userHash, prefix)
+		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, details, err
 		}
@@ -2845,10 +3655,16 @@ func saveUploadedMedia(userID string, media []uploadedMedia) ([]string, map[stri
 		if err := os.WriteFile(path, m.Bytes, 0o644); err != nil {
 			return nil, details, err
 		}
-		relURL := fmt.Sprintf("/media/%s/%s/%s", userHash, prefix, fn)
+		relURL := ""
+		if folder != "" {
+			relURL = fmt.Sprintf("/media/%s/folders/%s/%s/%s", userHash, folder, prefix, fn)
+		} else {
+			relURL = fmt.Sprintf("/media/%s/%s/%s", userHash, prefix, fn)
+		}
 		rel = append(rel, relURL)
 		files = append(files, map[string]interface{}{
 			"filename":    fn,
+			"folder":      folder,
 			"contentType": m.ContentType,
 			"size":        len(m.Bytes),
 			"url":         relURL,
@@ -3342,6 +4158,8 @@ type instagramOAuth struct {
 	ExpiresAt    string `json:"expiresAt"`
 }
 
+const instagramMaxReelsBytes = 300 << 20 // 300MB (best-effort safety; actual platform limits may vary)
+
 type tiktokOAuth struct {
 	AccessToken string `json:"accessToken"`
 	TokenType   string `json:"tokenType"`
@@ -3567,6 +4385,166 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 	}
 
 	log.Printf("[IGPublish] ok userId=%s igBusinessId=%s mediaId=%s", userID, tok.IGBusinessID, mediaID)
+	return 1, nil, details
+}
+
+func (h *Handler) publishInstagramReelWithVideoURL(ctx context.Context, userID, caption string, videoURL string, dryRun bool) (int, error, map[string]interface{}) {
+	details := map[string]interface{}{"videoUrl": videoURL, "mediaType": "REELS"}
+	videoURL = strings.TrimSpace(videoURL)
+	if videoURL == "" {
+		return 0, fmt.Errorf("instagram_requires_video"), details
+	}
+
+	// Load IG token + business account id from UserSettings
+	var raw []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT value FROM public.user_settings WHERE user_id=$1 AND key='instagram_oauth' AND value IS NOT NULL`, userID).Scan(&raw); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("not_connected"), details
+		}
+		return 0, err, details
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, fmt.Errorf("not_connected"), details
+	}
+	var tok instagramOAuth
+	if err := json.Unmarshal(raw, &tok); err != nil {
+		return 0, fmt.Errorf("invalid_oauth_payload"), map[string]interface{}{"raw": truncate(string(raw), 800)}
+	}
+	if strings.TrimSpace(tok.AccessToken) == "" || strings.TrimSpace(tok.IGBusinessID) == "" {
+		return 0, fmt.Errorf("not_connected"), details
+	}
+
+	if dryRun {
+		return 0, nil, map[string]interface{}{"dryRun": true, "mediaType": "REELS", "videoUrl": videoURL}
+	}
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	accessToken := tok.AccessToken
+	igID := tok.IGBusinessID
+
+	waitForContainer := func(containerID string) (string, error) {
+		type statusResp struct {
+			ID         string `json:"id"`
+			StatusCode string `json:"status_code"`
+		}
+		var last string
+		for i := 0; i < 60; i++ { // ~120s worst case
+			if i > 0 {
+				time.Sleep(2 * time.Second)
+			}
+			endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s?fields=status_code&access_token=%s",
+				url.PathEscape(containerID),
+				url.QueryEscape(accessToken),
+			)
+			req, _ := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+			req.Header.Set("Accept", "application/json")
+			res, err := client.Do(req)
+			if err != nil {
+				last = "request_error"
+				continue
+			}
+			b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+			_ = res.Body.Close()
+			if res.StatusCode < 200 || res.StatusCode >= 300 {
+				last = fmt.Sprintf("http_%d", res.StatusCode)
+				continue
+			}
+			var sr statusResp
+			if err := json.Unmarshal(b, &sr); err != nil {
+				last = "bad_json"
+				continue
+			}
+			last = strings.ToUpper(strings.TrimSpace(sr.StatusCode))
+			if last == "FINISHED" {
+				return last, nil
+			}
+			if last == "ERROR" || last == "EXPIRED" {
+				return last, fmt.Errorf("instagram_container_%s", strings.ToLower(last))
+			}
+		}
+		return last, fmt.Errorf("instagram_container_not_ready")
+	}
+
+	// Create a Reels container.
+	form := url.Values{}
+	form.Set("media_type", "REELS")
+	form.Set("video_url", videoURL)
+	form.Set("caption", caption)
+	form.Set("share_to_feed", "true")
+	form.Set("access_token", accessToken)
+	endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media", url.PathEscape(igID))
+	req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	res, err := client.Do(req)
+	if err != nil {
+		return 0, err, details
+	}
+	b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	_ = res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		msg := extractFacebookErrorMessage(b, string(b))
+		return 0, fmt.Errorf("instagram_container_failed"), map[string]interface{}{"status": res.StatusCode, "error": msg, "body": truncate(string(b), 1200)}
+	}
+	var obj map[string]interface{}
+	_ = json.Unmarshal(b, &obj)
+	containerID, _ := obj["id"].(string)
+	if containerID == "" {
+		return 0, fmt.Errorf("instagram_missing_container_id"), map[string]interface{}{"body": truncate(string(b), 1200)}
+	}
+	details["containerId"] = containerID
+
+	if st, err := waitForContainer(containerID); err != nil {
+		return 0, fmt.Errorf("instagram_container_not_ready"), map[string]interface{}{"containerId": containerID, "status": st}
+	}
+
+	// Publish
+	pubForm := url.Values{}
+	pubForm.Set("creation_id", containerID)
+	pubForm.Set("access_token", accessToken)
+	pubEndpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media_publish", url.PathEscape(igID))
+	pubReq, _ := http.NewRequestWithContext(ctx, "POST", pubEndpoint, strings.NewReader(pubForm.Encode()))
+	pubReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	pubReq.Header.Set("Accept", "application/json")
+	pubRes, err := client.Do(pubReq)
+	if err != nil {
+		return 0, err, details
+	}
+	pubBody, _ := io.ReadAll(io.LimitReader(pubRes.Body, 1<<20))
+	_ = pubRes.Body.Close()
+	if pubRes.StatusCode < 200 || pubRes.StatusCode >= 300 {
+		msg := extractFacebookErrorMessage(pubBody, string(pubBody))
+		return 0, fmt.Errorf("instagram_publish_failed"), map[string]interface{}{"status": pubRes.StatusCode, "error": msg, "body": truncate(string(pubBody), 1200)}
+	}
+
+	var pub map[string]interface{}
+	_ = json.Unmarshal(pubBody, &pub)
+	mediaID, _ := pub["id"].(string)
+	details["publishedId"] = mediaID
+
+	// Store created item in SocialLibraries
+	if mediaID != "" {
+		rawPayload := strings.ReplaceAll(string(pubBody), "\x00", "")
+		if !utf8.ValidString(rawPayload) {
+			rawPayload = strings.ToValidUTF8(rawPayload, "�")
+		}
+		rowID := fmt.Sprintf("instagram:%s:%s", userID, mediaID)
+		_, _ = h.db.ExecContext(ctx, `
+			INSERT INTO public.social_libraries
+			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
+			VALUES
+			  ($1, $2, 'instagram', 'video', NULLIF($3,''), NULL, NULL, NULL, NOW(), NULL, NULL, $4::jsonb, $5, NOW(), NOW())
+			ON CONFLICT (user_id, network, external_id)
+			DO UPDATE SET
+			  title = EXCLUDED.title,
+			  content_type = EXCLUDED.content_type,
+			  raw_payload = EXCLUDED.raw_payload,
+			  updated_at = NOW()
+		`, rowID, userID, caption, rawPayload, mediaID)
+	}
+
+	log.Printf("[IGPublish] ok userId=%s igBusinessId=%s mediaId=%s mediaType=REELS", userID, tok.IGBusinessID, mediaID)
 	return 1, nil, details
 }
 
@@ -4258,9 +5236,43 @@ func (h *Handler) publishYouTubeWithVideoBytes(ctx context.Context, userID, capt
 func (h *Handler) publishInstagram(ctx context.Context, r *http.Request, userID, caption string, media []uploadedMedia, dryRun bool) (int, error, map[string]interface{}) {
 	details := map[string]interface{}{}
 	if len(media) == 0 {
-		return 0, fmt.Errorf("instagram_requires_image"), details
+		return 0, fmt.Errorf("instagram_requires_image_or_video"), details
 	}
-	rel, saveDetails, err := saveUploadedMedia(userID, media)
+
+	isImage := func(ct string, fn string) bool {
+		ct = strings.ToLower(strings.TrimSpace(ct))
+		if semi := strings.Index(ct, ";"); semi >= 0 {
+			ct = strings.TrimSpace(ct[:semi])
+		}
+		fn = strings.ToLower(strings.TrimSpace(fn))
+		if strings.HasPrefix(ct, "image/") {
+			return true
+		}
+		return strings.HasSuffix(fn, ".jpg") || strings.HasSuffix(fn, ".jpeg") || strings.HasSuffix(fn, ".png") || strings.HasSuffix(fn, ".webp") || strings.HasSuffix(fn, ".gif")
+	}
+	isVideo := func(ct string, fn string) bool {
+		ct = strings.ToLower(strings.TrimSpace(ct))
+		if semi := strings.Index(ct, ";"); semi >= 0 {
+			ct = strings.TrimSpace(ct[:semi])
+		}
+		fn = strings.ToLower(strings.TrimSpace(fn))
+		if strings.HasPrefix(ct, "video/") {
+			return true
+		}
+		return strings.HasSuffix(fn, ".mp4") || strings.HasSuffix(fn, ".mov") || strings.HasSuffix(fn, ".webm") || strings.HasSuffix(fn, ".m4v")
+	}
+
+	videoIdx := -1
+	for i := range media {
+		if isVideo(media[i].ContentType, media[i].Filename) {
+			if videoIdx >= 0 && videoIdx != i {
+				return 0, fmt.Errorf("instagram_requires_single_video"), map[string]interface{}{"received": len(media)}
+			}
+			videoIdx = i
+		}
+	}
+
+	rel, saveDetails, err := saveUploadedMedia(userID, "", media)
 	if err != nil {
 		return 0, err, details
 	}
@@ -4268,9 +5280,33 @@ func (h *Handler) publishInstagram(ctx context.Context, r *http.Request, userID,
 		details[k] = v
 	}
 	origin := publicOrigin(r)
+
+	// Prefer video publishing when a video is present.
+	if videoIdx >= 0 && videoIdx < len(rel) {
+		ctLower := strings.ToLower(strings.TrimSpace(media[videoIdx].ContentType))
+		if semi := strings.Index(ctLower, ";"); semi >= 0 {
+			ctLower = strings.TrimSpace(ctLower[:semi])
+		}
+		fnLower := strings.ToLower(strings.TrimSpace(media[videoIdx].Filename))
+		if !(ctLower == "video/mp4" || strings.HasSuffix(fnLower, ".mp4")) {
+			return 0, fmt.Errorf("instagram_requires_mp4"), map[string]interface{}{"contentType": ctLower, "filename": media[videoIdx].Filename}
+		}
+		if len(media[videoIdx].Bytes) > instagramMaxReelsBytes {
+			return 0, fmt.Errorf("instagram_video_too_large"), map[string]interface{}{"sizeBytes": len(media[videoIdx].Bytes), "maxBytes": instagramMaxReelsBytes}
+		}
+		videoURL := origin + rel[videoIdx]
+		posted, err2, det2 := h.publishInstagramReelWithVideoURL(ctx, userID, caption, videoURL, dryRun)
+		for k, v := range det2 {
+			details[k] = v
+		}
+		return posted, err2, details
+	}
+
 	imageURLs := make([]string, 0, len(rel))
-	for _, u := range rel {
-		imageURLs = append(imageURLs, origin+u)
+	for i := range rel {
+		if isImage(media[min(i, len(media)-1)].ContentType, media[min(i, len(media)-1)].Filename) {
+			imageURLs = append(imageURLs, origin+rel[i])
+		}
 	}
 	posted, err2, det2 := h.publishInstagramWithImageURLs(ctx, userID, caption, imageURLs, dryRun)
 	for k, v := range det2 {

@@ -116,7 +116,7 @@ describe('Integrations', () => {
     );
 
     // Wait for connected badge, then disconnect
-    expect(await screen.findByText(/Connected/i)).toBeInTheDocument();
+    expect(await screen.findByText(/^Connected/i)).toBeInTheDocument();
     await u.click(screen.getByRole('button', { name: /Disconnect/i }));
     await waitFor(() => expect(localStorage.getItem('ig_conn')).toBeNull());
   });
