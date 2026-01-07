@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -183,6 +185,18 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status int
 	bytes  int64
+}
+
+func (w *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying ResponseWriter does not support hijacking")
+	}
+	// WebSockets upgrade the connection via Hijack; record a sensible status code for logs.
+	if w.status == 0 {
+		w.status = http.StatusSwitchingProtocols
+	}
+	return hj.Hijack()
 }
 
 func (w *statusRecorder) WriteHeader(code int) {
