@@ -8,6 +8,20 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Simple Social Thing helps you plan posts, track engagement, and manage all your social accounts in one place." />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (function () {
+        try {
+          var mode = localStorage.getItem('sst-theme') || 'system';
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var isDark = mode === 'dark' || (mode === 'system' && prefersDark);
+          document.documentElement.classList.toggle('dark', isDark);
+          document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+        } catch (e) {
+          // ignore
+        }
+      })();
+    </script>
     <title>Simple Social Thing</title>
   </head>
   <body>

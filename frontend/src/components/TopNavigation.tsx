@@ -2,19 +2,23 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { apiJson } from '../lib/api';
+import { useTheme, type ThemeMode } from '../contexts/ThemeContext';
 
 export const TopNavigation: React.FC = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { mode: themeMode, effectiveTheme, setMode: setThemeMode } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false); // desktop account dropdown
   const [mobileOpen, setMobileOpen] = useState(false); // mobile hamburger menu
   const [notifOpen, setNotifOpen] = useState(false);
+  const [themeOpen, setThemeOpen] = useState(false);
   const [notifications, setNotifications] = useState<Array<any>>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileButtonRef = useRef<HTMLButtonElement | null>(null);
   const notifRef = useRef<HTMLDivElement | null>(null);
+  const themeRef = useRef<HTMLDivElement | null>(null);
 
   const navItemBase =
     "inline-flex items-center h-10 px-3 rounded-md text-sm font-medium transition-colors";
@@ -58,6 +62,7 @@ export const TopNavigation: React.FC = () => {
       const target = e.target as Node;
       if (menuOpen && menuRef.current && !menuRef.current.contains(target)) setMenuOpen(false);
       if (notifOpen && notifRef.current && !notifRef.current.contains(target)) setNotifOpen(false);
+      if (themeOpen && themeRef.current && !themeRef.current.contains(target)) setThemeOpen(false);
       if (mobileOpen) {
         const inPanel = mobileMenuRef.current && mobileMenuRef.current.contains(target);
         const inButton = mobileButtonRef.current && mobileButtonRef.current.contains(target);
@@ -68,6 +73,7 @@ export const TopNavigation: React.FC = () => {
       if (e.key === 'Escape') {
         setMenuOpen(false);
         setNotifOpen(false);
+        setThemeOpen(false);
         setMobileOpen(false);
       }
     };
@@ -77,7 +83,13 @@ export const TopNavigation: React.FC = () => {
       document.removeEventListener('click', onDocClick);
       document.removeEventListener('keydown', onDocKeyDown);
     };
-  }, [menuOpen, notifOpen, mobileOpen]);
+  }, [menuOpen, notifOpen, themeOpen, mobileOpen]);
+
+  const themeOptions: Array<{ value: ThemeMode; label: string }> = [
+    { value: 'system', label: 'System' },
+    { value: 'light', label: 'Light' },
+    { value: 'dark', label: 'Dark' },
+  ];
 
   const loadNotifications = async () => {
     if (!user) return;
@@ -186,6 +198,56 @@ export const TopNavigation: React.FC = () => {
 
           {/* User Menu */}
           <div className="flex items-center gap-4">
+            {/* Theme */}
+            <div className="relative" ref={themeRef}>
+              <button
+                type="button"
+                aria-label="Theme"
+                className="relative inline-flex items-center justify-center w-10 h-10 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                onClick={() => {
+                  setThemeOpen((v) => !v);
+                  setMenuOpen(false);
+                  setNotifOpen(false);
+                }}
+              >
+                {effectiveTheme === 'dark' ? (
+                  // moon
+                  <svg className="w-5 h-5 text-slate-700 dark:text-slate-200" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path d="M17.293 13.293A8 8 0 016.707 2.707a7 7 0 1010.586 10.586z" />
+                  </svg>
+                ) : (
+                  // sun
+                  <svg className="w-5 h-5 text-slate-700 dark:text-slate-200" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M10 2a.75.75 0 01.75.75V4a.75.75 0 01-1.5 0V2.75A.75.75 0 0110 2zm0 14a.75.75 0 01.75.75V18a.75.75 0 01-1.5 0v-1.25A.75.75 0 0110 16zm8-6a.75.75 0 01-.75.75H16a.75.75 0 010-1.5h1.25A.75.75 0 0118 10zM4.75 10A.75.75 0 014 10.75H2.75a.75.75 0 010-1.5H4a.75.75 0 01.75.75zM15.657 4.343a.75.75 0 010 1.06l-.884.884a.75.75 0 11-1.06-1.06l.884-.884a.75.75 0 011.06 0zM6.287 13.713a.75.75 0 010 1.06l-.884.884a.75.75 0 11-1.06-1.06l.884-.884a.75.75 0 011.06 0zM15.657 15.657a.75.75 0 01-1.06 0l-.884-.884a.75.75 0 111.06-1.06l.884.884a.75.75 0 010 1.06zM6.287 6.287a.75.75 0 01-1.06 0l-.884-.884a.75.75 0 111.06-1.06l.884.884a.75.75 0 010 1.06zM10 6a4 4 0 100 8 4 4 0 000-8z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </button>
+              {themeOpen && (
+                <div className="absolute right-0 top-full mt-2 w-40 rounded-md shadow-lg bg-white dark:bg-slate-900 ring-1 ring-black/5 dark:ring-white/10 overflow-hidden">
+                  <div className="px-3 py-2 text-[11px] font-semibold tracking-wide text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-700/50">
+                    Theme
+                  </div>
+                  <div className="py-1">
+                    {themeOptions.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => {
+                          setThemeMode(opt.value);
+                          setThemeOpen(false);
+                        }}
+                        className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${
+                          themeMode === opt.value ? 'text-primary-700 dark:text-primary-300 font-semibold' : 'text-slate-700 dark:text-slate-200'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Notifications */}
             {user && (
               <div className="relative" ref={notifRef}>
@@ -196,6 +258,7 @@ export const TopNavigation: React.FC = () => {
                   onClick={() => {
                     setNotifOpen((v) => !v);
                     setMenuOpen(false);
+                    setThemeOpen(false);
                     void loadNotifications();
                   }}
                 >
