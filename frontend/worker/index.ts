@@ -110,6 +110,15 @@ function logLarge(tag: string, text: string) {
   }
 }
 
+function requestIdFor(request: Request): string {
+  return (
+    request.headers.get('x-request-id') ||
+    request.headers.get('cf-ray') ||
+    request.headers.get('CF-Ray') ||
+    (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now()))
+  );
+}
+
 function getSql(env: Env): SqlClient {
   try {
     // Prefer Hyperdrive binding in prod; in local, if it resolves to hyperdrive.local (Miniflare),
@@ -852,9 +861,13 @@ async function handlePostsPublish(request: Request, env: Env): Promise<Response>
   }
   if (request.method !== 'POST') return new Response(null, { status: 405, headers });
 
+  const reqId = requestIdFor(request);
+  headers.set('X-Request-Id', reqId);
+
   const cookieHeader = request.headers.get('Cookie') || '';
   const sid = getCookie(cookieHeader, 'sid');
   if (!sid) {
+    console.warn('[PostsPublish] unauthenticated', { reqId, url: request.url, hasCookie: cookieHeader.length > 0 });
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
   }
@@ -869,25 +882,48 @@ async function handlePostsPublish(request: Request, env: Env): Promise<Response>
     bodyBuf = null;
   }
   if (!bodyBuf || bodyBuf.byteLength === 0) {
+    console.warn('[PostsPublish] missing_body', { reqId, sid, backendOrigin, contentType });
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'missing_body' }), { status: 400, headers });
   }
 
   try {
+    const started = Date.now();
+    console.log('[PostsPublish] start', {
+      reqId,
+      sid,
+      backendOrigin,
+      contentType: contentType || '(empty)',
+      bytes: bodyBuf.byteLength,
+    });
     // Async publish: enqueue server job and return fast.
     const res = await fetch(`${backendOrigin}/api/social-posts/publish-async/user/${encodeURIComponent(sid)}`, {
       method: 'POST',
-      headers: { 'Content-Type': contentType || 'application/octet-stream', Accept: 'application/json' },
+      headers: {
+        'Content-Type': contentType || 'application/octet-stream',
+        Accept: 'application/json',
+        'X-Request-Id': reqId,
+      },
       body: bodyBuf,
     });
     const text = await res.text().catch(() => '');
     headers.set('Content-Type', 'application/json');
     if (!res.ok) {
+      console.error('[PostsPublish] backend non-2xx', {
+        reqId,
+        sid,
+        backendOrigin,
+        status: res.status,
+        durMs: Date.now() - started,
+        body: text.slice(0, 800),
+      });
       return new Response(JSON.stringify({ ok: false, error: 'backend_error', status: res.status, body: text.slice(0, 1200) }), { status: 502, headers });
     }
+    console.log('[PostsPublish] ok', { reqId, sid, backendOrigin, durMs: Date.now() - started, status: res.status });
     return new Response(text || JSON.stringify({ ok: true }), { status: 200, headers });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
+    console.error('[PostsPublish] backend unreachable', { reqId, sid, backendOrigin, message });
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
@@ -1680,6 +1716,9 @@ async function handleLocalLibraryPublishNow(request: Request, env: Env): Promise
   if (preflight) return preflight;
   if (request.method !== 'POST') return new Response(null, { status: 405, headers });
 
+  const reqId = requestIdFor(request);
+  headers.set('X-Request-Id', reqId);
+
   const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
   if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
 
@@ -1691,18 +1730,31 @@ async function handleLocalLibraryPublishNow(request: Request, env: Env): Promise
   if (!id) return new Response(JSON.stringify({ ok: false, error: 'missing_id' }), { status: 400, headers });
 
   try {
+    const started = Date.now();
+    console.log('[LocalLibraryPublishNow] start', { reqId, sid, postId: id, backendOrigin });
     const res = await fetch(`${backendOrigin}/api/posts/${encodeURIComponent(id)}/publish-now/user/${encodeURIComponent(sid)}`, {
       method: 'POST',
-      headers: { 'Accept': 'application/json' },
+      headers: { 'Accept': 'application/json', 'X-Request-Id': reqId },
     });
     const text = await res.text().catch(() => '');
     headers.set('Content-Type', 'application/json');
     if (!res.ok) {
+      console.error('[LocalLibraryPublishNow] backend non-2xx', {
+        reqId,
+        sid,
+        postId: id,
+        backendOrigin,
+        status: res.status,
+        durMs: Date.now() - started,
+        body: text.slice(0, 800),
+      });
       return new Response(JSON.stringify({ ok: false, error: 'publish_now_failed', status: res.status, body: text.slice(0, 1200) }), { status: 502, headers });
     }
+    console.log('[LocalLibraryPublishNow] ok', { reqId, sid, postId: id, backendOrigin, durMs: Date.now() - started, status: res.status });
     return new Response(text || JSON.stringify({ ok: true }), { status: 200, headers });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
+    console.error('[LocalLibraryPublishNow] backend unreachable', { reqId, sid, postId: id, backendOrigin, message });
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -133,6 +134,8 @@ func run(d deps) error {
 
 	// CORS middleware
 	handler := buildCORSHandler(r)
+	// Request logging (publish debugging): logs only publish-related routes + propagates request id.
+	handler = publishRequestLogger(handler)
 
 	// Start server
 	port := resolvePort(d.getenv)
@@ -174,6 +177,60 @@ func run(d deps) error {
 	}
 	log.Println("Server stopped")
 	return nil
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	bytes  int64
+}
+
+func (w *statusRecorder) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusRecorder) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.bytes += int64(n)
+	return n, err
+}
+
+func publishRequestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		// Keep logging focused to avoid noise.
+		isPublish :=
+			strings.HasPrefix(path, "/api/social-posts/publish") ||
+				strings.Contains(path, "/publish-now") ||
+				strings.HasPrefix(path, "/api/posts/publish")
+		if !isPublish {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		reqID := r.Header.Get("X-Request-Id")
+		if reqID == "" {
+			// Fall back to any proxy/cdn id.
+			reqID = r.Header.Get("CF-Ray")
+			if reqID == "" {
+				reqID = r.Header.Get("X-CF-Ray")
+			}
+		}
+		if reqID != "" {
+			w.Header().Set("X-Request-Id", reqID)
+		}
+
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w}
+		log.Printf("[HTTP] start reqId=%s method=%s path=%s query=%s remote=%s ua=%q", reqID, r.Method, path, r.URL.RawQuery, r.RemoteAddr, r.UserAgent())
+		next.ServeHTTP(rec, r)
+		dur := time.Since(start)
+		log.Printf("[HTTP] done reqId=%s method=%s path=%s status=%d bytes=%d durMs=%d", reqID, r.Method, path, rec.status, rec.bytes, dur.Milliseconds())
+	})
 }
 
 func resolvePort(getenv func(string) string) string {
