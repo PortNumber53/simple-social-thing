@@ -223,11 +223,13 @@ describe('Library', () => {
 
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <IntegrationsProvider>
-            <Library />
-          </IntegrationsProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <IntegrationsProvider>
+              <Library />
+            </IntegrationsProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 

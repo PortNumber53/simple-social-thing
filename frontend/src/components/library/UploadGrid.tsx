@@ -108,13 +108,13 @@ export function UploadGrid({
       {uploads.length > 0 && (
         <div
           className="grid gap-3 flex-1 overflow-auto"
-          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 320px))', gridAutoRows: '240px' }}
+          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}
         >
           {uploads.map((u) => (
             <div
               key={u.id}
               className={[
-                'card p-0 overflow-hidden w-[320px] h-[240px]',
+                'card p-0 overflow-hidden w-full aspect-square',
                 dragOverUploadId === u.id && dragUploadId && dragUploadId !== u.id ? 'ring-2 ring-primary-500' : '',
                 dragUploadId === u.id ? 'opacity-60' : '',
                 selectedUploadIds.has(u.id) ? 'ring-2 ring-primary-500' : '',
@@ -162,14 +162,14 @@ export function UploadGrid({
                   <img
                     src={u.url}
                     alt=""
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-contain bg-slate-100 dark:bg-slate-900"
                     onError={() => fallbackToLocalPreviewIfPossible(u)}
                     draggable={false}
                   />
                 ) : u.kind === 'video' ? (
                   <video
                     src={u.url}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-contain bg-slate-100 dark:bg-slate-900"
                     muted
                     playsInline
                     onError={() => fallbackToLocalPreviewIfPossible(u)}
