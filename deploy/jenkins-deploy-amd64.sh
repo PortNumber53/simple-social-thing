@@ -10,6 +10,7 @@ set -euo pipefail
 #   DATABASE_URL (required) - written into /etc/simple-social-thing/config.ini each deploy
 #   APP_PORT (optional, defaults to 18911) - written into config.ini
 #   ENVIRONMENT_NAME (optional, defaults to production) - written into config.ini
+#   LOG_LEVEL (optional, defaults to empty) - written into config.ini; enables verbose logging when set to debug/trace
 #
 # Assumes artifacts/simple-social-thing-linux-${GOARCH} exists in workspace.
 
@@ -24,6 +25,7 @@ SERVICE_GROUP="${SERVICE_GROUP:-$SSH_USER}"
 DATABASE_URL="${DATABASE_URL:-}"
 APP_PORT="${APP_PORT:-18911}"
 ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-production}"
+LOG_LEVEL="${LOG_LEVEL:-}"
 
 if [[ -z "${DATABASE_URL}" ]]; then
   echo "ERROR: DATABASE_URL is required (will be written into /etc/simple-social-thing/config.ini)"
@@ -103,6 +105,7 @@ sudo tee /etc/simple-social-thing/config.ini >/dev/null <<CFG
 DATABASE_URL=${DATABASE_URL}
 PORT=${APP_PORT}
 ENVIRONMENT=${ENVIRONMENT_NAME}
+LOG_LEVEL=${LOG_LEVEL}
 CFG
 sudo chown root:root /etc/simple-social-thing/config.ini
 sudo chmod 0640 /etc/simple-social-thing/config.ini

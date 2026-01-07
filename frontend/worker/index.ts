@@ -8,6 +8,8 @@ export { buildCorsHeaders, buildSidCookie, getCookie };
 interface Env {
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
+  // Logging verbosity: "error" | "warn" | "info" | "debug" | "trace"
+  LOG_LEVEL?: string;
   USE_MOCK_AUTH?: string;
   ASSETS?: Fetcher;
   INSTAGRAM_APP_ID?: string;
@@ -24,6 +26,24 @@ interface Env {
   HYPERDRIVE?: { connectionString?: string };
   // Shared secret used to open internal backend WS connections (Worker -> Backend).
   INTERNAL_WS_SECRET?: string;
+}
+
+type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace';
+const logLevelRank: Record<LogLevel, number> = { error: 0, warn: 1, info: 2, debug: 3, trace: 4 };
+function normalizeLogLevel(env: Env): LogLevel {
+  const raw = String(env.LOG_LEVEL || 'info').trim().toLowerCase();
+  if (raw === 'error' || raw === 'warn' || raw === 'info' || raw === 'debug' || raw === 'trace') return raw;
+  return 'info';
+}
+function isAtLeast(env: Env, level: LogLevel): boolean {
+  const cur = normalizeLogLevel(env);
+  return logLevelRank[cur] >= logLevelRank[level];
+}
+function logDebug(env: Env, ...args: unknown[]) {
+  if (isAtLeast(env, 'debug')) console.log(...args);
+}
+function logWarn(env: Env, ...args: unknown[]) {
+  if (isAtLeast(env, 'warn')) console.warn(...args);
 }
 
 // --- Hyperdrive (Postgres) helpers ---
@@ -245,6 +265,10 @@ interface GoogleUserInfo {
 export default {
   async fetch(request: Request, env: Env) {
     const url = publicUrlForRequest(request);
+    const reqId = requestIdFor(request);
+    if (isAtLeast(env, 'debug')) {
+      logDebug(env, '[Worker] request', { reqId, method: request.method, path: url.pathname, query: url.search || '' });
+    }
 
     // Debug endpoint to help diagnose asset binding / routing issues in production.
     // (Safe: does not expose secrets; only reports whether ASSETS is present and whether index.html can be fetched.)
@@ -362,7 +386,10 @@ export default {
                 pinterest: pinRow ? { connected: true, account: { id: pinRow.provider_id, name: pinRow.name || null } } : (pinConn ? { connected: true, account: pinConn } : { connected: false }),
                 threads: thRow ? { connected: true, account: { id: thRow.provider_id, name: thRow.name || null } } : (thConn ? { connected: true, account: thConn } : { connected: false }),
               });
-            } catch { void 0; }
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              logWarn(env, '[IntegrationsStatus] sql failed', { reqId, message });
+            }
           }
         }
         // Fallback to cookie-only status

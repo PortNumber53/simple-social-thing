@@ -202,12 +202,15 @@ func (w *statusRecorder) Write(p []byte) (int, error) {
 func publishRequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		// Keep logging focused to avoid noise.
+		// Default: keep logging focused to avoid noise.
+		// If LOG_LEVEL=debug/trace, log all requests.
+		lvl := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_LEVEL")))
+		logAll := lvl == "debug" || lvl == "trace"
 		isPublish :=
 			strings.HasPrefix(path, "/api/social-posts/publish") ||
 				strings.Contains(path, "/publish-now") ||
 				strings.HasPrefix(path, "/api/posts/publish")
-		if !isPublish {
+		if !logAll && !isPublish {
 			next.ServeHTTP(w, r)
 			return
 		}

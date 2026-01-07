@@ -83,6 +83,7 @@ if [[ "${SYNC_SECRETS}" == "true" ]]; then
   put_secret "STRIPE_WEBHOOK_SECRET" "${STRIPE_WEBHOOK_SECRET:-}"
   put_secret "DATABASE_URL" "${DATABASE_URL:-}"
   put_secret "THREADS_OAUTH_BASE" "${THREADS_OAUTH_BASE:-}"
+  put_secret "LOG_LEVEL" "${LOG_LEVEL:-}"
 else
   echo "Skipping secret sync (set SYNC_SECRETS=true to update secrets and accept extra deployments)."
 fi

@@ -100,7 +100,8 @@ pipeline {
       steps {
         unstash "bin-amd64"
             withCredentials([
-              string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL')
+              string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
+              string(credentialsId: 'prod-log-level-simple-social-thing', variable: 'LOG_LEVEL')
             ]) {
               sshagent(credentials: [env.SSH_CREDENTIALS]) {
                 sh label: 'Deploy via script', script: '''
@@ -112,6 +113,7 @@ pipeline {
                   TARGET_DIR="$TARGET_DIR" \
                   SERVICE_NAME="$SERVICE_NAME" \
                   DATABASE_URL="$DATABASE_URL" \
+                  LOG_LEVEL="$LOG_LEVEL" \
                   APP_PORT="18911" \
                   ENVIRONMENT_NAME="production" \
                   bash deploy/jenkins-deploy-amd64.sh
@@ -125,7 +127,8 @@ pipeline {
           steps {
             unstash "bin-arm64"
             withCredentials([
-              string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL')
+              string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
+              string(credentialsId: 'prod-log-level-simple-social-thing', variable: 'LOG_LEVEL')
             ]) {
         sshagent(credentials: [env.SSH_CREDENTIALS]) {
                 sh label: 'Deploy via script', script: '''
@@ -137,6 +140,7 @@ pipeline {
                   TARGET_DIR="$TARGET_DIR" \
                   SERVICE_NAME="$SERVICE_NAME" \
                   DATABASE_URL="$DATABASE_URL" \
+                  LOG_LEVEL="$LOG_LEVEL" \
                   APP_PORT="18911" \
                   ENVIRONMENT_NAME="production" \
                   bash deploy/jenkins-deploy-amd64.sh
@@ -165,6 +169,7 @@ pipeline {
               string(credentialsId: 'prod-stripe-webhook-secret-simple-social-thing', variable: 'STRIPE_WEBHOOK_SECRET'),
               string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
               string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'BACKEND_ORIGIN'),
+              string(credentialsId: 'prod-log-level-simple-social-thing', variable: 'LOG_LEVEL'),
             ]) {
               sh label: 'Deploy frontend via wrangler', script: 'bash deploy/jenkins-deploy-frontend.sh'
             }
