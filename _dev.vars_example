@@ -48,5 +48,3 @@ VITE_DISABLE_CF_PLUGIN=1
 # --- Local dev switches ---
 # Set true to bypass real OAuth when running locally.
 USE_MOCK_AUTH=false
-
-# --- Legacy / optional Xata (if you still use it) ---
