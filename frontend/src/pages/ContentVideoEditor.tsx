@@ -130,6 +130,7 @@ export const ContentVideoEditor: React.FC = () => {
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [lastExportUrl, setLastExportUrl] = useState<string>('');
   const [lastExportName, setLastExportName] = useState<string>('');
+  const [mainTab, setMainTab] = useState<'preview' | 'export'>('preview');
   const [exportVideoBps, setExportVideoBps] = useState<number>(2_500_000);
   const [exportAudioBps] = useState<number>(128_000);
   const [previewPreset, setPreviewPreset] = useState<string>('ig_reels');
@@ -332,19 +333,6 @@ export const ContentVideoEditor: React.FC = () => {
     setMediaBusy('Exporting (server)…');
     setLastExportUrl('');
     setLastExportName('');
-    // Open the export tab synchronously from the click handler.
-    // Browsers often block window.open() if it's called after an await.
-    let exportWin: Window | null = null;
-    try {
-      // NOTE: Some browsers may open the tab but return `null` when using noopener/noreferrer.
-      // We prefer a reliable Window reference so we can navigate it once the export URL is ready.
-      exportWin = window.open('about:blank', '_blank');
-      // Best-effort protection against reverse tabnabbing.
-      // about:blank is same-origin with us, so this should work.
-      if (exportWin) exportWin.opener = null;
-    } catch {
-      exportWin = null;
-    }
     try {
       const fps = Math.max(10, Math.min(60, Math.round(safeNumber(project.fps, 30))));
       const targetLong = 1280;
@@ -410,7 +398,6 @@ export const ContentVideoEditor: React.FC = () => {
         if (!isServerUrl(s.sourceUrl)) {
           setMediaBusy('Export requires server-hosted media. Please add clips via Media Gallery (or re-add so they upload).');
           setIsExporting(false);
-          try { exportWin?.close(); } catch { /* ignore */ }
           return;
         }
       }
@@ -445,7 +432,6 @@ export const ContentVideoEditor: React.FC = () => {
       if (!res.ok) {
         setMediaBusy(`Export failed (HTTP ${res.status}). ${String(dataText || '').slice(0, 600)}`);
         setIsExporting(false);
-        try { exportWin?.close(); } catch { /* ignore */ }
         return;
       }
       const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
@@ -457,29 +443,13 @@ export const ContentVideoEditor: React.FC = () => {
 
       setLastExportUrl(url);
       setLastExportName(filename);
+      setMainTab('export');
       setMediaBusy(null);
       setIsExporting(false);
-      if (url) {
-        try {
-          if (exportWin) {
-            exportWin.location.href = url;
-            exportWin.focus?.();
-          } else {
-            window.open(url, '_blank', 'noopener,noreferrer');
-          }
-        } catch {
-          try { exportWin?.close(); } catch { /* ignore */ }
-          /* ignore */
-        }
-      } else {
-        // Avoid leaving a blank tab around when we didn't get a URL back.
-        try { exportWin?.close(); } catch { /* ignore */ }
-      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setMediaBusy(`Export failed: ${msg}`);
       setIsExporting(false);
-      try { exportWin?.close(); } catch { /* ignore */ }
     }
   };
 
@@ -1347,17 +1317,7 @@ export const ContentVideoEditor: React.FC = () => {
             Playback error: {playbackError}
           </div>
         )}
-        {lastExportUrl && (
-          <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/40 bg-white/70 dark:bg-slate-900/30 px-4 py-2 text-sm text-slate-700 dark:text-slate-200 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <span className="font-semibold">Export saved</span>
-              {lastExportName ? <span className="text-slate-500 dark:text-slate-300"> — {lastExportName}</span> : null}
-            </div>
-            <a className="btn btn-secondary" href={lastExportUrl} target="_blank" rel="noreferrer">
-              Open
-            </a>
-          </div>
-        )}
+        {/* Exported video is shown inside the Preview/Export tabs below. */}
 
         {galleryOpen && (
           <div className="fixed inset-0 z-[60]">
@@ -1438,30 +1398,78 @@ export const ContentVideoEditor: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Preview */}
           <div className="lg:col-span-2 bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">Preview (timeline)</div>
-              <div className="flex items-center gap-3">
-                <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">Playhead: {playheadSec.toFixed(2)}s</div>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Format</label>
-                  <select
-                    className="rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary-400"
-                    value={previewPreset}
-                    onChange={(e) => setPreviewPreset(e.target.value)}
-                  >
-                    {previewPresets.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+              <div className="inline-flex rounded-lg border border-slate-200/70 dark:border-slate-700/60 bg-white/60 dark:bg-slate-900/30 p-1">
+                <button
+                  type="button"
+                  className={[
+                    'px-3 py-1.5 text-xs font-semibold rounded-md',
+                    mainTab === 'preview'
+                      ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100/70 dark:hover:bg-slate-800/40',
+                  ].join(' ')}
+                  onClick={() => setMainTab('preview')}
+                >
+                  Preview
+                </button>
+                <button
+                  type="button"
+                  className={[
+                    'px-3 py-1.5 text-xs font-semibold rounded-md',
+                    mainTab === 'export'
+                      ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                      : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100/70 dark:hover:bg-slate-800/40',
+                    !lastExportUrl ? 'opacity-60' : '',
+                  ].join(' ')}
+                  onClick={() => setMainTab('export')}
+                  disabled={!lastExportUrl}
+                  title={!lastExportUrl ? 'Export a video to view it here' : 'View exported video'}
+                >
+                  Exported video
+                </button>
               </div>
+
+              {mainTab === 'preview' ? (
+                <div className="flex items-center gap-3">
+                  <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">Playhead: {playheadSec.toFixed(2)}s</div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Format</label>
+                    <select
+                      className="rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary-400"
+                      value={previewPreset}
+                      onChange={(e) => setPreviewPreset(e.target.value)}
+                    >
+                      {previewPresets.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  {lastExportUrl ? (
+                    <>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-[45vw] sm:max-w-[320px]">
+                        <span className="font-semibold text-slate-700 dark:text-slate-200">Export:</span> {lastExportName || 'export.mp4'}
+                      </div>
+                      <a className="btn btn-secondary" href={lastExportUrl} target="_blank" rel="noreferrer">
+                        Open in new tab
+                      </a>
+                    </>
+                  ) : (
+                    <div className="text-xs text-slate-500 dark:text-slate-400">No export yet.</div>
+                  )}
+                </div>
+              )}
             </div>
 
-            <div className="relative">
-              <div className="w-full">
-                <div className="mx-auto w-full max-w-[520px]">
+            {mainTab === 'preview' ? (
+              <div className="space-y-3">
+                <div className="relative">
+                <div className="w-full">
+                  <div className="mx-auto w-full max-w-[520px]">
                   <div
                     className="rounded-xl border border-slate-200/60 dark:border-slate-700/50 bg-slate-50/60 dark:bg-slate-950/30 overflow-hidden relative shadow-inner"
                     style={{ aspectRatio: `${aspect.w} / ${aspect.h}` }}
@@ -1548,6 +1556,25 @@ export const ContentVideoEditor: React.FC = () => {
             <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
               Timeline playback + export are MVP: export records a real-time preview into a video file and saves it to Media Gallery → <span className="font-semibold">Exports</span>.
             </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {!lastExportUrl ? (
+                  <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-950/20 p-4 text-sm text-slate-600 dark:text-slate-300">
+                    Export a video to preview it here.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="rounded-xl border border-slate-200/60 dark:border-slate-700/50 bg-black/90 overflow-hidden">
+                      <video key={lastExportUrl} src={lastExportUrl} className="w-full max-h-[520px]" controls playsInline />
+                    </div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400">
+                      Exported file is stored in Media Gallery → <span className="font-semibold">Exports</span>.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Inspector */}
