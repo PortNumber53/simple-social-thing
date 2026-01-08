@@ -188,6 +188,19 @@ export const ContentVideoEditor: React.FC = () => {
     };
   }, []);
 
+  // Make the editor feel like a "desktop app": avoid scrolling the whole page.
+  // We instead allow scrolling inside individual panes (Inspector, etc.).
+  useEffect(() => {
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, []);
+
   const selectedTrack = useMemo(() => {
     if (!selected) return undefined;
     return findTrack(project, selected.trackId);
@@ -1201,7 +1214,7 @@ export const ContentVideoEditor: React.FC = () => {
 
   return (
     <Layout headerPaddingClass="pt-24">
-      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto pb-[340px] space-y-6">
+      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto h-[calc(100vh-96px)] flex flex-col overflow-hidden space-y-6">
         <header className="flex items-start justify-between gap-6">
           <div className="space-y-2">
             <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50">Video Editor</h1>
@@ -1395,9 +1408,9 @@ export const ContentVideoEditor: React.FC = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 overflow-hidden">
           {/* Preview */}
-          <div className="lg:col-span-2 bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-4">
+          <div className="lg:col-span-2 bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-4 overflow-auto">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
               <div className="inline-flex rounded-lg border border-slate-200/70 dark:border-slate-700/60 bg-white/60 dark:bg-slate-900/30 p-1">
                 <button
@@ -1578,7 +1591,7 @@ export const ContentVideoEditor: React.FC = () => {
           </div>
 
           {/* Inspector */}
-          <div className="bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-4 space-y-4">
+          <div className="bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-4 space-y-4 overflow-auto">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">Inspector</div>
               {selectedClip && (
@@ -1756,100 +1769,88 @@ export const ContentVideoEditor: React.FC = () => {
         </div>
       </div>
 
-      {/* Bottom timeline */}
-      <div className="fixed left-0 right-0 bottom-10 z-40 px-4 md:px-8">
-        <div className="max-w-7xl 2xl:max-w-none mx-auto">
-          <div className="h-64 rounded-xl border border-slate-200/60 dark:border-slate-700/50 bg-white/90 dark:bg-slate-900/70 backdrop-blur shadow-lg overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200/60 dark:border-slate-700/50">
-              <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">Timeline (Video / Audio / Text)</div>
-              <div className="flex items-center gap-3">
-                <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">End: {projectEndSec.toFixed(2)}s</div>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => seekTo(0)}
-                    title="First frame"
-                  >
-                    |&lt;
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      const fps = Math.max(1, safeNumber(project.fps, 30));
-                      const step = 1 / fps;
-                      const curFrame = Math.round(playheadSec * fps);
-                      seekTo(Math.max(0, (curFrame - 1) * step));
-                    }}
-                    title="Previous frame"
-                  >
-                    &lt;
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      const fps = Math.max(1, safeNumber(project.fps, 30));
-                      const step = 1 / fps;
-                      const curFrame = Math.round(playheadSec * fps);
-                      seekTo((curFrame + 1) * step);
-                    }}
-                    title="Next frame"
-                  >
-                    &gt;
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      const fps = Math.max(1, safeNumber(project.fps, 30));
-                      const totalFrames = Math.max(1, Math.ceil(projectEndSec * fps));
-                      const lastIndex = totalFrames - 1;
-                      seekTo(lastIndex / fps);
-                    }}
-                    title="Last frame"
-                  >
-                    &gt;|
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => setIsPlaying((v) => !v)}
-                  title="Play/Pause (Space)"
-                >
-                  {isPlaying ? 'Pause' : 'Play'}
+      {/* Bottom timeline (inside the app layout; no page scroll) */}
+      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto pb-4 flex-none">
+        <div className="h-64 rounded-xl border border-slate-200/60 dark:border-slate-700/50 bg-white/90 dark:bg-slate-900/70 backdrop-blur shadow-lg overflow-hidden">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200/60 dark:border-slate-700/50">
+            <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">Timeline (Video / Audio / Text)</div>
+            <div className="flex items-center gap-3">
+              <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">End: {projectEndSec.toFixed(2)}s</div>
+              <div className="flex items-center gap-1">
+                <button type="button" className="btn btn-ghost" onClick={() => seekTo(0)} title="First frame">
+                  |&lt;
                 </button>
                 <button
                   type="button"
-                  className="btn btn-secondary"
+                  className="btn btn-ghost"
                   onClick={() => {
-                    setIsPlaying(false);
-                    seekTo(0);
+                    const fps = Math.max(1, safeNumber(project.fps, 30));
+                    const step = 1 / fps;
+                    const curFrame = Math.round(playheadSec * fps);
+                    seekTo(Math.max(0, (curFrame - 1) * step));
                   }}
+                  title="Previous frame"
                 >
-                  Stop
+                  &lt;
                 </button>
-                <button type="button" className="btn btn-ghost" onClick={() => setSelected(null)}>
-                  Clear selection
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    const fps = Math.max(1, safeNumber(project.fps, 30));
+                    const step = 1 / fps;
+                    const curFrame = Math.round(playheadSec * fps);
+                    seekTo((curFrame + 1) * step);
+                  }}
+                  title="Next frame"
+                >
+                  &gt;
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    const fps = Math.max(1, safeNumber(project.fps, 30));
+                    const totalFrames = Math.max(1, Math.ceil(projectEndSec * fps));
+                    const lastIndex = totalFrames - 1;
+                    seekTo(lastIndex / fps);
+                  }}
+                  title="Last frame"
+                >
+                  &gt;|
                 </button>
               </div>
+              <button type="button" className="btn btn-primary" onClick={() => setIsPlaying((v) => !v)} title="Play/Pause (Space)">
+                {isPlaying ? 'Pause' : 'Play'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setIsPlaying(false);
+                  seekTo(0);
+                }}
+              >
+                Stop
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => setSelected(null)}>
+                Clear selection
+              </button>
             </div>
-
-            <VideoEditorTimeline
-              project={project}
-              pxPerSec={pxPerSec}
-              playheadSec={playheadSec}
-              isPlaying={isPlaying}
-              selected={selected}
-              onSelect={setSelected}
-              onSetPlayhead={(t) => seekTo(t)}
-              onDragTo={moveClip}
-              onResizeClip={resizeClip}
-              onDeleteClip={deleteClip}
-            />
           </div>
+
+          <VideoEditorTimeline
+            project={project}
+            pxPerSec={pxPerSec}
+            playheadSec={playheadSec}
+            isPlaying={isPlaying}
+            selected={selected}
+            onSelect={setSelected}
+            onSetPlayhead={(t) => seekTo(t)}
+            onDragTo={moveClip}
+            onResizeClip={resizeClip}
+            onDeleteClip={deleteClip}
+          />
         </div>
       </div>
     </Layout>
