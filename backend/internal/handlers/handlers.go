@@ -399,6 +399,13 @@ type videoEditorExportText struct {
 	StartSec    float64 `json:"startSec"`
 	DurationSec float64 `json:"durationSec"`
 	Text        string  `json:"text"`
+	// Optional normalized placement relative to the output canvas.
+	// Center position in [0..1] and box size in [0..1].
+	X           float64 `json:"x"`
+	Y           float64 `json:"y"`
+	W           float64 `json:"w"`
+	H           float64 `json:"h"`
+	RotationDeg float64 `json:"rotationDeg"`
 }
 
 type videoEditorExportRequest struct {
@@ -2513,13 +2520,44 @@ func (h *Handler) ExportVideoEditor(w http.ResponseWriter, r *http.Request) {
 		if txt == "" || t.DurationSec <= 0 {
 			continue
 		}
+		// Defaults for older clients that don't send transform fields.
+		// We treat "all zero" as "missing", since x/y can legitimately be 0.
+		tx, ty, tw, th := t.X, t.Y, t.W, t.H
+		if tx == 0 && ty == 0 && tw == 0 && th == 0 && t.RotationDeg == 0 {
+			tx, ty, tw, th = 0.5, 0.55, 0.7, 0.18
+		}
+		if tx < 0 || tx > 1 {
+			tx = 0.5
+		}
+		if ty < 0 || ty > 1 {
+			ty = 0.55
+		}
+		if tw <= 0 || tw > 1 {
+			tw = 0.7
+		}
+		if th <= 0 || th > 1 {
+			th = 0.18
+		}
+		// Font size scales with the requested box height.
+		baseFont := float64(outH) * 0.055
+		factor := th / 0.18
+		if factor < 0.6 {
+			factor = 0.6
+		}
+		if factor > 2.8 {
+			factor = 2.8
+		}
+		fontSize := maxInt(18, int(baseFont*factor))
 		start := t.StartSec
 		end := t.StartSec + t.DurationSec
 		next := fmt.Sprintf("vtxt%d", i)
 		escaped := escapeFFmpegDrawText(txt)
+		// Position text by center point (normalized), clamped within bounds.
+		xExpr := fmt.Sprintf("max(0,min(w-text_w,(w*%.6f)-(text_w/2)))", tx)
+		yExpr := fmt.Sprintf("max(0,min(h-text_h,(h*%.6f)-(text_h/2)))", ty)
 		filterParts = append(filterParts,
-			fmt.Sprintf("[%s]drawtext=text='%s':x=(w-text_w)/2:y=(h-text_h)/2:fontsize=%d:fontcolor=white:box=1:boxcolor=black@0.55:enable='between(t,%.3f,%.3f)'[%s]",
-				currV, escaped, maxInt(18, int(float64(outH)*0.055)), start, end, next),
+			fmt.Sprintf("[%s]drawtext=text='%s':x=%s:y=%s:fontsize=%d:fontcolor=white:box=1:boxcolor=black@0.55:enable='between(t,%.3f,%.3f)'[%s]",
+				currV, escaped, xExpr, yExpr, fontSize, start, end, next),
 		)
 		currV = next
 	}

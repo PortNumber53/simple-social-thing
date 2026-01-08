@@ -78,7 +78,15 @@ export const Integrations: React.FC = () => {
             try { localStorage.setItem('tt_conn', JSON.stringify({ id: data.account.id, displayName: data.account.displayName ?? null })); } catch { void 0; }
           }
         } else {
-          setTtStatus(`TikTok connection failed: ${data.error || 'Unknown error'}`);
+          const err = data?.error || 'Unknown error';
+          const errType = typeof data?.errorType === 'string' && data.errorType ? data.errorType : null;
+          const errDesc = typeof data?.errorDescription === 'string' && data.errorDescription ? data.errorDescription : null;
+          const suffix = [errType ? `type=${errType}` : null, errDesc].filter(Boolean).join(' • ');
+          const hint =
+            String(err).toLowerCase() === 'invalid_scope'
+              ? ' (Tip: enable/approve the requested scope(s) in the TikTok Developer Portal; for video import this is video.list and may require Display API + app review.)'
+              : '';
+          setTtStatus(`TikTok connection failed: ${err}${suffix ? ` (${suffix})` : ''}${hint}`);
         }
       } catch {
         setTtStatus('TikTok connection status could not be parsed.');
@@ -715,6 +723,10 @@ export const Integrations: React.FC = () => {
                     TikTok developer docs
                   </a>
                 </div>
+                <div className="text-xs text-slate-600 dark:text-slate-400">
+                  Note: “Enable video import” requests the <span className="font-semibold">video.list</span> scope. If TikTok shows{' '}
+                  <span className="font-semibold">invalid_scope</span>, your TikTok app likely needs that scope enabled/approved and set live.
+                </div>
                 {ttScopes && (
                   <div className="space-y-1">
                     <span className={`block text-xs ${ttScopes.hasVideoList ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300'} break-words`}>
@@ -743,6 +755,9 @@ export const Integrations: React.FC = () => {
                   <span className="sm:hidden">Docs</span>
                   <span className="hidden sm:inline">TikTok developer docs</span>
                 </a>
+                <div className="col-span-2 text-xs text-slate-600 dark:text-slate-400">
+                  Connect uses Login Kit (<span className="font-semibold">user.info.basic</span>). Video import and posting require extra scopes and may need TikTok approval.
+                </div>
               </div>
             )}
           </IntegrationCard>

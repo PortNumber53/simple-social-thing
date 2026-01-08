@@ -28,6 +28,14 @@ export interface TextClip {
   startSec: number;
   durationSec: number;
   text: string;
+  // Normalized transform relative to the preview/export canvas.
+  // x/y represent the center position, in [0..1] of the canvas width/height.
+  // w/h represent the box size, in [0..1] of the canvas width/height.
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  rotationDeg?: number;
 }
 
 export type Clip = MediaClip | TextClip;

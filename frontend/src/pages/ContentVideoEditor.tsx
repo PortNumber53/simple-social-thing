@@ -131,6 +131,7 @@ export const ContentVideoEditor: React.FC = () => {
   const [lastExportUrl, setLastExportUrl] = useState<string>('');
   const [lastExportName, setLastExportName] = useState<string>('');
   const [mainTab, setMainTab] = useState<'preview' | 'export'>('preview');
+  const [previewFitWidthPx, setPreviewFitWidthPx] = useState<number>(520);
   const [exportVideoBps, setExportVideoBps] = useState<number>(2_500_000);
   const [exportAudioBps] = useState<number>(128_000);
   const [previewPreset, setPreviewPreset] = useState<string>('ig_reels');
@@ -161,6 +162,7 @@ export const ContentVideoEditor: React.FC = () => {
 
   const videoPreviewRef = useRef<HTMLVideoElement | null>(null);
   const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
+  const previewHostRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     projectRef.current = project;
@@ -281,6 +283,50 @@ export const ContentVideoEditor: React.FC = () => {
     return clips.filter((c) => c.kind === 'text' && t >= c.startSec && t < clipEndSec(c)) as TextClip[];
   }, [playheadSec, textTrack]);
 
+  const normalizeTextTransform = (c: TextClip) => {
+    const x = clamp(safeNumber((c as any).x, 0.5), 0, 1);
+    const y = clamp(safeNumber((c as any).y, 0.5), 0, 1);
+    const w = clamp(safeNumber((c as any).w, 0.7), 0.05, 1);
+    const h = clamp(safeNumber((c as any).h, 0.18), 0.05, 1);
+    const rotationDeg = safeNumber((c as any).rotationDeg, 0);
+    return { x, y, w, h, rotationDeg };
+  };
+
+  const clampTextBoxToCanvas = (t: { x: number; y: number; w: number; h: number; rotationDeg: number }) => {
+    // Keep the box within the canvas bounds (ignoring rotation for clamping).
+    const w = clamp(t.w, 0.05, 1);
+    const h = clamp(t.h, 0.05, 1);
+    const x = clamp(t.x, w / 2, 1 - w / 2);
+    const y = clamp(t.y, h / 2, 1 - h / 2);
+    const rotationDeg = ((t.rotationDeg % 360) + 360) % 360;
+    return { x, y, w, h, rotationDeg };
+  };
+
+  const updateTextClipById = (trackId: string, clipId: string, patch: Partial<TextClip>) => {
+    setProject((prev) => ({
+      ...prev,
+      tracks: prev.tracks.map((t) => {
+        if (t.id !== trackId) return t;
+        return {
+          ...t,
+          clips: t.clips.map((c) => (c.id === clipId ? ({ ...c, ...patch } as Clip) : c)),
+        };
+      }),
+    }));
+  };
+
+  const textDragRef = useRef<{
+    mode: 'move' | 'resize' | 'rotate';
+    handle?: 'nw' | 'ne' | 'sw' | 'se';
+    trackId: string;
+    clipId: string;
+    startClientX: number;
+    startClientY: number;
+    canvasRect: DOMRect;
+    init: { x: number; y: number; w: number; h: number; rotationDeg: number };
+    rotateStartRad?: number;
+  } | null>(null);
+
   const activeVisualMediaClip = useMemo(() => {
     if (!activeVisual || activeVisual.kind === 'text') return null;
     return activeVisual as MediaClip;
@@ -337,6 +383,26 @@ export const ContentVideoEditor: React.FC = () => {
       label: 'Custom',
     };
   }, [customAspectH, customAspectW, previewPreset, previewPresets]);
+
+  // Fit the preview/export canvas into the available space to avoid scrollbars.
+  useEffect(() => {
+    const host = previewHostRef.current;
+    if (!host) return;
+    const maxW = mainTab === 'export' ? 720 : 520;
+    const pad = 16; // safety padding
+    const compute = () => {
+      const availW = Math.max(0, host.clientWidth - pad);
+      const availH = Math.max(0, host.clientHeight - pad);
+      if (availW <= 0 || availH <= 0) return;
+      const widthFromHeight = availH * (aspect.w / aspect.h);
+      const next = Math.max(180, Math.min(maxW, availW, widthFromHeight));
+      setPreviewFitWidthPx(next);
+    };
+    compute();
+    const ro = new ResizeObserver(() => compute());
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, [aspect.h, aspect.w, mainTab]);
 
   const exportTimeline = async () => {
     if (!user) return;
@@ -405,7 +471,19 @@ export const ContentVideoEditor: React.FC = () => {
       const textSegs = (project.tracks.find((t) => t.kind === 'text')?.clips || [])
         .filter((c) => c.kind === 'text')
         .map((c) => c as TextClip)
-        .map((c) => ({ startSec: c.startSec, durationSec: c.durationSec, text: c.text || '' }));
+        .map((c) => {
+          const t = normalizeTextTransform(c);
+          return {
+            startSec: c.startSec,
+            durationSec: c.durationSec,
+            text: c.text || '',
+            x: t.x,
+            y: t.y,
+            w: t.w,
+            h: t.h,
+            rotationDeg: t.rotationDeg,
+          };
+        });
 
       for (const s of [...videoSegs, ...audioSegs]) {
         if (!isServerUrl(s.sourceUrl)) {
@@ -913,6 +991,12 @@ export const ContentVideoEditor: React.FC = () => {
       startSec: startAt,
       durationSec: Math.max(0.1, safeNumber(textDuration, 3)),
       text: String(textDraft || '').slice(0, 200),
+      // Centered by default with a reasonably large box.
+      x: 0.5,
+      y: 0.55,
+      w: 0.7,
+      h: 0.18,
+      rotationDeg: 0,
     };
     setProject((prev) => ({
       ...prev,
@@ -1214,13 +1298,11 @@ export const ContentVideoEditor: React.FC = () => {
 
   return (
     <Layout headerPaddingClass="pt-24">
-      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto h-[calc(100vh-96px)] flex flex-col overflow-hidden space-y-6">
-        <header className="flex items-start justify-between gap-6">
+      {/* Full-viewport editor: subtract header padding (pt-24 => 96px) + StatusBar (h-10 => 40px). */}
+      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto h-[calc(100vh-136px)] flex flex-col overflow-hidden">
+        <header className="flex items-start justify-between gap-6 mb-3">
           <div className="space-y-2">
             <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50">Video Editor</h1>
-            <p className="text-sm text-slate-600 dark:text-slate-300">
-              MVP timeline editor with layers for video, audio, and text. Supports trimming (“crop”) and gluing adjacent clips.
-            </p>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -1289,45 +1371,20 @@ export const ContentVideoEditor: React.FC = () => {
           </div>
         </header>
 
-        {projectEndSec > 0.05 && (
-          <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/40 bg-white/70 dark:bg-slate-900/30 px-4 py-3 text-sm text-slate-700 dark:text-slate-200">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="font-semibold">Export settings</div>
-              <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Video bitrate</label>
-              <select
-                className="rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-2 py-1 text-xs"
-                value={String(exportVideoBps)}
-                onChange={(e) => setExportVideoBps(Math.max(300_000, Number(e.target.value) || 2_500_000))}
-                disabled={isExporting}
-              >
-                <option value="1200000">Low (1.2 Mbps)</option>
-                <option value="2500000">Medium (2.5 Mbps)</option>
-                <option value="5000000">High (5.0 Mbps)</option>
-              </select>
-              <div className="text-xs text-slate-600 dark:text-slate-300">
-                Est. size: {(estimatedExportBytes / (1024 * 1024)).toFixed(1)}MB
-              </div>
-              <div className="text-xs text-slate-600 dark:text-slate-300">Output: MP4 (server-side)</div>
-              {estimatedExportBytes > exportLimits.instagramMaxBytes ? (
-                <div className="text-xs text-rose-700 dark:text-rose-200">
-                  Estimated size exceeds Instagram’s limit (~{(exportLimits.instagramMaxBytes / (1024 * 1024)).toFixed(0)}MB).
-                  <button type="button" className="ml-2 underline" onClick={autoReduceExportBitrateToFitInstagram} disabled={isExporting}>
-                    Reduce bitrate to fit
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        )}
+        {/* Export settings moved to the Inspector to keep the main preview area clean. */}
 
-        {mediaBusy && (
-          <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/40 bg-white/70 dark:bg-slate-900/30 px-4 py-2 text-sm text-slate-700 dark:text-slate-200">
-            {mediaBusy}
-          </div>
-        )}
-        {playbackError && (
-          <div className="rounded-lg border border-rose-200/70 dark:border-rose-800/60 bg-rose-50/80 dark:bg-rose-900/20 px-4 py-2 text-sm text-rose-800 dark:text-rose-200">
-            Playback error: {playbackError}
+        {(mediaBusy || playbackError) && (
+          <div className="mt-3 space-y-2">
+            {mediaBusy && (
+              <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/40 bg-white/70 dark:bg-slate-900/30 px-4 py-2 text-sm text-slate-700 dark:text-slate-200">
+                {mediaBusy}
+              </div>
+            )}
+            {playbackError && (
+              <div className="rounded-lg border border-rose-200/70 dark:border-rose-800/60 bg-rose-50/80 dark:bg-rose-900/20 px-4 py-2 text-sm text-rose-800 dark:text-rose-200">
+                Playback error: {playbackError}
+              </div>
+            )}
           </div>
         )}
         {/* Exported video is shown inside the Preview/Export tabs below. */}
@@ -1408,9 +1465,10 @@ export const ContentVideoEditor: React.FC = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 overflow-hidden">
+        {/* On small screens, allow this area to scroll so the Inspector/Export settings are reachable. */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 overflow-auto lg:overflow-hidden mt-3">
           {/* Preview */}
-          <div className="lg:col-span-2 bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-4 overflow-auto">
+          <div className="lg:col-span-2 bg-white/80 dark:bg-slate-900/40 rounded-xl border border-slate-200/60 dark:border-slate-700/40 p-4 overflow-hidden flex flex-col min-h-0">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
               <div className="inline-flex rounded-lg border border-slate-200/70 dark:border-slate-700/60 bg-white/60 dark:bg-slate-900/30 p-1">
                 <button
@@ -1478,14 +1536,13 @@ export const ContentVideoEditor: React.FC = () => {
               )}
             </div>
 
-            {mainTab === 'preview' ? (
-              <div className="space-y-3">
-                <div className="relative">
-                <div className="w-full">
-                  <div className="mx-auto w-full max-w-[520px]">
+            <div ref={previewHostRef} className="flex-1 min-h-0 flex items-center justify-center overflow-hidden">
+              {mainTab === 'preview' ? (
+                <div className="relative" style={{ width: `${previewFitWidthPx}px` }}>
                   <div
                     className="rounded-xl border border-slate-200/60 dark:border-slate-700/50 bg-slate-50/60 dark:bg-slate-950/30 overflow-hidden relative shadow-inner"
                     style={{ aspectRatio: `${aspect.w} / ${aspect.h}` }}
+                    onDragStartCapture={(e) => e.preventDefault()}
                   >
                     {/* Canvas label */}
                     <div className="absolute top-2 left-2 z-10 text-[11px] px-2 py-1 rounded bg-black/40 text-white">
@@ -1500,15 +1557,19 @@ export const ContentVideoEditor: React.FC = () => {
                       // eslint-disable-next-line jsx-a11y/alt-text
                       <img
                         src={activeVisualMediaAtPlayhead?.part.objectUrl || activeVisualMediaClip?.parts[0]?.objectUrl}
-                        className="absolute inset-0 w-full h-full object-contain"
+                        className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
+                        draggable={false}
+                        onDragStart={(e) => e.preventDefault()}
                       />
                     ) : activeVisual.kind === 'video' ? (
                       <video
                         ref={videoPreviewRef}
-                        className="absolute inset-0 w-full h-full object-contain bg-black"
+                        className="absolute inset-0 w-full h-full object-contain bg-black pointer-events-none select-none"
                         muted={!useVideoAudio}
                         playsInline
                         preload="auto"
+                        draggable={false as any}
+                        onDragStart={(e) => e.preventDefault()}
                       />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center">
@@ -1518,76 +1579,251 @@ export const ContentVideoEditor: React.FC = () => {
 
                     {/* Text overlay */}
                     {activeTextClips.length > 0 && (
-                      <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-6">
-                        <div className="space-y-2 text-center">
-                          {activeTextClips.map((c) => (
+                      <div className="absolute inset-0">
+                        {activeTextClips.map((c) => {
+                          const trackId = textTrack?.id || 'text';
+                          const isSelected = !!selected && selected.trackId === trackId && selected.clipId === c.id;
+                          const t = normalizeTextTransform(c);
+                          return (
                             <div
                               key={c.id}
-                              className="inline-block px-4 py-2 rounded-lg bg-black/55 text-white text-2xl font-extrabold tracking-tight"
+                              className="absolute z-20 touch-none"
+                              style={{
+                                left: `${t.x * 100}%`,
+                                top: `${t.y * 100}%`,
+                                width: `${t.w * 100}%`,
+                                height: `${t.h * 100}%`,
+                                transform: `translate(-50%, -50%) rotate(${t.rotationDeg}deg)`,
+                                transformOrigin: 'center center',
+                              }}
+                              onPointerDown={(e) => {
+                                if (e.button !== 0) return;
+                                // Prevent native drag/selection gestures (some browsers show a drag-ghost from top-left).
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const canvas = (e.currentTarget.parentElement as HTMLDivElement) || null;
+                                const canvasRect = canvas?.getBoundingClientRect();
+                                if (!canvasRect) return;
+
+                                const target = e.target as HTMLElement;
+                                const handleEl = target?.closest?.('[data-handle]') as HTMLElement | null;
+                                const handle = (handleEl?.getAttribute?.('data-handle') || '') as any;
+                                const mode: 'move' | 'resize' | 'rotate' =
+                                  handle === 'rotate' ? 'rotate' : handle ? 'resize' : 'move';
+
+                                // Selecting first keeps Inspector in sync.
+                                setSelected({ trackId, clipId: c.id });
+
+                                const init = clampTextBoxToCanvas(normalizeTextTransform(c));
+                                const ref: any = {
+                                  mode,
+                                  handle,
+                                  trackId,
+                                  clipId: c.id,
+                                  startClientX: e.clientX,
+                                  startClientY: e.clientY,
+                                  canvasRect,
+                                  init,
+                                };
+                                if (mode === 'rotate') {
+                                  const cx = canvasRect.left + init.x * canvasRect.width;
+                                  const cy = canvasRect.top + init.y * canvasRect.height;
+                                  ref.rotateStartRad = Math.atan2(e.clientY - cy, e.clientX - cx);
+                                }
+                                textDragRef.current = ref;
+                                try {
+                                  (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+                                } catch {
+                                  /* ignore */
+                                }
+                              }}
+                              onPointerMove={(e) => {
+                                const st = textDragRef.current;
+                                if (!st) return;
+                                if (st.trackId !== trackId || st.clipId !== c.id) return;
+                                if (e.buttons !== 1) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+
+                                const dx = e.clientX - st.startClientX;
+                                const dy = e.clientY - st.startClientY;
+                                const W = Math.max(1, st.canvasRect.width);
+                                const H = Math.max(1, st.canvasRect.height);
+                                const init = st.init;
+
+                                if (st.mode === 'move') {
+                                  const next = clampTextBoxToCanvas({
+                                    ...init,
+                                    x: init.x + dx / W,
+                                    y: init.y + dy / H,
+                                  });
+                                  updateTextClipById(trackId, c.id, next as any);
+                                  return;
+                                }
+
+                                if (st.mode === 'rotate') {
+                                  const cx = st.canvasRect.left + init.x * W;
+                                  const cy = st.canvasRect.top + init.y * H;
+                                  const cur = Math.atan2(e.clientY - cy, e.clientX - cx);
+                                  const start = typeof st.rotateStartRad === 'number' ? st.rotateStartRad : cur;
+                                  const delta = cur - start;
+                                  const next = clampTextBoxToCanvas({
+                                    ...init,
+                                    rotationDeg: init.rotationDeg + (delta * 180) / Math.PI,
+                                  });
+                                  updateTextClipById(trackId, c.id, next as any);
+                                  return;
+                                }
+
+                                // Resize in local (unrotated) space, then convert center shift back to global.
+                                const rad = (init.rotationDeg * Math.PI) / 180;
+                                // IMPORTANT: do geometry in pixel space to avoid anisotropic scaling bugs
+                                // (W and H differ, so rotating normalized deltas distorts direction).
+                                const cosU = Math.cos(-rad);
+                                const sinU = Math.sin(-rad);
+                                const localDxPx = cosU * dx - sinU * dy;
+                                const localDyPx = sinU * dx + cosU * dy;
+
+                                const initWPx = init.w * W;
+                                const initHPx = init.h * H;
+
+                                let dwPx = 0;
+                                let dhPx = 0;
+                                switch (st.handle) {
+                                  case 'nw':
+                                    dwPx = -localDxPx;
+                                    dhPx = -localDyPx;
+                                    break;
+                                  case 'ne':
+                                    dwPx = localDxPx;
+                                    dhPx = -localDyPx;
+                                    break;
+                                  case 'sw':
+                                    dwPx = -localDxPx;
+                                    dhPx = localDyPx;
+                                    break;
+                                  case 'se':
+                                  default:
+                                    dwPx = localDxPx;
+                                    dhPx = localDyPx;
+                                    break;
+                                }
+
+                                // Center shift is half the dragged-corner movement in local space.
+                                const shiftLocalXPx = localDxPx / 2;
+                                const shiftLocalYPx = localDyPx / 2;
+
+                                const minWPx = 0.08 * W;
+                                const minHPx = 0.06 * H;
+                                const nextWPx = Math.max(minWPx, initWPx + dwPx);
+                                const nextHPx = Math.max(minHPx, initHPx + dhPx);
+
+                                // Convert local center shift back to global pixels.
+                                const shiftGlobalXPx = Math.cos(rad) * shiftLocalXPx - Math.sin(rad) * shiftLocalYPx;
+                                const shiftGlobalYPx = Math.sin(rad) * shiftLocalXPx + Math.cos(rad) * shiftLocalYPx;
+
+                                const next = clampTextBoxToCanvas({
+                                  ...init,
+                                  x: init.x + shiftGlobalXPx / W,
+                                  y: init.y + shiftGlobalYPx / H,
+                                  w: nextWPx / W,
+                                  h: nextHPx / H,
+                                });
+                                updateTextClipById(trackId, c.id, next as any);
+                              }}
+                              onPointerUp={() => {
+                                textDragRef.current = null;
+                              }}
+                              onPointerCancel={() => {
+                                textDragRef.current = null;
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelected({ trackId, clipId: c.id });
+                              }}
                             >
-                              {c.text || 'Text'}
+                              <div
+                                className={[
+                                  'w-full h-full rounded-lg bg-black/55 text-white font-extrabold tracking-tight',
+                                  'flex items-center justify-center px-4 py-2 text-2xl',
+                                  isSelected ? 'ring-2 ring-primary-400' : 'hover:ring-2 hover:ring-white/30',
+                                  'select-none cursor-move',
+                                ].join(' ')}
+                              >
+                                {c.text || 'Text'}
+                              </div>
+
+                              {/* Handles (only for selected clip) */}
+                              {isSelected && (
+                                <>
+                                  {(['nw', 'ne', 'sw', 'se'] as const).map((h) => (
+                                    <div
+                                      key={h}
+                                      data-handle={h}
+                                      className={[
+                                        'absolute w-3 h-3 rounded-sm bg-white border border-slate-900/60 shadow',
+                                        h === 'ne' || h === 'sw' ? 'cursor-nesw-resize' : 'cursor-nwse-resize',
+                                        'touch-none',
+                                      ].join(' ')}
+                                      style={{
+                                        left: h.includes('w') ? -6 : undefined,
+                                        right: h.includes('e') ? -6 : undefined,
+                                        top: h.includes('n') ? -6 : undefined,
+                                        bottom: h.includes('s') ? -6 : undefined,
+                                      }}
+                                      onPointerDownCapture={(e) => e.preventDefault()}
+                                      title="Resize"
+                                    />
+                                  ))}
+                                  {/* Rotation handle (simplified for debugging dead spots): single interactive circle */}
+                                  <div
+                                    data-handle="rotate"
+                                    className="absolute left-1/2 -top-12 -translate-x-1/2 w-10 h-10 cursor-grab active:cursor-grabbing touch-none"
+                                    onPointerDownCapture={(e) => e.preventDefault()}
+                                    onDragStart={(e) => e.preventDefault()}
+                                    title="Rotate"
+                                  >
+                                    {/* Full hit-surface to avoid dead spots */}
+                                    <div data-handle="rotate" className="absolute inset-0 z-10 bg-transparent rounded-full" />
+
+                                    {/* Decorations (non-interactive) */}
+                                    <div className="absolute left-1/2 top-[22px] -translate-x-1/2 w-px h-5 bg-white/80 pointer-events-none" />
+                                    <div className="absolute inset-0 flex items-start justify-center pointer-events-none">
+                                      <div className="mt-1 w-7 h-7 rounded-full bg-white/95 border border-slate-900/40 shadow flex items-center justify-center">
+                                        <svg viewBox="0 0 24 24" className="w-4 h-4 text-slate-900/70" aria-hidden>
+                                          <path
+                                            fill="currentColor"
+                                            d="M12 5a7 7 0 1 1-6.7 9.1 1 1 0 1 1 1.9-.6A5 5 0 1 0 12 7h-1.6a1 1 0 1 1 0-2H12z"
+                                          />
+                                          <path fill="currentColor" d="M12 3l3 3-3 3V3z" />
+                                        </svg>
+                                        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-slate-900/60" />
+                                      </div>
+                                    </div>
+                                  </div>
+                                </>
+                              )}
                             </div>
-                          ))}
-                        </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
-
-                  {previewPreset === 'custom' && (
-                    <div className="mt-3 grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Aspect W</label>
-                        <input
-                          className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400 tabular-nums"
-                          type="number"
-                          step="1"
-                          min={1}
-                          value={customAspectW}
-                          onChange={(e) => setCustomAspectW(Math.max(1, safeNumber(e.target.value, 9)))}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Aspect H</label>
-                        <input
-                          className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400 tabular-nums"
-                          type="number"
-                          step="1"
-                          min={1}
-                          value={customAspectH}
-                          onChange={(e) => setCustomAspectH(Math.max(1, safeNumber(e.target.value, 16)))}
-                        />
-                      </div>
-                    </div>
-                  )}
+                  {/* Audio element for timeline playback */}
+                  <audio ref={audioPreviewRef} className="absolute w-0 h-0 opacity-0 pointer-events-none" preload="auto" />
                 </div>
-              </div>
-
-              {/* Audio element for timeline playback */}
-              <audio ref={audioPreviewRef} className="absolute w-0 h-0 opacity-0 pointer-events-none" preload="auto" />
-            </div>
-
-            <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-              Timeline playback + export are MVP: export records a real-time preview into a video file and saves it to Media Gallery → <span className="font-semibold">Exports</span>.
-            </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {!lastExportUrl ? (
-                  <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-950/20 p-4 text-sm text-slate-600 dark:text-slate-300">
-                    Export a video to preview it here.
+              ) : !lastExportUrl ? (
+                <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-950/20 p-4 text-sm text-slate-600 dark:text-slate-300">
+                  Export a video to preview it here.
+                </div>
+              ) : (
+                <div className="w-full" style={{ width: `${previewFitWidthPx}px` }}>
+                  <div className="rounded-xl border border-slate-200/60 dark:border-slate-700/50 bg-black/90 overflow-hidden">
+                    <video key={lastExportUrl} src={lastExportUrl} className="w-full h-auto max-h-full" controls playsInline />
                   </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="rounded-xl border border-slate-200/60 dark:border-slate-700/50 bg-black/90 overflow-hidden">
-                      <video key={lastExportUrl} src={lastExportUrl} className="w-full max-h-[520px]" controls playsInline />
-                    </div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                      Exported file is stored in Media Gallery → <span className="font-semibold">Exports</span>.
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Inspector */}
@@ -1599,6 +1835,71 @@ export const ContentVideoEditor: React.FC = () => {
                   Delete
                 </button>
               )}
+            </div>
+
+            {projectEndSec > 0.05 && (
+              <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/50 bg-white/60 dark:bg-slate-900/20 p-3 space-y-2">
+                <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">Export settings</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Video bitrate</label>
+                  <select
+                    className="rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-2 py-1 text-xs"
+                    value={String(exportVideoBps)}
+                    onChange={(e) => setExportVideoBps(Math.max(300_000, Number(e.target.value) || 2_500_000))}
+                    disabled={isExporting}
+                  >
+                    <option value="1200000">Low (1.2 Mbps)</option>
+                    <option value="2500000">Medium (2.5 Mbps)</option>
+                    <option value="5000000">High (5.0 Mbps)</option>
+                  </select>
+                  <div className="text-xs text-slate-600 dark:text-slate-300 tabular-nums">
+                    Est. {(estimatedExportBytes / (1024 * 1024)).toFixed(1)}MB
+                  </div>
+                </div>
+                <div className="text-xs text-slate-600 dark:text-slate-300">Output: MP4 (server-side)</div>
+                {estimatedExportBytes > exportLimits.instagramMaxBytes ? (
+                  <div className="text-xs text-rose-700 dark:text-rose-200">
+                    Exceeds Instagram’s limit (~{(exportLimits.instagramMaxBytes / (1024 * 1024)).toFixed(0)}MB).
+                    <button type="button" className="ml-2 underline" onClick={autoReduceExportBitrateToFitInstagram} disabled={isExporting}>
+                      Reduce bitrate
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            )}
+
+            {previewPreset === 'custom' && (
+              <div className="rounded-lg border border-slate-200/60 dark:border-slate-700/50 bg-white/60 dark:bg-slate-900/20 p-3 space-y-2">
+                <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">Preview format (custom)</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Aspect W</label>
+                    <input
+                      className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400 tabular-nums"
+                      type="number"
+                      step="1"
+                      min={1}
+                      value={customAspectW}
+                      onChange={(e) => setCustomAspectW(Math.max(1, safeNumber(e.target.value, 9)))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Aspect H</label>
+                    <input
+                      className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400 tabular-nums"
+                      type="number"
+                      step="1"
+                      min={1}
+                      value={customAspectH}
+                      onChange={(e) => setCustomAspectH(Math.max(1, safeNumber(e.target.value, 16)))}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+              Tip: export saves to Media Gallery → <span className="font-semibold">Exports</span>.
             </div>
 
             {!selectedClip ? (
@@ -1651,6 +1952,21 @@ export const ContentVideoEditor: React.FC = () => {
                       value={selectedClip.durationSec}
                       onChange={(e) => updateSelectedClip({ durationSec: Math.max(0.1, safeNumber(e.target.value, 3)) } as any)}
                     />
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-700/40">
+                      <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">Transform</div>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() =>
+                          updateSelectedClip({ x: 0.5, y: 0.55, w: 0.7, h: 0.18, rotationDeg: 0 } as any)
+                        }
+                      >
+                        Reset
+                      </button>
+                    </div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400">
+                      Tip: drag the text box in the preview. Use corner handles to resize and the top handle to rotate.
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -1767,90 +2083,90 @@ export const ContentVideoEditor: React.FC = () => {
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Bottom timeline (inside the app layout; no page scroll) */}
-      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto pb-4 flex-none">
-        <div className="h-64 rounded-xl border border-slate-200/60 dark:border-slate-700/50 bg-white/90 dark:bg-slate-900/70 backdrop-blur shadow-lg overflow-hidden">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200/60 dark:border-slate-700/50">
-            <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">Timeline (Video / Audio / Text)</div>
-            <div className="flex items-center gap-3">
-              <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">End: {projectEndSec.toFixed(2)}s</div>
-              <div className="flex items-center gap-1">
-                <button type="button" className="btn btn-ghost" onClick={() => seekTo(0)} title="First frame">
-                  |&lt;
+        {/* Bottom timeline (inside the app layout; no page scroll) */}
+        <div className="w-full pb-0 flex-none mt-0">
+          <div className="h-64 rounded-xl border border-slate-200/60 dark:border-slate-700/50 bg-white/90 dark:bg-slate-900/70 backdrop-blur shadow-lg overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200/60 dark:border-slate-700/50">
+              <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">Timeline (Video / Audio / Text)</div>
+              <div className="flex items-center gap-3">
+                <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">End: {projectEndSec.toFixed(2)}s</div>
+                <div className="flex items-center gap-1">
+                  <button type="button" className="btn btn-ghost" onClick={() => seekTo(0)} title="First frame">
+                    |&lt;
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      const fps = Math.max(1, safeNumber(project.fps, 30));
+                      const step = 1 / fps;
+                      const curFrame = Math.round(playheadSec * fps);
+                      seekTo(Math.max(0, (curFrame - 1) * step));
+                    }}
+                    title="Previous frame"
+                  >
+                    &lt;
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      const fps = Math.max(1, safeNumber(project.fps, 30));
+                      const step = 1 / fps;
+                      const curFrame = Math.round(playheadSec * fps);
+                      seekTo((curFrame + 1) * step);
+                    }}
+                    title="Next frame"
+                  >
+                    &gt;
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      const fps = Math.max(1, safeNumber(project.fps, 30));
+                      const totalFrames = Math.max(1, Math.ceil(projectEndSec * fps));
+                      const lastIndex = totalFrames - 1;
+                      seekTo(lastIndex / fps);
+                    }}
+                    title="Last frame"
+                  >
+                    &gt;|
+                  </button>
+                </div>
+                <button type="button" className="btn btn-primary" onClick={() => setIsPlaying((v) => !v)} title="Play/Pause (Space)">
+                  {isPlaying ? 'Pause' : 'Play'}
                 </button>
                 <button
                   type="button"
-                  className="btn btn-ghost"
+                  className="btn btn-secondary"
                   onClick={() => {
-                    const fps = Math.max(1, safeNumber(project.fps, 30));
-                    const step = 1 / fps;
-                    const curFrame = Math.round(playheadSec * fps);
-                    seekTo(Math.max(0, (curFrame - 1) * step));
+                    setIsPlaying(false);
+                    seekTo(0);
                   }}
-                  title="Previous frame"
                 >
-                  &lt;
+                  Stop
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => {
-                    const fps = Math.max(1, safeNumber(project.fps, 30));
-                    const step = 1 / fps;
-                    const curFrame = Math.round(playheadSec * fps);
-                    seekTo((curFrame + 1) * step);
-                  }}
-                  title="Next frame"
-                >
-                  &gt;
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => {
-                    const fps = Math.max(1, safeNumber(project.fps, 30));
-                    const totalFrames = Math.max(1, Math.ceil(projectEndSec * fps));
-                    const lastIndex = totalFrames - 1;
-                    seekTo(lastIndex / fps);
-                  }}
-                  title="Last frame"
-                >
-                  &gt;|
+                <button type="button" className="btn btn-ghost" onClick={() => setSelected(null)}>
+                  Clear selection
                 </button>
               </div>
-              <button type="button" className="btn btn-primary" onClick={() => setIsPlaying((v) => !v)} title="Play/Pause (Space)">
-                {isPlaying ? 'Pause' : 'Play'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => {
-                  setIsPlaying(false);
-                  seekTo(0);
-                }}
-              >
-                Stop
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={() => setSelected(null)}>
-                Clear selection
-              </button>
             </div>
-          </div>
 
-          <VideoEditorTimeline
-            project={project}
-            pxPerSec={pxPerSec}
-            playheadSec={playheadSec}
-            isPlaying={isPlaying}
-            selected={selected}
-            onSelect={setSelected}
-            onSetPlayhead={(t) => seekTo(t)}
-            onDragTo={moveClip}
-            onResizeClip={resizeClip}
-            onDeleteClip={deleteClip}
-          />
+            <VideoEditorTimeline
+              project={project}
+              pxPerSec={pxPerSec}
+              playheadSec={playheadSec}
+              isPlaying={isPlaying}
+              selected={selected}
+              onSelect={setSelected}
+              onSetPlayhead={(t) => seekTo(t)}
+              onDragTo={moveClip}
+              onResizeClip={resizeClip}
+              onDeleteClip={deleteClip}
+            />
+          </div>
         </div>
       </div>
     </Layout>

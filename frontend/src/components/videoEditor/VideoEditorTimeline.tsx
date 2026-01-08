@@ -104,12 +104,12 @@ export const VideoEditorTimeline: React.FC<{
           const clips = [...track.clips].sort(sortClipsByStart);
           return (
             <div key={track.id} className="flex items-stretch border-b border-slate-200/60 dark:border-slate-700/50">
-              <div className="w-32 shrink-0 px-3 py-2 border-r border-slate-200/70 dark:border-slate-700/60 bg-white/70 dark:bg-slate-900/30">
+              <div className="w-32 shrink-0 px-3 py-1.5 border-r border-slate-200/70 dark:border-slate-700/60 bg-white/70 dark:bg-slate-900/30">
                 <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{track.name}</div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 uppercase tracking-wide">{track.kind}</div>
               </div>
               <div className="flex-1 overflow-x-auto overflow-y-hidden">
-                <div className="relative h-14" style={{ width: timelineWidthPx }}>
+                <div className="relative h-12" style={{ width: timelineWidthPx }}>
                   <div className="absolute inset-0 pointer-events-none">
                     {markers.map((s) => (
                       <div
@@ -130,7 +130,7 @@ export const VideoEditorTimeline: React.FC<{
                       <div
                         key={clip.id}
                         className={[
-                          'group absolute top-2 h-10 rounded-md border shadow-sm text-left px-2 overflow-hidden',
+                          'group absolute top-1 h-9 rounded-md border shadow-sm text-left px-2 overflow-hidden',
                           color.bg,
                           color.border,
                           color.text,

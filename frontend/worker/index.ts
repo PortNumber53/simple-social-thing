@@ -2873,10 +2873,11 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
 
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
+  const errorType = url.searchParams.get('error_type');
   const errorDescription = url.searchParams.get('error_description');
 
   if (error) {
-    const data = encodeURIComponent(JSON.stringify({ success: false, error, errorDescription }));
+    const data = encodeURIComponent(JSON.stringify({ success: false, error, errorType, errorDescription }));
     return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
   }
   if (!code) {
