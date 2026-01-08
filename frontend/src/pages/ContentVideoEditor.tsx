@@ -332,6 +332,14 @@ export const ContentVideoEditor: React.FC = () => {
     setMediaBusy('Exporting (server)…');
     setLastExportUrl('');
     setLastExportName('');
+    // Open the export tab synchronously from the click handler.
+    // Browsers often block window.open() if it's called after an await.
+    let exportWin: Window | null = null;
+    try {
+      exportWin = window.open('about:blank', '_blank', 'noopener,noreferrer');
+    } catch {
+      exportWin = null;
+    }
     try {
       const fps = Math.max(10, Math.min(60, Math.round(safeNumber(project.fps, 30))));
       const targetLong = 1280;
@@ -397,6 +405,7 @@ export const ContentVideoEditor: React.FC = () => {
         if (!isServerUrl(s.sourceUrl)) {
           setMediaBusy('Export requires server-hosted media. Please add clips via Media Gallery (or re-add so they upload).');
           setIsExporting(false);
+          try { exportWin?.close(); } catch { /* ignore */ }
           return;
         }
       }
@@ -431,6 +440,7 @@ export const ContentVideoEditor: React.FC = () => {
       if (!res.ok) {
         setMediaBusy(`Export failed (HTTP ${res.status}). ${String(dataText || '').slice(0, 600)}`);
         setIsExporting(false);
+        try { exportWin?.close(); } catch { /* ignore */ }
         return;
       }
       const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
@@ -445,15 +455,24 @@ export const ContentVideoEditor: React.FC = () => {
       setIsExporting(false);
       if (url) {
         try {
-          window.open(url, '_blank', 'noopener,noreferrer');
+          if (exportWin) {
+            exportWin.location.href = url;
+            exportWin.focus?.();
+          } else {
+            window.open(url, '_blank', 'noopener,noreferrer');
+          }
         } catch {
+          try { exportWin?.close(); } catch { /* ignore */ }
           /* ignore */
         }
+      } else {
+        try { exportWin?.close(); } catch { /* ignore */ }
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setMediaBusy(`Export failed: ${msg}`);
       setIsExporting(false);
+      try { exportWin?.close(); } catch { /* ignore */ }
     }
   };
 
