@@ -336,7 +336,12 @@ export const ContentVideoEditor: React.FC = () => {
     // Browsers often block window.open() if it's called after an await.
     let exportWin: Window | null = null;
     try {
-      exportWin = window.open('about:blank', '_blank', 'noopener,noreferrer');
+      // NOTE: Some browsers may open the tab but return `null` when using noopener/noreferrer.
+      // We prefer a reliable Window reference so we can navigate it once the export URL is ready.
+      exportWin = window.open('about:blank', '_blank');
+      // Best-effort protection against reverse tabnabbing.
+      // about:blank is same-origin with us, so this should work.
+      if (exportWin) exportWin.opener = null;
     } catch {
       exportWin = null;
     }
@@ -446,7 +451,8 @@ export const ContentVideoEditor: React.FC = () => {
       const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
       const itemAny = obj?.item;
       const it = itemAny && typeof itemAny === 'object' ? (itemAny as Record<string, unknown>) : null;
-      const url = typeof it?.url === 'string' ? String(it.url) : '';
+      const urlRaw = typeof it?.url === 'string' ? String(it.url) : '';
+      const url = resolveUrl(urlRaw);
       const filename = typeof it?.filename === 'string' ? String(it.filename) : 'export.mp4';
 
       setLastExportUrl(url);
@@ -466,6 +472,7 @@ export const ContentVideoEditor: React.FC = () => {
           /* ignore */
         }
       } else {
+        // Avoid leaving a blank tab around when we didn't get a URL back.
         try { exportWin?.close(); } catch { /* ignore */ }
       }
     } catch (e: unknown) {
