@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -234,8 +235,12 @@ func (h *Handler) StartScheduledPostsWorker(ctx context.Context, interval time.D
 		interval = time.Minute
 	}
 	if strings.TrimSpace(origin) == "" {
-		origin = "http://localhost"
-		log.Printf("[ScheduledPosts] WARNING: PUBLIC_ORIGIN is empty; using origin=%s (set PUBLIC_ORIGIN to your public https origin for provider media fetches)", origin)
+		// Try to read from environment variable
+		origin = strings.TrimSpace(os.Getenv("PUBLIC_ORIGIN"))
+		if origin == "" {
+			origin = "http://localhost"
+			log.Printf("[ScheduledPosts] CRITICAL: PUBLIC_ORIGIN environment variable is not set and no origin was provided. Using localhost as fallback, but this will cause Instagram publishing to fail. Set PUBLIC_ORIGIN to your public https origin (e.g., https://app.example.com)")
+		}
 	}
 	log.Printf("[ScheduledPosts] worker started interval=%s origin=%s", interval, origin)
 
