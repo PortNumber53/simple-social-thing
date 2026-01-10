@@ -3524,16 +3524,24 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 			if !needsTranscode && len(videoBytes) > 0 {
 				// Save to temp file to check codecs
 				tmpFile, err := os.CreateTemp("", "video_codec_check_*.mp4")
-				if err == nil {
+				if err != nil {
+					log.Printf("[PublishJob] codec check failed to create temp file: %v", err)
+				} else {
 					defer os.Remove(tmpFile.Name())
 					defer tmpFile.Close()
-					if _, err := tmpFile.Write(videoBytes); err == nil {
+					if _, err := tmpFile.Write(videoBytes); err != nil {
+						log.Printf("[PublishJob] codec check failed to write temp file: %v", err)
+					} else {
 						tmpFile.Close()
 						hasH264, hasAAC, err := validateVideoCodecs(tmpFile.Name())
-						if err == nil && (!hasH264 || !hasAAC) {
+						if err != nil {
+							log.Printf("[PublishJob] codec check failed: %v", err)
+						} else if !hasH264 || !hasAAC {
 							log.Printf("[PublishJob] mp4 codec check: jobId=%s userId=%s postId=%s hasH264=%v hasAAC=%v - needs transcode", jobID, userID, postID, hasH264, hasAAC)
 							needsTranscode = true
 							codecCheckNeeded = true
+						} else {
+							log.Printf("[PublishJob] mp4 codec check: jobId=%s userId=%s postId=%s hasH264=%v hasAAC=%v - compatible", jobID, userID, postID, hasH264, hasAAC)
 						}
 					}
 				}
@@ -4092,9 +4100,11 @@ func validateVideoCodecs(inputPath string) (bool, bool, error) {
 	hasH264 := false
 	hasAAC := false
 	hasAudio := false
+	var detectedCodecs []string
 	for _, stream := range probeResult.Streams {
 		if codecType, ok := stream["codec_type"].(string); ok {
 			if codecName, ok := stream["codec_name"].(string); ok {
+				detectedCodecs = append(detectedCodecs, fmt.Sprintf("%s:%s", codecType, codecName))
 				if codecType == "video" && codecName == "h264" {
 					hasH264 = true
 				}
@@ -4107,6 +4117,8 @@ func validateVideoCodecs(inputPath string) (bool, bool, error) {
 			}
 		}
 	}
+
+	log.Printf("[ValidateCodecs] detected codecs: %v hasH264=%v hasAAC=%v hasAudio=%v", detectedCodecs, hasH264, hasAAC, hasAudio)
 
 	// If there's audio but it's not AAC, we need to transcode
 	// If there's no audio at all, we need to add a silent audio track
