@@ -126,6 +126,11 @@ pipeline {
         }
 
         stage('Deploy Backend (arm64 → Oracle fleet)') {
+          when {
+            expression {
+              return env.DEPLOY_ORACLE_FLEET == 'true'
+            }
+          }
           steps {
             unstash "bin-arm64"
             withCredentials([
