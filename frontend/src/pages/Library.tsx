@@ -309,6 +309,7 @@ export const Library: React.FC = () => {
 
   const resetEditorToNewDraft = () => {
     setEditing(null);
+    setNotice(null);
     setDraftText('');
     setDraftStatus('draft');
     setScheduledForLocal('');
@@ -653,6 +654,7 @@ export const Library: React.FC = () => {
   const openEdit = (p: LocalPost) => {
     setLeftTab('edit');
     setEditing(p);
+    setNotice(null);
     setDraftText((p.content || '').toString());
     setDraftStatus((p.status === 'scheduled' ? 'scheduled' : 'draft'));
     if (p.scheduledFor) {
