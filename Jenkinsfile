@@ -101,7 +101,8 @@ pipeline {
         unstash "bin-amd64"
             withCredentials([
               string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
-              string(credentialsId: 'prod-log-level-simple-social-thing', variable: 'LOG_LEVEL')
+              string(credentialsId: 'prod-log-level-simple-social-thing', variable: 'LOG_LEVEL'),
+              string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'PUBLIC_ORIGIN')
             ]) {
               sshagent(credentials: [env.SSH_CREDENTIALS]) {
                 sh label: 'Deploy via script', script: '''
@@ -114,6 +115,7 @@ pipeline {
                   SERVICE_NAME="$SERVICE_NAME" \
                   DATABASE_URL="$DATABASE_URL" \
                   LOG_LEVEL="$LOG_LEVEL" \
+                  PUBLIC_ORIGIN="$PUBLIC_ORIGIN" \
                   APP_PORT="18911" \
                   ENVIRONMENT_NAME="production" \
                   bash deploy/jenkins-deploy-amd64.sh
@@ -128,7 +130,8 @@ pipeline {
             unstash "bin-arm64"
             withCredentials([
               string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
-              string(credentialsId: 'prod-log-level-simple-social-thing', variable: 'LOG_LEVEL')
+              string(credentialsId: 'prod-log-level-simple-social-thing', variable: 'LOG_LEVEL'),
+              string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'PUBLIC_ORIGIN')
             ]) {
         sshagent(credentials: [env.SSH_CREDENTIALS]) {
                 sh label: 'Deploy via script', script: '''
@@ -141,6 +144,7 @@ pipeline {
                   SERVICE_NAME="$SERVICE_NAME" \
                   DATABASE_URL="$DATABASE_URL" \
                   LOG_LEVEL="$LOG_LEVEL" \
+                  PUBLIC_ORIGIN="$PUBLIC_ORIGIN" \
                   APP_PORT="18911" \
                   ENVIRONMENT_NAME="production" \
                   bash deploy/jenkins-deploy-amd64.sh
