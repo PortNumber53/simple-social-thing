@@ -2281,13 +2281,85 @@ func mediaURLToLocalPathForUser(userID string, src string) (string, error) {
 func escapeFFmpegDrawText(s string) string {
 	// For drawtext, escape characters that have special meaning in filter args.
 	// We keep it minimal and predictable: backslash, colon, single-quote, percent, and newlines.
+	//
+	// NOTE: We preserve explicit line breaks by converting actual newlines to the "\n" escape
+	// sequence expected by drawtext (instead of flattening to spaces).
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, ":", "\\:")
 	s = strings.ReplaceAll(s, "'", "\\'")
 	s = strings.ReplaceAll(s, "%", "\\%")
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	s = strings.ReplaceAll(s, "\n", "\\n")
 	return s
+}
+
+func wrapTextByChars(text string, maxCharsPerLine int, maxLines int) string {
+	txt := strings.TrimSpace(text)
+	if txt == "" {
+		return ""
+	}
+	if maxCharsPerLine <= 0 {
+		maxCharsPerLine = 24
+	}
+	if maxLines <= 0 {
+		maxLines = 6
+	}
+
+	words := strings.Fields(txt)
+	if len(words) == 0 {
+		return txt
+	}
+
+	lines := make([]string, 0, minInt(maxLines, len(words)))
+	cur := ""
+	flush := func() {
+		if strings.TrimSpace(cur) == "" {
+			return
+		}
+		lines = append(lines, strings.TrimSpace(cur))
+		cur = ""
+	}
+
+	for _, w := range words {
+		// Use rune count to avoid breaking UTF-8 mid-byte.
+		runes := []rune(w)
+		// If word itself is too long, split it.
+		for len(runes) > maxCharsPerLine {
+			part := string(runes[:maxCharsPerLine])
+			runes = runes[maxCharsPerLine:]
+			if cur != "" {
+				flush()
+				if len(lines) >= maxLines {
+					return strings.Join(lines, "\n")
+				}
+			}
+			lines = append(lines, part)
+			if len(lines) >= maxLines {
+				return strings.Join(lines, "\n")
+			}
+		}
+		w = string(runes)
+
+		next := w
+		if cur != "" {
+			next = cur + " " + w
+		}
+		if len([]rune(next)) <= maxCharsPerLine {
+			cur = next
+			continue
+		}
+		flush()
+		if len(lines) >= maxLines {
+			return strings.Join(lines, "\n")
+		}
+		cur = w
+	}
+	flush()
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (h *Handler) ExportVideoEditor(w http.ResponseWriter, r *http.Request) {
@@ -2548,16 +2620,33 @@ func (h *Handler) ExportVideoEditor(w http.ResponseWriter, r *http.Request) {
 			factor = 2.8
 		}
 		fontSize := maxInt(18, int(baseFont*factor))
+		lineSpacing := maxInt(0, int(float64(fontSize)*0.25))
+
+		// Rough word-wrapping to match preview: ffmpeg drawtext does not auto-wrap.
+		// Estimate characters-per-line from the desired box width and font size.
+		boxWpx := tw * float64(outW)
+		boxHpx := th * float64(outH)
+		avgCharPx := float64(fontSize) * 0.60
+		padPx := float64(fontSize) * 0.70
+		maxChars := int((boxWpx - 2*padPx) / maxFloat(6, avgCharPx))
+		maxChars = maxInt(8, minInt(64, maxChars))
+		lineH := float64(fontSize)*1.20 + float64(lineSpacing)
+		maxLines := int((boxHpx - 2*padPx) / maxFloat(10, lineH))
+		maxLines = maxInt(1, minInt(10, maxLines))
+
+		wrapped := wrapTextByChars(txt, maxChars, maxLines)
 		start := t.StartSec
 		end := t.StartSec + t.DurationSec
 		next := fmt.Sprintf("vtxt%d", i)
-		escaped := escapeFFmpegDrawText(txt)
+		escaped := escapeFFmpegDrawText(wrapped)
 		// Position text by center point (normalized), clamped within bounds.
+		// IMPORTANT: wrap expressions in single quotes so commas inside max()/min() are not
+		// interpreted by the filtergraph parser as separators between filters/options.
 		xExpr := fmt.Sprintf("max(0,min(w-text_w,(w*%.6f)-(text_w/2)))", tx)
 		yExpr := fmt.Sprintf("max(0,min(h-text_h,(h*%.6f)-(text_h/2)))", ty)
 		filterParts = append(filterParts,
-			fmt.Sprintf("[%s]drawtext=text='%s':x=%s:y=%s:fontsize=%d:fontcolor=white:box=1:boxcolor=black@0.55:enable='between(t,%.3f,%.3f)'[%s]",
-				currV, escaped, xExpr, yExpr, fontSize, start, end, next),
+			fmt.Sprintf("[%s]drawtext=text='%s':x='%s':y='%s':fontsize=%d:line_spacing=%d:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=%d:enable='between(t,%.3f,%.3f)'[%s]",
+				currV, escaped, xExpr, yExpr, fontSize, lineSpacing, maxInt(6, int(padPx*0.55)), start, end, next),
 		)
 		currV = next
 	}
@@ -2682,6 +2771,13 @@ func maxFloat(a, b float64) float64 {
 
 func maxInt(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b
