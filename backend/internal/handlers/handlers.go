@@ -3518,10 +3518,12 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 
 			// Check if video needs transcoding
 			needsTranscode := !(ctLower == "video/mp4" || strings.HasSuffix(relLower, ".mp4") || strings.HasSuffix(fnLower, ".mp4"))
+			log.Printf("[PublishJob] video format check: jobId=%s userId=%s postId=%s filename=%s contentType=%s isMp4=%v videoBytes=%d", jobID, userID, postID, fn, ctLower, !needsTranscode, len(videoBytes))
 
 			// For MP4 files, validate codec compatibility
 			var codecCheckNeeded bool
 			if !needsTranscode && len(videoBytes) > 0 {
+				log.Printf("[PublishJob] checking mp4 codecs: jobId=%s userId=%s postId=%s", jobID, userID, postID)
 				// Save to temp file to check codecs
 				tmpFile, err := os.CreateTemp("", "video_codec_check_*.mp4")
 				if err != nil {
