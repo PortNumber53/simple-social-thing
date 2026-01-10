@@ -3508,6 +3508,30 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 				sz = len(videoBytes)
 			} else {
 				fn = filepath.Base(relMedia[videoIdx])
+				// If video is not in mediaFiles, try to load it from disk
+				if videoIdx < len(relMedia) {
+					rel := strings.TrimSpace(relMedia[videoIdx])
+					if rel != "" {
+						local := strings.TrimPrefix(rel, "/media/")
+						path := filepath.Clean(filepath.Join("media", local))
+						if b, err := os.ReadFile(path); err == nil {
+							videoBytes = b
+							sz = len(videoBytes)
+							ct = http.DetectContentType(b)
+							// Prefer MIME type from extension
+							if strings.HasPrefix(strings.ToLower(ct), "application/octet-stream") {
+								if ext := strings.ToLower(filepath.Ext(fn)); ext != "" {
+									if byExt := mime.TypeByExtension(ext); byExt != "" {
+										ct = byExt
+									}
+								}
+							}
+							log.Printf("[PublishJob] loaded video from disk: jobId=%s userId=%s postId=%s path=%s size=%d", jobID, userID, postID, path, sz)
+						} else {
+							log.Printf("[PublishJob] failed to load video from disk: jobId=%s userId=%s postId=%s path=%s err=%v", jobID, userID, postID, path, err)
+						}
+					}
+				}
 			}
 			ctLower := strings.ToLower(strings.TrimSpace(ct))
 			if semi := strings.Index(ctLower, ";"); semi >= 0 {
