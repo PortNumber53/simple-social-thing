@@ -236,11 +236,17 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 	}
 	l.Printf("[IGImporter] media fetched userId=%s count=%d", userID, len(media))
 
-	// Fetch insights (views) for each media item in parallel
+	// Fetch insights (views) for each media item
+	// Note: This requires instagram_business_content_access permission on the app
+	insightsEnabled := true
 	for idx := range media {
 		views, err := i.fetchMediaInsights(ctx, media[idx].ID, tok.AccessToken)
 		if err != nil {
-			l.Printf("[IGImporter] insights fetch failed mediaId=%s err=%v", media[idx].ID, err)
+			// Log first error with full details, then suppress repetitive logs
+			if insightsEnabled {
+				l.Printf("[IGImporter] insights fetch failed mediaId=%s err=%v (this permission may not be enabled on your app)", media[idx].ID, err)
+				insightsEnabled = false
+			}
 			// Continue anyway; views are optional
 		} else if views > 0 {
 			media[idx].ViewCount = &views
@@ -334,9 +340,9 @@ func (i *Importer) fetchRecentMedia(ctx context.Context, igBusinessID string, ac
 // fetchMediaInsights retrieves view count for a single media item from Instagram insights API.
 func (i *Importer) fetchMediaInsights(ctx context.Context, mediaID string, accessToken string) (int64, error) {
 	// Instagram insights for media require the insights metric (views, impressions, etc.)
-	// For reels: impressions, plays, reach, saves, shares, etc.
-	// For posts: impressions, reach, etc.
-	// We'll request both "impressions" and "plays" and use whichever is available
+	// For reels: plays is the primary metric
+	// For posts: impressions is the primary metric
+	// Note: insights endpoint requires instagram_business_content_access permission
 	u := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/insights?metric=impressions,plays&access_token=%s",
 		mediaID,
 		accessToken,
@@ -356,7 +362,9 @@ func (i *Importer) fetchMediaInsights(ctx context.Context, mediaID string, acces
 
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return 0, fmt.Errorf("insights_non_2xx status=%d", res.StatusCode)
+		// Log the error response body for debugging
+		errMsg := truncate(string(body), 300)
+		return 0, fmt.Errorf("insights_non_2xx status=%d body=%s", res.StatusCode, errMsg)
 	}
 
 	var parsed insightsResponse
