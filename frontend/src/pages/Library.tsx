@@ -258,6 +258,7 @@ export const Library: React.FC = () => {
         const msg = JSON.parse(ev.data as string) as any;
         if (!msg || typeof msg !== 'object') return;
         const type = String(msg.type || '');
+        const postId = String(msg.postId || '');
         if (type === 'post.updated') {
           const st = String(msg.status || '').toLowerCase();
           if (!noticeRef.current && (st === 'queued' || st === 'running')) {
@@ -270,6 +271,13 @@ export const Library: React.FC = () => {
           if (!noticeRef.current) {
             setNotice(st === 'completed' ? 'Published.' : st === 'failed' ? 'Publish failed.' : 'Publish finished.');
           }
+          // If the published post is currently being edited, update its status
+          setEditing((prev) => {
+            if (prev && prev.id === postId) {
+              return { ...prev, status: 'published', lastPublishStatus: st };
+            }
+            return prev;
+          });
           scheduleRefresh();
         }
       } catch { /* ignore */ }
@@ -1029,14 +1037,23 @@ export const Library: React.FC = () => {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div className="space-y-1">
                           <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Status</label>
-                          <select
-                            value={draftStatus}
-                            onChange={(e) => setDraftStatus(e.target.value === 'scheduled' ? 'scheduled' : 'draft')}
-                            className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
-                          >
-                            <option value="draft">Draft</option>
-                            <option value="scheduled">Scheduled</option>
-                          </select>
+                          {editing?.status === 'published' ? (
+                            <div className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm flex items-center justify-between">
+                              <span className="text-slate-700 dark:text-slate-200">Published</span>
+                              <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200">
+                                ✓
+                              </span>
+                            </div>
+                          ) : (
+                            <select
+                              value={draftStatus}
+                              onChange={(e) => setDraftStatus(e.target.value === 'scheduled' ? 'scheduled' : 'draft')}
+                              className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/30 px-3 py-2 text-sm"
+                            >
+                              <option value="draft">Draft</option>
+                              <option value="scheduled">Scheduled</option>
+                            </select>
+                          )}
                         </div>
                         <div className="space-y-1">
                           <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Scheduled for</label>
