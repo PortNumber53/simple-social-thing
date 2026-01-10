@@ -268,9 +268,8 @@ export const Library: React.FC = () => {
         }
         if (type === 'post.publish') {
           const st = String(msg.status || '').toLowerCase();
-          if (!noticeRef.current) {
-            setNotice(st === 'completed' ? 'Published.' : st === 'failed' ? 'Publish failed.' : 'Publish finished.');
-          }
+          // Always show the final publish status, replacing any intermediate status
+          setNotice(st === 'completed' ? 'Published.' : st === 'failed' ? 'Publish failed.' : 'Publish finished.');
           // If the published post is currently being edited, update its status
           setEditing((prev) => {
             if (prev && prev.id === postId) {
