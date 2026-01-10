@@ -3500,10 +3500,12 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 			ct := ""
 			fn := ""
 			sz := 0
+			videoBytes := []byte{}
 			if videoIdx < len(mediaFiles) {
 				ct = mediaFiles[videoIdx].ContentType
 				fn = mediaFiles[videoIdx].Filename
-				sz = len(mediaFiles[videoIdx].Bytes)
+				videoBytes = mediaFiles[videoIdx].Bytes
+				sz = len(videoBytes)
 			} else {
 				fn = filepath.Base(relMedia[videoIdx])
 			}
@@ -3513,17 +3515,50 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 			}
 			relLower := strings.ToLower(relMedia[videoIdx])
 			fnLower := strings.ToLower(fn)
-			// Instagram Content Publishing expects MP4 URLs for video (WebM isn't supported).
-			if !(ctLower == "video/mp4" || strings.HasSuffix(relLower, ".mp4") || strings.HasSuffix(fnLower, ".mp4")) {
-				results["instagram"] = publishProviderResult{
-					OK:      false,
-					Error:   "instagram_requires_mp4",
-					Details: map[string]interface{}{"received": received, "contentType": ctLower, "filename": fn},
+
+			// Check if video needs transcoding
+			needsTranscode := !(ctLower == "video/mp4" || strings.HasSuffix(relLower, ".mp4") || strings.HasSuffix(fnLower, ".mp4"))
+
+			// If video is not MP4, attempt to transcode it
+			if needsTranscode && len(videoBytes) > 0 {
+				log.Printf("[PublishJob] transcoding video for instagram: jobId=%s userId=%s postId=%s filename=%s contentType=%s", jobID, userID, postID, fn, ctLower)
+				transcodedBytes, err := preprocessVideoForInstagram(videoBytes, fn)
+				if err != nil {
+					results["instagram"] = publishProviderResult{
+						OK:      false,
+						Error:   "instagram_video_transcode_failed",
+						Details: map[string]interface{}{"received": received, "contentType": ctLower, "filename": fn, "error": err.Error()},
+					}
+					overallOK = false
+					log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=instagram posted=%v err=%s", jobID, userID, postID, 0, "instagram_video_transcode_failed")
+					goto afterInstagramProvider
 				}
-				overallOK = false
-				log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=instagram posted=%v err=%s", jobID, userID, postID, 0, "instagram_requires_mp4")
-				goto afterInstagramProvider
+				// Update media file with transcoded video
+				mediaFiles[videoIdx].Bytes = transcodedBytes
+				mediaFiles[videoIdx].ContentType = "video/mp4"
+				mediaFiles[videoIdx].Filename = strings.TrimSuffix(fn, filepath.Ext(fn)) + ".mp4"
+				sz = len(transcodedBytes)
+				log.Printf("[PublishJob] video transcoded: jobId=%s userId=%s postId=%s original_size=%d transcoded_size=%d", jobID, userID, postID, len(videoBytes), sz)
+
+				// Re-save the transcoded video to disk
+				savedPaths, _, err := saveUploadedMedia(userID, "", []uploadedMedia{{
+					Filename:    mediaFiles[videoIdx].Filename,
+					ContentType: "video/mp4",
+					Bytes:       transcodedBytes,
+				}})
+				if err != nil || len(savedPaths) == 0 {
+					results["instagram"] = publishProviderResult{
+						OK:      false,
+						Error:   "instagram_video_save_failed",
+						Details: map[string]interface{}{"received": received, "error": err.Error()},
+					}
+					overallOK = false
+					log.Printf("[PublishJob] provider_failed jobId=%s userId=%s postId=%s provider=instagram posted=%v err=%s", jobID, userID, postID, 0, "instagram_video_save_failed")
+					goto afterInstagramProvider
+				}
+				relMedia[videoIdx] = savedPaths[0]
 			}
+
 			if sz > 0 && sz > instagramMaxReelsBytes {
 				results["instagram"] = publishProviderResult{
 					OK:      false,
@@ -4012,6 +4047,97 @@ func randHex(n int) string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+// preprocessVideoForInstagram transcodes a video to Instagram Reels compatible format.
+// Instagram requires: H.264 video codec, AAC audio codec, MP4 container, 9:16 aspect ratio.
+// Returns the path to the transcoded video or error if transcoding fails.
+func preprocessVideoForInstagram(inputBytes []byte, inputFilename string) ([]byte, error) {
+	// Check if ffmpeg is available
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return nil, fmt.Errorf("ffmpeg_not_available")
+	}
+
+	// Create temp input file
+	tmpDir := os.TempDir()
+	inputPath := filepath.Join(tmpDir, "video_input_"+randHex(8)+filepath.Ext(inputFilename))
+	outputPath := filepath.Join(tmpDir, "video_output_"+randHex(8)+".mp4")
+	defer func() {
+		_ = os.Remove(inputPath)
+		_ = os.Remove(outputPath)
+	}()
+
+	// Write input video to temp file
+	if err := os.WriteFile(inputPath, inputBytes, 0o644); err != nil {
+		return nil, fmt.Errorf("failed_to_write_temp_input: %w", err)
+	}
+
+	// Get video info to detect current format
+	probeCmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "stream=codec_name,codec_type,width,height,r_frame_rate,duration", "-of", "json", inputPath)
+	probeOut, err := probeCmd.Output()
+	if err != nil {
+		log.Printf("[VideoPreprocess] ffprobe failed: %v", err)
+		// Continue anyway, ffmpeg will handle it
+	}
+
+	var probeResult struct {
+		Streams []map[string]interface{} `json:"streams"`
+	}
+	_ = json.Unmarshal(probeOut, &probeResult)
+
+	// Detect current codecs
+	hasH264 := false
+	hasAAC := false
+	for _, stream := range probeResult.Streams {
+		if codecType, ok := stream["codec_type"].(string); ok {
+			if codecName, ok := stream["codec_name"].(string); ok {
+				if codecType == "video" && codecName == "h264" {
+					hasH264 = true
+				}
+				if codecType == "audio" && codecName == "aac" {
+					hasAAC = true
+				}
+			}
+		}
+	}
+
+	// Build FFmpeg command for Instagram Reels
+	// Instagram Reels: 9:16 aspect ratio, H.264 video, AAC audio, 2500k bitrate
+	args := []string{
+		"-y", "-hide_banner", "-loglevel", "error",
+		"-i", inputPath,
+		"-c:v", "libx264",
+		"-profile:v", "high",
+		"-level:v", "4.0",
+		"-pix_fmt", "yuv420p",
+		"-preset", "veryfast",
+		"-b:v", "2500k",
+		"-maxrate", "3750k",
+		"-bufsize", "2500k",
+		"-g", "60", // Keyframe every 2 seconds at 30fps
+		"-c:a", "aac",
+		"-ar", "48000",
+		"-ac", "2",
+		"-b:a", "128k",
+		"-movflags", "+faststart",
+		"-r", "30",
+		outputPath,
+	}
+
+	log.Printf("[VideoPreprocess] transcoding video: input=%s hasH264=%v hasAAC=%v", inputFilename, hasH264, hasAAC)
+	cmd := exec.Command("ffmpeg", args...)
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg_transcode_failed: %w", err)
+	}
+
+	// Read transcoded video
+	outputBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed_to_read_transcoded_video: %w", err)
+	}
+
+	log.Printf("[VideoPreprocess] transcoding complete: input_size=%d output_size=%d", len(inputBytes), len(outputBytes))
+	return outputBytes, nil
 }
 
 func saveUploadedMedia(userID string, folder string, media []uploadedMedia) ([]string, map[string]interface{}, error) {
