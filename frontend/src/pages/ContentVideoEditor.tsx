@@ -493,6 +493,8 @@ export const ContentVideoEditor: React.FC = () => {
         }
       }
 
+      // Calculate preview canvas height for font size scaling
+      const previewCanvasHeight = previewFitWidthPx * (aspect.h / aspect.w);
       const payload = {
         projectId: project.id,
         fps,
@@ -504,6 +506,8 @@ export const ContentVideoEditor: React.FC = () => {
         video: videoSegs,
         audio: audioSegs,
         text: textSegs,
+        previewCanvasHeight,
+        previewFontSizePx: 24, // text-2xl = 24px
       };
 
       const res = await fetch('/api/local-library/video-editor/export', {
@@ -531,8 +535,9 @@ export const ContentVideoEditor: React.FC = () => {
       const urlRaw = typeof it?.url === 'string' ? String(it.url) : '';
       const url = resolveUrl(urlRaw);
       const filename = typeof it?.filename === 'string' ? String(it.filename) : 'export.mp4';
+      const cacheBustUrl = url + '?t=' + Date.now();
 
-      setLastExportUrl(url);
+      setLastExportUrl(cacheBustUrl);
       setLastExportName(filename);
       setMainTab('export');
       setMediaBusy(null);
@@ -2172,5 +2177,3 @@ export const ContentVideoEditor: React.FC = () => {
     </Layout>
   );
 };
-
-

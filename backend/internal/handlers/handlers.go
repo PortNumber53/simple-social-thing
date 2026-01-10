@@ -11,8 +11,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"io"
 	"log"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -32,8 +37,11 @@ import (
 	"github.com/PortNumber53/simple-social-thing/backend/internal/models"
 	"github.com/PortNumber53/simple-social-thing/backend/internal/socialimport"
 	"github.com/PortNumber53/simple-social-thing/backend/internal/socialimport/providers"
+	"github.com/golang/freetype"
+	"github.com/golang/freetype/truetype"
 	"github.com/gorilla/mux"
 	"github.com/lib/pq"
+	"golang.org/x/image/font"
 )
 
 type Handler struct {
@@ -409,16 +417,18 @@ type videoEditorExportText struct {
 }
 
 type videoEditorExportRequest struct {
-	ProjectID       string                     `json:"projectId"`
-	FPS             int                        `json:"fps"`
-	AspectW         int                        `json:"aspectW"`
-	AspectH         int                        `json:"aspectH"`
-	TargetLong      int                        `json:"targetLong"`      // e.g., 1280
-	VideoBitrateBps int                        `json:"videoBitrateBps"` // e.g., 2500000
-	AudioBitrateBps int                        `json:"audioBitrateBps"` // e.g., 128000
-	Video           []videoEditorExportSegment `json:"video"`
-	Audio           []videoEditorExportSegment `json:"audio"`
-	Text            []videoEditorExportText    `json:"text"`
+	ProjectID           string                     `json:"projectId"`
+	FPS                 int                        `json:"fps"`
+	AspectW             int                        `json:"aspectW"`
+	AspectH             int                        `json:"aspectH"`
+	TargetLong          int                        `json:"targetLong"`          // e.g., 1280
+	VideoBitrateBps     int                        `json:"videoBitrateBps"`     // e.g., 2500000
+	AudioBitrateBps     int                        `json:"audioBitrateBps"`     // e.g., 128000
+	PreviewCanvasHeight float64                    `json:"previewCanvasHeight"` // preview canvas height in pixels
+	PreviewFontSizePx   float64                    `json:"previewFontSizePx"`   // font size used in preview (e.g., 24 for text-2xl)
+	Video               []videoEditorExportSegment `json:"video"`
+	Audio               []videoEditorExportSegment `json:"audio"`
+	Text                []videoEditorExportText    `json:"text"`
 }
 
 type videoEditorExportResponse struct {
@@ -2422,6 +2432,7 @@ func (h *Handler) ExportVideoEditor(w http.ResponseWriter, r *http.Request) {
 	if audioBps <= 0 {
 		audioBps = 128_000
 	}
+	log.Printf("[VideoEditor] export settings: videoBps=%d audioBps=%d outW=%d outH=%d fps=%d", videoBps, audioBps, outW, outH, fps)
 
 	// Flatten and sort segments; we only support non-overlapping timelines (MVP).
 	type seg struct {
@@ -2522,8 +2533,28 @@ func (h *Handler) ExportVideoEditor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[VideoEditor] received %d text segments", len(req.Text))
+	for i, t := range req.Text {
+		log.Printf("[VideoEditor] text[%d]: start=%.3f dur=%.3f text='%s' x=%.3f y=%.3f w=%.3f h=%.3f rot=%.3f", i, t.StartSec, t.DurationSec, t.Text, t.X, t.Y, t.W, t.H, t.RotationDeg)
+	}
+
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		writeError(w, http.StatusInternalServerError, "ffmpeg_not_available")
+		return
+	}
+
+	// Output path (single stable file per project; no multiple copies).
+	userHash := mediaUserHash(userID)
+	folder := "Exports"
+	shard := "video-editor"
+	baseName := sanitizeFilename(req.ProjectID)
+	if baseName == "" {
+		baseName = randHex(8)
+	}
+	outFile := fmt.Sprintf("video_editor_%s.mp4", baseName)
+	outDir := filepath.Join("media", userHash, "folders", folder, shard)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed_to_create_export_dir")
 		return
 	}
 
@@ -2585,8 +2616,11 @@ func (h *Handler) ExportVideoEditor(w http.ResponseWriter, r *http.Request) {
 		filterParts = append(filterParts, fmt.Sprintf("%sconcat=n=%d:v=1:a=0[vbase]", strings.Join(vLabels, ""), len(vLabels)))
 	}
 
-	// Text overlays
+	// Text overlays - render as PNG images for deterministic output
 	currV := "vbase"
+	textPNGPaths := make([]string, 0, len(req.Text))
+	textInputIdx := len(visualSegs) + len(audioSegs) // Starting index for text PNG inputs
+
 	for i, t := range req.Text {
 		txt := strings.TrimSpace(t.Text)
 		if txt == "" || t.DurationSec <= 0 {
@@ -2610,45 +2644,47 @@ func (h *Handler) ExportVideoEditor(w http.ResponseWriter, r *http.Request) {
 		if th <= 0 || th > 1 {
 			th = 0.18
 		}
-		// Font size scales with the requested box height.
-		baseFont := float64(outH) * 0.055
-		factor := th / 0.18
-		if factor < 0.6 {
-			factor = 0.6
-		}
-		if factor > 2.8 {
-			factor = 2.8
-		}
-		fontSize := maxInt(18, int(baseFont*factor))
-		lineSpacing := maxInt(0, int(float64(fontSize)*0.25))
 
-		// Rough word-wrapping to match preview: ffmpeg drawtext does not auto-wrap.
-		// Estimate characters-per-line from the desired box width and font size.
-		boxWpx := tw * float64(outW)
-		boxHpx := th * float64(outH)
-		avgCharPx := float64(fontSize) * 0.60
-		padPx := float64(fontSize) * 0.70
-		maxChars := int((boxWpx - 2*padPx) / maxFloat(6, avgCharPx))
-		maxChars = maxInt(8, minInt(64, maxChars))
-		lineH := float64(fontSize)*1.20 + float64(lineSpacing)
-		maxLines := int((boxHpx - 2*padPx) / maxFloat(10, lineH))
-		maxLines = maxInt(1, minInt(10, maxLines))
+		// Calculate the exact font size by scaling from preview to export dimensions
+		// previewFontSize * (exportHeight / previewCanvasHeight)
+		previewCanvasH := req.PreviewCanvasHeight
+		previewFontPx := req.PreviewFontSizePx
+		if previewCanvasH <= 0 {
+			previewCanvasH = 924 // default for 520px width at 9:16 aspect
+		}
+		if previewFontPx <= 0 {
+			previewFontPx = 24 // text-2xl default
+		}
+		scaledFontSize := previewFontPx * (float64(outH) / previewCanvasH)
 
-		wrapped := wrapTextByChars(txt, maxChars, maxLines)
+		// Calculate box width in pixels for text wrapping
+		boxWpx := int(tw * float64(outW))
+
+		// Generate PNG for this text overlay
+		pngPath := filepath.Join(outDir, fmt.Sprintf("text_%d_%s.png", i, randHex(4)))
+		if err := renderTextToPNG(txt, scaledFontSize, boxWpx, t.RotationDeg, pngPath); err != nil {
+			log.Printf("[VideoEditor] failed to render text PNG: %v", err)
+			// Fall back to no text overlay for this segment
+			continue
+		}
+		textPNGPaths = append(textPNGPaths, pngPath)
+
+		// Add PNG as input to FFmpeg
+		args = append(args, "-loop", "1", "-t", fmt.Sprintf("%.3f", totalDur), "-i", pngPath)
+
 		start := t.StartSec
 		end := t.StartSec + t.DurationSec
 		next := fmt.Sprintf("vtxt%d", i)
-		escaped := escapeFFmpegDrawText(wrapped)
-		// Position text by center point (normalized), clamped within bounds.
-		// IMPORTANT: wrap expressions in single quotes so commas inside max()/min() are not
-		// interpreted by the filtergraph parser as separators between filters/options.
-		xExpr := fmt.Sprintf("max(0,min(w-text_w,(w*%.6f)-(text_w/2)))", tx)
-		yExpr := fmt.Sprintf("max(0,min(h-text_h,(h*%.6f)-(text_h/2)))", ty)
-		filterParts = append(filterParts,
-			fmt.Sprintf("[%s]drawtext=text='%s':x='%s':y='%s':fontsize=%d:line_spacing=%d:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=%d:enable='between(t,%.3f,%.3f)'[%s]",
-				currV, escaped, xExpr, yExpr, fontSize, lineSpacing, maxInt(6, int(padPx*0.55)), start, end, next),
-		)
+
+		// Overlay the PNG image centered at (tx, ty)
+		// In overlay filter: W/H = main video dimensions, w/h = overlay dimensions
+		overlayXExpr := fmt.Sprintf("W*%.6f-w/2", tx)
+		overlayYExpr := fmt.Sprintf("H*%.6f-h/2", ty)
+		filterParts = append(filterParts, fmt.Sprintf("[%s][%d:v]overlay=x='%s':y='%s':enable='between(t,%.3f,%.3f)'[%s]",
+			currV, textInputIdx, overlayXExpr, overlayYExpr, start, end, next))
+
 		currV = next
+		textInputIdx++
 	}
 	filterParts = append(filterParts, fmt.Sprintf("[%s]format=yuv420p,setsar=1[vout]", currV))
 
@@ -2683,39 +2719,35 @@ func (h *Handler) ExportVideoEditor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filterComplex := strings.Join(filterParts, ";")
+	log.Printf("[VideoEditor] filter complex: %s", filterComplex)
 	args = append(args,
 		"-filter_complex", filterComplex,
 		"-map", "[vout]",
 		"-map", "[aout]",
 		"-c:v", "libx264",
+		"-profile:v", "high",
+		"-level:v", "4.0",
 		"-pix_fmt", "yuv420p",
 		"-preset", "veryfast",
-		"-b:v", fmt.Sprintf("%dk", maxInt(100, videoBps/1000)),
+		"-b:v", fmt.Sprintf("%dk", maxInt(1000, videoBps/1000)),
+		"-maxrate", fmt.Sprintf("%dk", maxInt(1500, (videoBps*3/2)/1000)),
+		"-bufsize", fmt.Sprintf("%dk", maxInt(2000, videoBps/1000)),
+		"-g", fmt.Sprintf("%d", fps*2), // Keyframe every 2 seconds
 		"-c:a", "aac",
-		"-b:a", fmt.Sprintf("%dk", maxInt(32, audioBps/1000)),
+		"-ar", "48000",
+		"-ac", "2",
+		"-b:a", fmt.Sprintf("%dk", maxInt(128, audioBps/1000)),
 		"-movflags", "+faststart",
 		"-r", fmt.Sprintf("%d", fps),
 	)
 
-	// Output path (single stable file per project; no multiple copies).
-	userHash := mediaUserHash(userID)
-	folder := "Exports"
-	shard := "video-editor"
-	baseName := sanitizeFilename(req.ProjectID)
-	if baseName == "" {
-		baseName = randHex(8)
-	}
-	outFile := fmt.Sprintf("video_editor_%s.mp4", baseName)
-	outDir := filepath.Join("media", userHash, "folders", folder, shard)
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed_to_create_export_dir")
-		return
-	}
 	// Important: ffmpeg chooses container format from extension; ensure temp file still ends with .mp4.
 	tmpPath := filepath.Join(outDir, outFile+".tmp.mp4")
 	finalPath := filepath.Join(outDir, outFile)
 	_ = os.Remove(tmpPath)
 	args = append(args, tmpPath)
+
+	log.Printf("[VideoEditor] ffmpeg args: %q", args)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 	defer cancel()
@@ -2747,6 +2779,11 @@ func (h *Handler) ExportVideoEditor(w http.ResponseWriter, r *http.Request) {
 		_ = os.Remove(tmpPath)
 		writeError(w, http.StatusInternalServerError, "export_move_failed")
 		return
+	}
+
+	// Clean up temporary PNG files
+	for _, pngPath := range textPNGPaths {
+		_ = os.Remove(pngPath)
 	}
 
 	relURL := fmt.Sprintf("/media/%s/folders/%s/%s/%s", userHash, folder, shard, outFile)
@@ -2788,6 +2825,228 @@ func minInt64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// interFont caches the loaded Inter ExtraBold font
+var interFont *truetype.Font
+var interFontOnce sync.Once
+
+func loadInterFont() (*truetype.Font, error) {
+	var loadErr error
+	interFontOnce.Do(func() {
+		fontBytes, err := os.ReadFile("fonts/Inter-ExtraBold.ttf")
+		if err != nil {
+			loadErr = fmt.Errorf("failed to read font file: %w", err)
+			return
+		}
+		f, err := truetype.Parse(fontBytes)
+		if err != nil {
+			loadErr = fmt.Errorf("failed to parse font: %w", err)
+			return
+		}
+		interFont = f
+	})
+	if loadErr != nil {
+		return nil, loadErr
+	}
+	return interFont, nil
+}
+
+// renderTextToPNG renders text to a transparent PNG image matching the preview appearance.
+// fontSize is the exact font size in pixels to use.
+// boxWidth is the maximum width of the text box in pixels (for wrapping).
+// Returns the path to the generated PNG file.
+func renderTextToPNG(text string, fontSize float64, boxWidth int, rotationDeg float64, outputPath string) error {
+	f, err := loadInterFont()
+	if err != nil {
+		return err
+	}
+
+	if fontSize < 14 {
+		fontSize = 14
+	}
+
+	// Create a context for measuring text
+	c := freetype.NewContext()
+	c.SetDPI(72)
+	c.SetFont(f)
+	c.SetFontSize(fontSize)
+
+	// Measure text width
+	face := truetype.NewFace(f, &truetype.Options{
+		Size:    fontSize,
+		DPI:     72,
+		Hinting: font.HintingFull,
+	})
+	defer face.Close()
+
+	// Helper to measure string width
+	measureWidth := func(s string) int {
+		w := 0
+		for _, r := range s {
+			adv, ok := face.GlyphAdvance(r)
+			if ok {
+				w += int(adv >> 6)
+			}
+		}
+		return w
+	}
+
+	// Add padding for the background box
+	padX := int(fontSize * 0.5)
+	padY := int(fontSize * 0.3)
+	maxTextWidth := boxWidth - 2*padX
+	if maxTextWidth < 50 {
+		maxTextWidth = 50
+	}
+
+	// Split text by explicit newlines first, then wrap each paragraph
+	paragraphs := strings.Split(text, "\n")
+	var lines []string
+	for _, para := range paragraphs {
+		para = strings.TrimSpace(para)
+		if para == "" {
+			lines = append(lines, "")
+			continue
+		}
+		// Word wrap this paragraph
+		words := strings.Fields(para)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		currentLine := words[0]
+		for _, word := range words[1:] {
+			testLine := currentLine + " " + word
+			if measureWidth(testLine) <= maxTextWidth {
+				currentLine = testLine
+			} else {
+				lines = append(lines, currentLine)
+				currentLine = word
+			}
+		}
+		lines = append(lines, currentLine)
+	}
+
+	// Calculate dimensions
+	lineHeight := int(fontSize * 1.3)
+	maxLineWidth := 0
+	for _, line := range lines {
+		w := measureWidth(line)
+		if w > maxLineWidth {
+			maxLineWidth = w
+		}
+	}
+
+	textHeight := lineHeight * len(lines)
+	imgW := maxLineWidth + 2*padX
+	imgH := textHeight + 2*padY
+
+	// If rotation is applied, we need a larger canvas to fit the rotated image
+	var finalW, finalH int
+	if rotationDeg != 0 {
+		// Calculate bounding box for rotated rectangle
+		rad := rotationDeg * math.Pi / 180.0
+		cos := math.Abs(math.Cos(rad))
+		sin := math.Abs(math.Sin(rad))
+		finalW = int(math.Ceil(float64(imgW)*cos + float64(imgH)*sin))
+		finalH = int(math.Ceil(float64(imgW)*sin + float64(imgH)*cos))
+	} else {
+		finalW = imgW
+		finalH = imgH
+	}
+
+	// Create the text image (before rotation)
+	textImg := image.NewRGBA(image.Rect(0, 0, imgW, imgH))
+
+	// Draw semi-transparent black background (matching preview's bg-black/55)
+	bgColor := color.RGBA{0, 0, 0, 140} // ~55% opacity
+	draw.Draw(textImg, textImg.Bounds(), &image.Uniform{bgColor}, image.Point{}, draw.Src)
+
+	// Draw white text - render each line
+	c.SetClip(textImg.Bounds())
+	c.SetDst(textImg)
+	c.SetSrc(image.White)
+
+	// Draw each line of text
+	for i, line := range lines {
+		pt := freetype.Pt(padX, padY+int(fontSize*0.85)+i*lineHeight)
+		_, err = c.DrawString(line, pt)
+		if err != nil {
+			return fmt.Errorf("failed to draw text line %d: %w", i, err)
+		}
+	}
+
+	// Apply rotation if needed
+	var finalImg *image.RGBA
+	if rotationDeg != 0 {
+		finalImg = image.NewRGBA(image.Rect(0, 0, finalW, finalH))
+		// Rotate the text image and draw onto final image
+		rotateImage(textImg, finalImg, rotationDeg) // Match CSS clockwise rotation
+	} else {
+		finalImg = textImg
+	}
+
+	// Save to PNG
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	defer outFile.Close()
+
+	if err := png.Encode(outFile, finalImg); err != nil {
+		return fmt.Errorf("failed to encode PNG: %w", err)
+	}
+
+	return nil
+}
+
+// rotateImage rotates src image by angleDeg degrees and draws onto dst
+func rotateImage(src *image.RGBA, dst *image.RGBA, angleDeg float64) {
+	rad := angleDeg * math.Pi / 180.0
+	cos := math.Cos(rad)
+	sin := math.Sin(rad)
+
+	srcBounds := src.Bounds()
+	dstBounds := dst.Bounds()
+
+	// Center of source and destination
+	srcCx := float64(srcBounds.Dx()) / 2
+	srcCy := float64(srcBounds.Dy()) / 2
+	dstCx := float64(dstBounds.Dx()) / 2
+	dstCy := float64(dstBounds.Dy()) / 2
+
+	for y := 0; y < dstBounds.Dy(); y++ {
+		for x := 0; x < dstBounds.Dx(); x++ {
+			// Translate to center, rotate, translate back
+			dx := float64(x) - dstCx
+			dy := float64(y) - dstCy
+
+			// Inverse rotation to find source pixel
+			srcX := dx*cos + dy*sin + srcCx
+			srcY := -dx*sin + dy*cos + srcCy
+
+			// Bilinear interpolation
+			if srcX >= 0 && srcX < float64(srcBounds.Dx())-1 && srcY >= 0 && srcY < float64(srcBounds.Dy())-1 {
+				x0 := int(srcX)
+				y0 := int(srcY)
+				fx := srcX - float64(x0)
+				fy := srcY - float64(y0)
+
+				c00 := src.RGBAAt(x0, y0)
+				c10 := src.RGBAAt(x0+1, y0)
+				c01 := src.RGBAAt(x0, y0+1)
+				c11 := src.RGBAAt(x0+1, y0+1)
+
+				r := uint8(float64(c00.R)*(1-fx)*(1-fy) + float64(c10.R)*fx*(1-fy) + float64(c01.R)*(1-fx)*fy + float64(c11.R)*fx*fy)
+				g := uint8(float64(c00.G)*(1-fx)*(1-fy) + float64(c10.G)*fx*(1-fy) + float64(c01.G)*(1-fx)*fy + float64(c11.G)*fx*fy)
+				b := uint8(float64(c00.B)*(1-fx)*(1-fy) + float64(c10.B)*fx*(1-fy) + float64(c01.B)*(1-fx)*fy + float64(c11.B)*fx*fy)
+				a := uint8(float64(c00.A)*(1-fx)*(1-fy) + float64(c10.A)*fx*(1-fy) + float64(c01.A)*(1-fx)*fy + float64(c11.A)*fx*fy)
+
+				dst.SetRGBA(x, y, color.RGBA{r, g, b, a})
+			}
+		}
+	}
 }
 
 type publishPostRequest struct {
@@ -3277,7 +3536,7 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 			}
 
 			videoURL := strings.TrimRight(origin, "/") + relMedia[videoIdx]
-			log.Printf("[PublishJob] provider_start jobId=%s userId=%s postId=%s provider=instagram reels=1 origin=%s", jobID, userID, postID, origin)
+			log.Printf("[PublishJob] provider_start jobId=%s userId=%s postId=%s provider=instagram reels=1 origin=%s videoURL=%s", jobID, userID, postID, origin, videoURL)
 			posted, err, details := h.publishInstagramReelWithVideoURL(context.Background(), userID, caption, videoURL, req.DryRun)
 			if err != nil {
 				results["instagram"] = publishProviderResult{OK: false, Posted: posted, Error: err.Error(), Details: details}
@@ -4377,20 +4636,24 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 			res, err := client.Do(req)
 			if err != nil {
 				last = "request_error"
+				log.Printf("[InstagramImages] container status poll %d: request_error: %v", i, err)
 				continue
 			}
 			b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 			_ = res.Body.Close()
 			if res.StatusCode < 200 || res.StatusCode >= 300 {
 				last = fmt.Sprintf("http_%d", res.StatusCode)
+				log.Printf("[InstagramImages] container status poll %d: http_%d body=%s", i, res.StatusCode, truncate(string(b), 500))
 				continue
 			}
 			var sr statusResp
 			if err := json.Unmarshal(b, &sr); err != nil {
 				last = "bad_json"
+				log.Printf("[InstagramImages] container status poll %d: bad_json body=%s", i, truncate(string(b), 500))
 				continue
 			}
 			last = strings.ToUpper(strings.TrimSpace(sr.StatusCode))
+			log.Printf("[InstagramImages] container status poll %d: status=%s", i, last)
 			if last == "FINISHED" {
 				return last, nil
 			}
@@ -4566,13 +4829,14 @@ func (h *Handler) publishInstagramReelWithVideoURL(ctx context.Context, userID, 
 		type statusResp struct {
 			ID         string `json:"id"`
 			StatusCode string `json:"status_code"`
+			Status     string `json:"status"` // Additional status details
 		}
 		var last string
 		for i := 0; i < 60; i++ { // ~120s worst case
 			if i > 0 {
 				time.Sleep(2 * time.Second)
 			}
-			endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s?fields=status_code&access_token=%s",
+			endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s?fields=status_code,status&access_token=%s",
 				url.PathEscape(containerID),
 				url.QueryEscape(accessToken),
 			)
@@ -4581,25 +4845,34 @@ func (h *Handler) publishInstagramReelWithVideoURL(ctx context.Context, userID, 
 			res, err := client.Do(req)
 			if err != nil {
 				last = "request_error"
+				log.Printf("[InstagramReels] container status poll %d: request_error: %v", i, err)
 				continue
 			}
 			b, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 			_ = res.Body.Close()
 			if res.StatusCode < 200 || res.StatusCode >= 300 {
 				last = fmt.Sprintf("http_%d", res.StatusCode)
+				log.Printf("[InstagramReels] container status poll %d: http_%d body=%s", i, res.StatusCode, truncate(string(b), 500))
 				continue
 			}
 			var sr statusResp
 			if err := json.Unmarshal(b, &sr); err != nil {
 				last = "bad_json"
+				log.Printf("[InstagramReels] container status poll %d: bad_json body=%s", i, truncate(string(b), 500))
 				continue
 			}
 			last = strings.ToUpper(strings.TrimSpace(sr.StatusCode))
+			log.Printf("[InstagramReels] container status poll %d: status=%s details=%s", i, last, sr.Status)
 			if last == "FINISHED" {
 				return last, nil
 			}
 			if last == "ERROR" || last == "EXPIRED" {
-				return last, fmt.Errorf("instagram_container_%s", strings.ToLower(last))
+				// Include the status details in the error message
+				errMsg := fmt.Sprintf("instagram_container_%s", strings.ToLower(last))
+				if sr.Status != "" {
+					errMsg = fmt.Sprintf("instagram_container_%s: %s", strings.ToLower(last), sr.Status)
+				}
+				return last, fmt.Errorf("%s", errMsg)
 			}
 		}
 		return last, fmt.Errorf("instagram_container_not_ready")
@@ -4636,7 +4909,7 @@ func (h *Handler) publishInstagramReelWithVideoURL(ctx context.Context, userID, 
 	details["containerId"] = containerID
 
 	if st, err := waitForContainer(containerID); err != nil {
-		return 0, fmt.Errorf("instagram_container_not_ready"), map[string]interface{}{"containerId": containerID, "status": st}
+		return 0, err, map[string]interface{}{"containerId": containerID, "status": st}
 	}
 
 	// Publish
