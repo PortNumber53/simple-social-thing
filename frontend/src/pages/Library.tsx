@@ -1269,7 +1269,7 @@ export const Library: React.FC = () => {
                       {error && <div className="text-sm text-red-600 dark:text-red-300">{error}</div>}
                       {notice && <div className="text-sm text-emerald-700 dark:text-emerald-300">{notice}</div>}
                       <div className="text-xs text-slate-600 dark:text-slate-300">
-                        Scheduled publishing runs in the background. Use “Publish Now” to trigger a scheduled item immediately for testing.
+                        Scheduled posts publish automatically at their scheduled time. Use "Publish Now" to publish immediately.
                       </div>
                     </div>
                   )}
