@@ -66,7 +66,7 @@ export const Dashboard: React.FC = () => {
           {/* Welcome Section */}
           <div className="mb-8 animate-fade-in">
             <h1 className="text-4xl md:text-5xl font-bold text-slate-900 dark:text-slate-100 mb-2">
-              Content hub, {user?.name?.split(' ')[0] || 'team'} 👋
+              Welcome back, {user?.name?.split(' ')[0] || 'team'} 👋
             </h1>
             <p className="text-lg text-slate-600 dark:text-slate-400">
               Manage and publish your social content across multiple platforms.

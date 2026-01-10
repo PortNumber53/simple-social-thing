@@ -44,7 +44,17 @@ type mediaItem struct {
 	ThumbURL  string `json:"thumbnail_url"`
 	Timestamp string `json:"timestamp"`
 	LikeCount *int64 `json:"like_count"`
-	// views generally requires additional insights calls; we store likes and raw payload for now
+	ViewCount *int64 `json:"views,omitempty"`
+	// views fetched from insights endpoint
+}
+
+type insightsResponse struct {
+	Data []insightMetric `json:"data"`
+}
+
+type insightMetric struct {
+	Name  string `json:"name"`
+	Value int64  `json:"value"`
 }
 
 // SyncUser imports the latest Instagram media for a single user and upserts rows into SocialLibraries.
@@ -226,6 +236,17 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 	}
 	l.Printf("[IGImporter] media fetched userId=%s count=%d", userID, len(media))
 
+	// Fetch insights (views) for each media item in parallel
+	for idx := range media {
+		views, err := i.fetchMediaInsights(ctx, media[idx].ID, tok.AccessToken)
+		if err != nil {
+			l.Printf("[IGImporter] insights fetch failed mediaId=%s err=%v", media[idx].ID, err)
+			// Continue anyway; views are optional
+		} else if views > 0 {
+			media[idx].ViewCount = &views
+		}
+	}
+
 	n := 0
 	for _, m := range media {
 		select {
@@ -257,7 +278,7 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 			INSERT INTO public.social_libraries
 			  (id, user_id, network, content_type, title, permalink_url, media_url, thumbnail_url, posted_at, views, likes, raw_payload, external_id, created_at, updated_at)
 			VALUES
-			  ($1, $2, 'instagram', $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), $8, NULL, $9, $10::jsonb, $11, NOW(), NOW())
+			  ($1, $2, 'instagram', $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), NULLIF($7,''), $8, $9, $10, $11::jsonb, $12, NOW(), NOW())
 			ON CONFLICT (user_id, network, external_id)
 			DO UPDATE SET
 			  content_type = EXCLUDED.content_type,
@@ -266,10 +287,11 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 			  media_url = EXCLUDED.media_url,
 			  thumbnail_url = EXCLUDED.thumbnail_url,
 			  posted_at = EXCLUDED.posted_at,
+			  views = EXCLUDED.views,
 			  likes = EXCLUDED.likes,
 			  raw_payload = EXCLUDED.raw_payload,
 			  updated_at = NOW()
-		`, id, userID, contentType, title, m.Permalink, mediaURL, thumbURL, postedAt, m.LikeCount, string(raw), externalID)
+		`, id, userID, contentType, title, m.Permalink, mediaURL, thumbURL, postedAt, m.ViewCount, m.LikeCount, string(raw), externalID)
 		if err != nil {
 			l.Printf("[IGImporter] upsert failed userId=%s mediaId=%s err=%v", userID, externalID, err)
 			return n, err
@@ -307,6 +329,48 @@ func (i *Importer) fetchRecentMedia(ctx context.Context, igBusinessID string, ac
 		return nil, body, err
 	}
 	return parsed.Data, body, nil
+}
+
+// fetchMediaInsights retrieves view count for a single media item from Instagram insights API.
+func (i *Importer) fetchMediaInsights(ctx context.Context, mediaID string, accessToken string) (int64, error) {
+	// Instagram insights for media require the insights metric (views, impressions, etc.)
+	// For reels: impressions, plays, reach, saves, shares, etc.
+	// For posts: impressions, reach, etc.
+	// We'll request both "impressions" and "plays" and use whichever is available
+	u := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/insights?metric=impressions,plays&access_token=%s",
+		mediaID,
+		accessToken,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	res, err := i.Client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer res.Body.Close()
+
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return 0, fmt.Errorf("insights_non_2xx status=%d", res.StatusCode)
+	}
+
+	var parsed insightsResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return 0, err
+	}
+
+	// Find the first available metric (plays for reels, impressions for posts)
+	for _, metric := range parsed.Data {
+		if metric.Name == "plays" || metric.Name == "impressions" {
+			return metric.Value, nil
+		}
+	}
+	return 0, nil
 }
 
 func (i *Importer) logSchemaInfo(ctx context.Context, l *log.Logger) {
