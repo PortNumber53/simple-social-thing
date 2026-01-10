@@ -3519,9 +3519,33 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 			// Check if video needs transcoding
 			needsTranscode := !(ctLower == "video/mp4" || strings.HasSuffix(relLower, ".mp4") || strings.HasSuffix(fnLower, ".mp4"))
 
-			// If video is not MP4, attempt to transcode it
+			// For MP4 files, validate codec compatibility
+			var codecCheckNeeded bool
+			if !needsTranscode && len(videoBytes) > 0 {
+				// Save to temp file to check codecs
+				tmpFile, err := os.CreateTemp("", "video_codec_check_*.mp4")
+				if err == nil {
+					defer os.Remove(tmpFile.Name())
+					defer tmpFile.Close()
+					if _, err := tmpFile.Write(videoBytes); err == nil {
+						tmpFile.Close()
+						hasH264, hasAAC, err := validateVideoCodecs(tmpFile.Name())
+						if err == nil && (!hasH264 || !hasAAC) {
+							log.Printf("[PublishJob] mp4 codec check: jobId=%s userId=%s postId=%s hasH264=%v hasAAC=%v - needs transcode", jobID, userID, postID, hasH264, hasAAC)
+							needsTranscode = true
+							codecCheckNeeded = true
+						}
+					}
+				}
+			}
+
+			// If video needs transcoding (either not MP4 or MP4 with incompatible codecs)
 			if needsTranscode && len(videoBytes) > 0 {
-				log.Printf("[PublishJob] transcoding video for instagram: jobId=%s userId=%s postId=%s filename=%s contentType=%s", jobID, userID, postID, fn, ctLower)
+				if codecCheckNeeded {
+					log.Printf("[PublishJob] transcoding mp4 with incompatible codecs: jobId=%s userId=%s postId=%s filename=%s", jobID, userID, postID, fn)
+				} else {
+					log.Printf("[PublishJob] transcoding video for instagram: jobId=%s userId=%s postId=%s filename=%s contentType=%s", jobID, userID, postID, fn, ctLower)
+				}
 				transcodedBytes, err := preprocessVideoForInstagram(videoBytes, fn)
 				if err != nil {
 					results["instagram"] = publishProviderResult{
@@ -4047,6 +4071,53 @@ func randHex(n int) string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+// validateVideoCodecs checks if a video has Instagram-compatible codecs (H.264 video + AAC audio).
+// Returns (hasH264, hasAAC, error).
+func validateVideoCodecs(inputPath string) (bool, bool, error) {
+	probeCmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "stream=codec_name,codec_type", "-of", "json", inputPath)
+	probeOut, err := probeCmd.Output()
+	if err != nil {
+		return false, false, fmt.Errorf("ffprobe_failed: %w", err)
+	}
+
+	var probeResult struct {
+		Streams []map[string]interface{} `json:"streams"`
+	}
+	if err := json.Unmarshal(probeOut, &probeResult); err != nil {
+		return false, false, fmt.Errorf("ffprobe_parse_failed: %w", err)
+	}
+
+	hasH264 := false
+	hasAAC := false
+	hasAudio := false
+	for _, stream := range probeResult.Streams {
+		if codecType, ok := stream["codec_type"].(string); ok {
+			if codecName, ok := stream["codec_name"].(string); ok {
+				if codecType == "video" && codecName == "h264" {
+					hasH264 = true
+				}
+				if codecType == "audio" {
+					hasAudio = true
+					if codecName == "aac" {
+						hasAAC = true
+					}
+				}
+			}
+		}
+	}
+
+	// If there's audio but it's not AAC, we need to transcode
+	// If there's no audio at all, we need to add a silent audio track
+	if hasAudio && !hasAAC {
+		return hasH264, false, nil
+	}
+	if !hasAudio {
+		return hasH264, false, nil
+	}
+
+	return hasH264, hasAAC, nil
 }
 
 // preprocessVideoForInstagram transcodes a video to Instagram Reels compatible format.
