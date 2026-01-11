@@ -238,16 +238,22 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 
 	// Fetch insights (views) for each media item
 	// Note: This requires instagram_business_content_access permission on the app
-	insightsEnabled := true
+	// If permission is not available, skip insights fetching entirely
+	insightsAvailable := true
 	for idx := range media {
+		if !insightsAvailable {
+			break
+		}
 		views, err := i.fetchMediaInsights(ctx, media[idx].ID, tok.AccessToken)
 		if err != nil {
-			// Log first error with full details, then suppress repetitive logs
-			if insightsEnabled {
-				l.Printf("[IGImporter] insights fetch failed mediaId=%s err=%v (this permission may not be enabled on your app)", media[idx].ID, err)
-				insightsEnabled = false
+			// If we get a permission error, skip insights for all remaining items
+			if strings.Contains(err.Error(), "does not have permission") {
+				l.Printf("[IGImporter] insights permission not available userId=%s (instagram_business_content_access may need to be requested in app review)", userID)
+				insightsAvailable = false
+				break
 			}
-			// Continue anyway; views are optional
+			// For other errors, log but continue
+			l.Printf("[IGImporter] insights fetch failed mediaId=%s err=%v", media[idx].ID, err)
 		} else if views > 0 {
 			media[idx].ViewCount = &views
 		}
