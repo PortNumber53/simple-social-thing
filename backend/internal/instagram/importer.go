@@ -32,7 +32,18 @@ type oauthRecord struct {
 }
 
 type mediaListResponse struct {
-	Data []mediaItem `json:"data"`
+	Data   []mediaItem `json:"data"`
+	Paging *pagingInfo `json:"paging"`
+}
+
+type pagingInfo struct {
+	Cursors *cursorInfo `json:"cursors"`
+	Next    string      `json:"next"`
+}
+
+type cursorInfo struct {
+	Before string `json:"before"`
+	After  string `json:"after"`
 }
 
 type mediaItem struct {
@@ -314,33 +325,59 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 }
 
 func (i *Importer) fetchRecentMedia(ctx context.Context, igBusinessID string, accessToken string) ([]mediaItem, []byte, error) {
-	u := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media?fields=id,caption,media_type,permalink,timestamp,like_count,media_url,thumbnail_url&limit=25&access_token=%s",
-		igBusinessID,
-		accessToken,
-	)
+	allMedia := make([]mediaItem, 0)
+	var lastBody []byte
+	after := ""
+	maxPages := 100 // Safety limit to prevent infinite loops
 
-	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	req.Header.Set("Accept", "application/json")
+	for page := 0; page < maxPages; page++ {
+		select {
+		case <-ctx.Done():
+			return allMedia, lastBody, ctx.Err()
+		default:
+		}
 
-	res, err := i.Client.Do(req)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer res.Body.Close()
+		u := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media?fields=id,caption,media_type,permalink,timestamp,like_count,media_url,thumbnail_url&limit=100",
+			igBusinessID,
+		)
+		if after != "" {
+			u += "&after=" + after
+		}
+		u += "&access_token=" + accessToken
 
-	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, body, fmt.Errorf("graph_non_2xx status=%d body=%s", res.StatusCode, truncate(string(body), 600))
+		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+		if err != nil {
+			return allMedia, lastBody, err
+		}
+		req.Header.Set("Accept", "application/json")
+
+		res, err := i.Client.Do(req)
+		if err != nil {
+			return allMedia, lastBody, err
+		}
+		defer res.Body.Close()
+
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		lastBody = body
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			return allMedia, body, fmt.Errorf("graph_non_2xx status=%d body=%s", res.StatusCode, truncate(string(body), 600))
+		}
+
+		var parsed mediaListResponse
+		if err := json.Unmarshal(body, &parsed); err != nil {
+			return allMedia, body, err
+		}
+
+		allMedia = append(allMedia, parsed.Data...)
+
+		// Check if there are more pages
+		if parsed.Paging == nil || parsed.Paging.Cursors == nil || parsed.Paging.Cursors.After == "" {
+			break
+		}
+		after = parsed.Paging.Cursors.After
 	}
 
-	var parsed mediaListResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, body, err
-	}
-	return parsed.Data, body, nil
+	return allMedia, lastBody, nil
 }
 
 // fetchMediaInsights retrieves view count for a single media item from Instagram insights API.
