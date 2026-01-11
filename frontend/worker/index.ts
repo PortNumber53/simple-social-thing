@@ -701,6 +701,29 @@ export default {
         return handleRealtimeEventsWs(request, env);
       }
 
+      // Proxy user profile requests to backend
+      if (url.pathname.startsWith("/api/users/") && request.method === "GET") {
+        const backendOrigin = getBackendOrigin(env, request);
+        const userId = url.pathname.split("/").pop();
+        if (!userId) {
+          return Response.json({ ok: false, error: "invalid_user_id" }, { status: 400, headers: buildCorsHeaders(request) });
+        }
+        try {
+          const res = await fetch(`${backendOrigin}/api/users/${encodeURIComponent(userId)}`, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy user request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
       return Response.json({ ok: true });
     }
 
