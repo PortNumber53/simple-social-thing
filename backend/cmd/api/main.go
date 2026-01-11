@@ -131,6 +131,9 @@ func run(d deps) error {
 	// Initialize handlers
 	h := handlers.New(db)
 
+	// Start background workers
+	h.StartProductArchivalWorker()
+
 	// Setup router
 	r := buildRouter(h)
 
@@ -345,7 +348,16 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	r.HandleFunc("/api/users/{id}", h.UpdateUser).Methods("PUT")
 
 	// Billing endpoints
+	r.HandleFunc("/api/billing/sync/legacy-plans", h.SyncLegacyPlans).Methods("POST")
 	r.HandleFunc("/api/billing/plans", h.GetBillingPlans).Methods("GET")
+	r.HandleFunc("/api/billing/plans/{id}", h.UpdateBillingPlan).Methods("PUT")
+	r.HandleFunc("/api/billing/plans/{id}", h.DeleteBillingPlan).Methods("DELETE")
+	r.HandleFunc("/api/billing/plans/{id}/migrate", h.MigrateBillingPlanPrice).Methods("POST")
+	r.HandleFunc("/api/billing/plans/{id}/migration-status", h.GetMigrationStatus).Methods("GET")
+	r.HandleFunc("/api/billing/plans/{id}/archive", h.ArchiveProduct).Methods("POST")
+	r.HandleFunc("/api/billing/products/archive", h.ArchiveOldProducts).Methods("POST")
+	r.HandleFunc("/api/billing/subscriptions/migrate", h.MigrateSubscriptionsAfterGracePeriod).Methods("POST")
+	r.HandleFunc("/api/billing/product-versions/{versionGroup}", h.GetProductVersions).Methods("GET")
 	r.HandleFunc("/api/billing/subscription/user/{userId}", h.GetUserSubscription).Methods("GET")
 	r.HandleFunc("/api/billing/subscription/user/{userId}", h.CreateSubscription).Methods("POST")
 	r.HandleFunc("/api/billing/subscription/cancel/user/{userId}", h.CancelSubscription).Methods("POST")
