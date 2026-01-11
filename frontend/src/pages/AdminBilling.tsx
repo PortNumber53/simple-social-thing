@@ -479,7 +479,7 @@ export const AdminBilling: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {plans.map((plan) => (
+                {Array.isArray(plans) && plans.map((plan) => (
                   <tr key={plan.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                     <td className="py-3 px-4 text-slate-700 dark:text-slate-300 font-mono text-sm">
                       {plan.id}

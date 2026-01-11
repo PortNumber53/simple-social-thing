@@ -19,6 +19,9 @@ import { Profile } from './pages/Profile';
 import { Settings } from './pages/Settings';
 import { Billing } from './pages/Billing';
 import { AdminBilling } from './pages/AdminBilling';
+import { AdminUsers } from './pages/AdminUsers';
+import { AdminAnalytics } from './pages/AdminAnalytics';
+import { AdminSettings } from './pages/AdminSettings';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
@@ -130,6 +133,36 @@ function App() {
             <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <ErrorBoundary>
                 <AdminBilling />
+              </ErrorBoundary>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/users"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
+              <ErrorBoundary>
+                <AdminUsers />
+              </ErrorBoundary>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/analytics"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
+              <ErrorBoundary>
+                <AdminAnalytics />
+              </ErrorBoundary>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/settings"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
+              <ErrorBoundary>
+                <AdminSettings />
               </ErrorBoundary>
             </ProtectedRoute>
           }
