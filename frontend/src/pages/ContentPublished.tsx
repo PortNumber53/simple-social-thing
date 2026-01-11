@@ -194,6 +194,7 @@ export const ContentPublished: React.FC = () => {
       if (!res.ok) {
         console.error('[PublishedDelete] failed', { status: res.status, message: res.error.message, data: res.data });
         setError(res.error.message || 'Failed to delete selected items.');
+        setConfirmModalOpen(false);
         return;
       }
       const obj = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
@@ -202,6 +203,9 @@ export const ContentPublished: React.FC = () => {
       const deletedIds = Array.isArray(deletedIdsRaw)
         ? deletedIdsRaw.filter((x) => typeof x === 'string').map((x) => x.trim()).filter(Boolean)
         : [];
+
+      // Close modal after successful request
+      setConfirmModalOpen(false);
 
       // In tests, don't wait for realtime — confirm immediately via the API response.
       if (import.meta.env.MODE === 'test') {
@@ -256,6 +260,7 @@ export const ContentPublished: React.FC = () => {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('[PublishedDelete] exception', { message: msg });
       setError(msg || 'Failed to delete selected items.');
+      setConfirmModalOpen(false);
     } finally {
       setDeleting(false);
     }
