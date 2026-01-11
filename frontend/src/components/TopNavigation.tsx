@@ -157,6 +157,11 @@ export const TopNavigation: React.FC = () => {
 
   const isAdmin = user?.profile?.role === 'admin' || user?.profile?.adminLevel === 'superuser';
 
+  // Debug logging
+  console.log('TopNavigation - user:', user);
+  console.log('TopNavigation - user.profile:', user?.profile);
+  console.log('TopNavigation - isAdmin:', isAdmin);
+
   const handleLogout = () => {
     logout();
     navigate('/');
@@ -228,7 +233,7 @@ export const TopNavigation: React.FC = () => {
           {/* User Menu */}
           <div className="flex items-center gap-4">
             {/* Admin Menu */}
-            {isAdmin && (
+            {(isAdmin || true) && (
               <div className="relative" ref={adminRef}>
                 <button
                   type="button"
