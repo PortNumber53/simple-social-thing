@@ -2976,6 +2976,8 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
         } catch (e) {
           console.error('[DB] sqlUpsertSocial (google) failed', e);
         }
+      } else {
+        console.warn('[OAuth] Database connection unavailable - user not persisted to database. Check HYPERDRIVE or DATABASE_URL configuration.');
       }
     }
 
