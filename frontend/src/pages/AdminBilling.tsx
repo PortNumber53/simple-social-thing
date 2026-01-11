@@ -28,6 +28,17 @@ export const AdminBilling: React.FC = () => {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingPlan, setEditingPlan] = useState<BillingPlan | null>(null);
+  const [showMigrateDialog, setShowMigrateDialog] = useState(false);
+  const [migratingPlanId, setMigratingPlanId] = useState<string | null>(null);
+  const [migrateData, setMigrateData] = useState({
+    newPriceCents: 0,
+    gracePeriodMonths: 3,
+    reason: '',
+  });
+
+  const [isSyncingLegacy, setIsSyncingLegacy] = useState(false);
+
+  const [isPruning, setIsPruning] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -184,6 +195,94 @@ export const AdminBilling: React.FC = () => {
     setShowCreateForm(true);
   };
 
+  const handleMigratePlan = (plan: BillingPlan) => {
+    setMigratingPlanId(plan.id);
+    setMigrateData({
+      newPriceCents: plan.priceCents,
+      gracePeriodMonths: 3,
+      reason: '',
+    });
+    setShowMigrateDialog(true);
+  };
+
+  const handleSubmitMigration = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!migratingPlanId) return;
+
+    try {
+      setMessage(null);
+      const res = await apiJson(`/api/billing/plans/${migratingPlanId}/migrate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(migrateData),
+      });
+
+      if (res.ok) {
+        setMessage({
+          type: 'success',
+          text: `Plan migration created successfully. Grace period: ${migrateData.gracePeriodMonths} months`
+        });
+        setShowMigrateDialog(false);
+        setMigratingPlanId(null);
+        loadPlans();
+      } else {
+        setMessage({ type: 'error', text: res.error?.message || 'Failed to migrate plan' });
+      }
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.message || 'Failed to migrate plan' });
+    }
+  };
+
+  const handlePrunePrices = async () => {
+    try {
+      setIsPruning(true);
+      setMessage(null);
+      const res = await apiJson('/api/billing/products/archive', {
+        method: 'POST',
+      });
+
+      if (res.ok) {
+        const data = res.data as { archivedCount?: number; message?: string };
+        setMessage({
+          type: 'success',
+          text: `Pruning completed! Archived ${data.archivedCount || 0} products with no active subscribers.`
+        });
+        loadPlans(); // Refresh the list to show archived status
+      } else {
+        setMessage({ type: 'error', text: res.error?.message || 'Failed to prune plans' });
+      }
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.message || 'Failed to prune plans' });
+    } finally {
+      setIsPruning(false);
+    }
+  };
+
+  const handleSyncLegacyPlans = async () => {
+    try {
+      setIsSyncingLegacy(true);
+      setMessage(null);
+      const res = await apiJson('/api/billing/sync/legacy-plans', {
+        method: 'POST',
+      });
+
+      if (res.ok) {
+        const data = res.data as { syncedCount?: number; message?: string; errors?: string[] };
+        setMessage({
+          type: 'success',
+          text: `Legacy sync completed! Created Stripe plans for ${data.syncedCount || 0} legacy plans.`
+        });
+        loadPlans(); // Refresh the list to show updated Stripe IDs
+      } else {
+        setMessage({ type: 'error', text: res.error?.message || 'Failed to sync legacy plans' });
+      }
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.message || 'Failed to sync legacy plans' });
+    } finally {
+      setIsSyncingLegacy(false);
+    }
+  };
+
   const formatPrice = (cents: number, currency: string) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -223,12 +322,30 @@ export const AdminBilling: React.FC = () => {
               <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-2">Plan Management</h1>
               <p className="text-lg text-slate-600 dark:text-slate-400">Create and manage billing plans</p>
             </div>
-            <button
-              onClick={() => setShowCreateForm(!showCreateForm)}
-              className="btn btn-primary"
-            >
-              {showCreateForm ? 'Cancel' : 'Create Plan'}
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={handleSyncLegacyPlans}
+                disabled={isSyncingLegacy}
+                className="btn btn-outline"
+                title="Create proper Stripe plans for legacy plans that don't have real Stripe IDs"
+              >
+                {isSyncingLegacy ? 'Syncing...' : '🔄 Sync Legacy Plans'}
+              </button>
+              <button
+                onClick={handlePrunePrices}
+                disabled={isPruning}
+                className="btn btn-outline"
+                title="Archive migrated products with no active subscribers"
+              >
+                {isPruning ? 'Pruning...' : '🗑️ Prune Plans'}
+              </button>
+              <button
+                onClick={() => setShowCreateForm(!showCreateForm)}
+                className="btn btn-primary"
+              >
+                {showCreateForm ? 'Cancel' : 'Create Plan'}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -508,6 +625,13 @@ export const AdminBilling: React.FC = () => {
                           Edit
                         </button>
                         <button
+                          onClick={() => handleMigratePlan(plan)}
+                          className="px-3 py-1 text-sm rounded-lg border border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                          title="Create new price with grace period"
+                        >
+                          Migrate
+                        </button>
+                        <button
                           onClick={() => handleDeletePlan(plan.id)}
                           className="px-3 py-1 text-sm rounded-lg border border-red-300 dark:border-red-600 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                         >
@@ -522,6 +646,89 @@ export const AdminBilling: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {showMigrateDialog && migratingPlanId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-lg shadow-xl max-w-md w-full p-6 animate-slide-up">
+            <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-4">
+              Migrate Plan Price
+            </h3>
+            <p className="text-slate-600 dark:text-slate-400 mb-6">
+              Create a new price version with a grace period for existing subscribers to transition.
+            </p>
+
+            <form onSubmit={handleSubmitMigration} className="space-y-4">
+              <div>
+                <label htmlFor="newPrice" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  New Price (cents)
+                </label>
+                <input
+                  type="number"
+                  id="newPrice"
+                  value={migrateData.newPriceCents}
+                  onChange={(e) => setMigrateData({ ...migrateData, newPriceCents: parseInt(e.target.value) || 0 })}
+                  className="input"
+                  placeholder="e.g., 2900"
+                  min="0"
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="gracePeriod" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Grace Period (months)
+                </label>
+                <input
+                  type="number"
+                  id="gracePeriod"
+                  value={migrateData.gracePeriodMonths}
+                  onChange={(e) => setMigrateData({ ...migrateData, gracePeriodMonths: parseInt(e.target.value) || 0 })}
+                  className="input"
+                  placeholder="e.g., 3"
+                  min="0"
+                  required
+                />
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Existing subscribers will have this many months before being migrated to the new price.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="reason" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Reason (optional)
+                </label>
+                <textarea
+                  id="reason"
+                  value={migrateData.reason}
+                  onChange={(e) => setMigrateData({ ...migrateData, reason: e.target.value })}
+                  className="input"
+                  rows={2}
+                  placeholder="e.g., Price increase due to new features"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="submit"
+                  className="flex-1 btn btn-primary"
+                >
+                  Create Migration
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMigrateDialog(false);
+                    setMigratingPlanId(null);
+                  }}
+                  className="flex-1 btn btn-ghost"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 };

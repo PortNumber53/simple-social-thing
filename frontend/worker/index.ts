@@ -701,6 +701,206 @@ export default {
         return handleRealtimeEventsWs(request, env);
       }
 
+      // Proxy billing plans requests to backend
+      if (url.pathname === "/api/billing/plans" && request.method === "GET") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}/api/billing/plans`, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy billing plans request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy sync legacy plans requests to backend
+      if (url.pathname === "/api/billing/sync/legacy-plans" && request.method === "POST") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy sync legacy plans request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy billing plans update requests to backend
+      if (url.pathname.startsWith("/api/billing/plans/") && request.method === "PUT") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy billing plans update request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy billing plans delete requests to backend
+      if (url.pathname.startsWith("/api/billing/plans/") && request.method === "DELETE") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy billing plans delete request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy billing plans migration requests to backend
+      if (url.pathname.startsWith("/api/billing/plans/") && url.pathname.endsWith("/migrate") && request.method === "POST") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy billing plans migration request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy migration status requests to backend
+      if (url.pathname.startsWith("/api/billing/plans/") && url.pathname.endsWith("/migration-status") && request.method === "GET") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy migration status request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy subscription migration requests to backend
+      if (url.pathname === "/api/billing/subscriptions/migrate" && request.method === "POST") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy subscription migration request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy product versions requests to backend
+      if (url.pathname.startsWith("/api/billing/product-versions/") && request.method === "GET") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy product versions request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy archive product requests to backend
+      if (url.pathname.startsWith("/api/billing/plans/") && url.pathname.endsWith("/archive") && request.method === "POST") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy archive product request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy manual product archival requests to backend
+      if (url.pathname === "/api/billing/products/archive" && request.method === "POST") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy manual product archival request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
       // Proxy user profile requests to backend
       if (url.pathname.startsWith("/api/users/") && request.method === "GET") {
         const backendOrigin = getBackendOrigin(env, request);
@@ -748,8 +948,8 @@ export default {
     }
 
     return new Response(null, { status: 404 });
-  },
-} satisfies ExportedHandler<Env>;
+  }
+};
 
 async function handleSunoGenerate(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendOrigin(env, request);

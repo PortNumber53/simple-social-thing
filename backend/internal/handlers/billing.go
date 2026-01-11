@@ -17,16 +17,20 @@ import (
 )
 
 type BillingPlan struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	Description *string                `json:"description,omitempty"`
-	PriceCents  int                    `json:"priceCents"`
-	Currency    string                 `json:"currency"`
-	Interval    string                 `json:"interval"`
-	StripePriceID *string              `json:"stripePriceId,omitempty"`
-	Features    map[string]interface{} `json:"features,omitempty"`
-	Limits      map[string]interface{} `json:"limits,omitempty"`
-	IsActive    bool                   `json:"isActive"`
+	ID                    string                 `json:"id"`
+	Name                  string                 `json:"name"`
+	Description           *string                `json:"description,omitempty"`
+	PriceCents            int                    `json:"priceCents"`
+	Currency              string                 `json:"currency"`
+	Interval              string                 `json:"interval"`
+	StripePriceID         *string                `json:"stripePriceId,omitempty"`
+	Features              map[string]interface{} `json:"features,omitempty"`
+	Limits                map[string]interface{} `json:"limits,omitempty"`
+	IsActive              bool                   `json:"isActive"`
+	GracePeriodMonths     int                    `json:"gracePeriodMonths,omitempty"`
+	ProductVersionGroup   *string                `json:"productVersionGroup,omitempty"`
+	MigratedFromPlanID    *string                `json:"migratedFromPlanId,omitempty"`
+	MigrationScheduledAt  *time.Time             `json:"migrationScheduledAt,omitempty"`
 }
 
 type Subscription struct {
@@ -111,7 +115,7 @@ func (h *Handler) GetBillingPlans(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.Query(`
-		SELECT id, name, description, price_cents, currency, interval, stripe_price_id, is_active
+		SELECT id, name, description, price_cents, currency, interval, stripe_price_id, features, limits, is_active
 		FROM public.billing_plans
 		WHERE is_active = true
 		ORDER BY price_cents ASC
@@ -128,7 +132,8 @@ func (h *Handler) GetBillingPlans(w http.ResponseWriter, r *http.Request) {
 		var p BillingPlan
 		var desc sql.NullString
 		var stripePriceID sql.NullString
-		err := rows.Scan(&p.ID, &p.Name, &desc, &p.PriceCents, &p.Currency, &p.Interval, &stripePriceID, &p.IsActive)
+		var features, limits sql.NullString
+		err := rows.Scan(&p.ID, &p.Name, &desc, &p.PriceCents, &p.Currency, &p.Interval, &stripePriceID, &features, &limits, &p.IsActive)
 		if err != nil {
 			log.Printf("[Billing][Plans] scan error: %v", err)
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -140,6 +145,18 @@ func (h *Handler) GetBillingPlans(w http.ResponseWriter, r *http.Request) {
 		}
 		if stripePriceID.Valid {
 			p.StripePriceID = &stripePriceID.String
+		}
+		if features.Valid {
+			var featuresMap map[string]interface{}
+			if err := json.Unmarshal([]byte(features.String), &featuresMap); err == nil {
+				p.Features = featuresMap
+			}
+		}
+		if limits.Valid {
+			var limitsMap map[string]interface{}
+			if err := json.Unmarshal([]byte(limits.String), &limitsMap); err == nil {
+				p.Limits = limitsMap
+			}
 		}
 
 		plans = append(plans, p)
@@ -658,11 +675,17 @@ func (h *Handler) processStripeEvent(event stripe.Event) {
 	case "product.deleted":
 		h.handleProductDeletion(event)
 
-	// Price events
+	// Price events (new API)
 	case "price.created", "price.updated":
 		h.handlePriceEvent(event)
 	case "price.deleted":
 		h.handlePriceDeletion(event)
+
+	// Plan events (legacy API)
+	case "plan.created", "plan.updated":
+		h.handlePlanEvent(event)
+	case "plan.deleted":
+		h.handlePlanDeletion(event)
 
 	// Subscription events
 	case "customer.subscription.created", "customer.subscription.updated":
@@ -878,6 +901,93 @@ func (h *Handler) handleProductEvent(event stripe.Event) {
 	if err != nil {
 		log.Printf("[Billing][ProductEvent] product save error: %v", err)
 	}
+
+	// If this is a product.updated event, update associated billing plans
+	if event.Type == "product.updated" {
+		h.updateAssociatedBillingPlans(product.ID, &product)
+	}
+}
+
+// updateAssociatedBillingPlans updates all billing plans associated with a product
+func (h *Handler) updateAssociatedBillingPlans(productID string, product *stripe.Product) {
+	// Find all billing plans that use this product
+	rows, err := h.db.Query(`
+		SELECT id, stripe_price_id FROM public.billing_plans
+		WHERE stripe_product_id = $1 AND is_active = true
+	`, productID)
+	if err != nil {
+		log.Printf("[Billing][UpdatePlans] query error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var updatedPlans []string
+	for rows.Next() {
+		var planID, stripePriceID string
+		if err := rows.Scan(&planID, &stripePriceID); err != nil {
+			continue
+		}
+
+		// Parse metadata for features and limits
+		features := make(map[string]interface{})
+		limits := make(map[string]interface{})
+
+		// Parse features metadata
+		if featuresStr, exists := product.Metadata["features"]; exists {
+			var parsed interface{}
+			if json.Unmarshal([]byte(featuresStr), &parsed) == nil {
+				switch v := parsed.(type) {
+				case map[string]interface{}:
+					features = v
+				case []interface{}:
+					features = map[string]interface{}{"features": v}
+				default:
+					features["features"] = featuresStr
+				}
+			} else {
+				features["features"] = featuresStr
+			}
+		}
+
+		// Parse limits metadata
+		if limitsStr, exists := product.Metadata["limits"]; exists {
+			var parsed interface{}
+			if json.Unmarshal([]byte(limitsStr), &parsed) == nil {
+				switch v := parsed.(type) {
+				case map[string]interface{}:
+					limits = v
+				case []interface{}:
+					limits = map[string]interface{}{"limits": v}
+				default:
+					limits["limits"] = limitsStr
+				}
+			} else {
+				limits["limits"] = limitsStr
+			}
+		}
+
+		// Convert to JSON for database
+		featuresJSON, _ := json.Marshal(features)
+		limitsJSON, _ := json.Marshal(limits)
+
+		// Update the billing plan
+		_, err = h.db.Exec(`
+			UPDATE public.billing_plans
+			SET name = $1, description = $2, features = $3, limits = $4, updated_at = NOW()
+			WHERE id = $5
+		`, product.Name, product.Description, string(featuresJSON), string(limitsJSON), planID)
+
+		if err != nil {
+			log.Printf("[Billing][UpdatePlans] plan update error for %s: %v", planID, err)
+		} else {
+			updatedPlans = append(updatedPlans, planID)
+			log.Printf("[Billing][UpdatePlans] Updated plan %s with product %s", planID, product.Name)
+		}
+	}
+
+	if len(updatedPlans) > 0 {
+		log.Printf("[Billing][UpdatePlans] Successfully updated %d plans for product %s", len(updatedPlans), product.Name)
+	}
 }
 
 func (h *Handler) handleProductDeletion(event stripe.Event) {
@@ -909,43 +1019,174 @@ func (h *Handler) handlePriceEvent(event stripe.Event) {
 		return
 	}
 
+	// Always fetch the latest product data to get metadata
+	if price.Product != nil && price.Product.ID != "" {
+		product, err := stripeClient.Products.Get(price.Product.ID, nil)
+		if err != nil {
+			log.Printf("[Billing][PriceEvent] Failed to fetch product %s: %v", price.Product.ID, err)
+			return
+		}
+		// Use the product with latest metadata
+		price.Product = product
+	}
+
+	h.handlePriceEventInternal(&price)
+}
+
+// handlePriceEventInternal contains the core price/plan processing logic
+func (h *Handler) handlePriceEventInternal(price *stripe.Price) {
 	// If price is associated with a product, update or create billing plan
 	if price.Product != nil && price.Product.ID != "" {
 		planID := fmt.Sprintf("price_%s", price.ID)
 		var features, limits map[string]interface{}
 
 		// Convert metadata from map[string]string to map[string]interface{}
+		var planName string
 		if product, err := stripeClient.Products.Get(price.Product.ID, nil); err == nil {
 			features = make(map[string]interface{})
-			limits = make(map[string]interface{})
-			for k, v := range product.Metadata {
-				features[k] = v
-				limits[k] = v
+			limits := make(map[string]interface{})
+
+			// Parse features metadata
+			if featuresStr, exists := product.Metadata["features"]; exists {
+				var parsed interface{}
+				if json.Unmarshal([]byte(featuresStr), &parsed) == nil {
+					switch v := parsed.(type) {
+					case map[string]interface{}:
+						features = v
+					case []interface{}:
+						features = map[string]interface{}{"features": v}
+					default:
+						features["features"] = featuresStr
+					}
+				} else {
+					features["features"] = featuresStr
+				}
 			}
+
+			// Parse limits metadata
+			if limitsStr, exists := product.Metadata["limits"]; exists {
+				var parsed interface{}
+				if json.Unmarshal([]byte(limitsStr), &parsed) == nil {
+					switch v := parsed.(type) {
+					case map[string]interface{}:
+						limits = v
+					case []interface{}:
+						limits = map[string]interface{}{"limits": v}
+					default:
+						limits["limits"] = limitsStr
+					}
+				} else {
+					limits["limits"] = limitsStr
+				}
+			}
+
+			log.Printf("[Billing][PriceEvent] Successfully fetched product %s for price %s", product.Name, price.ID)
+			// Use product name as fallback if price nickname is empty
+			planName = price.Nickname
+			if planName == "" {
+				planName = product.Name
+			}
+		} else {
+			log.Printf("[Billing][PriceEvent] Failed to fetch product %s for price %s: %v", price.Product.ID, price.ID, err)
+			planName = price.Nickname
 		}
 
-		// Convert price from dollars to cents
-		priceCents := int(price.UnitAmount * 100)
+		// Convert price from cents (Stripe unit_amount is already in cents)
+		priceCents := int(price.UnitAmount)
+
+		// Convert maps to JSON strings for database
+		featuresJSON, _ := json.Marshal(features)
+		limitsJSON, _ := json.Marshal(limits)
+
+		// Check if there's an existing legacy plan with matching name (free, pro, enterprise)
+		var existingLegacyPlanID sql.NullString
+		err := h.db.QueryRow(`
+			SELECT id FROM public.billing_plans
+			WHERE name = $1 AND id IN ('free', 'pro', 'enterprise')
+			LIMIT 1
+		`, planName).Scan(&existingLegacyPlanID)
+
+		if err == nil && existingLegacyPlanID.Valid {
+			// Update the existing legacy plan instead of creating a duplicate
+			planID = existingLegacyPlanID.String
+			log.Printf("[Billing][PriceEvent] Linking Stripe price %s to existing legacy plan %s", price.ID, planID)
+		}
 
 		_, err = h.db.Exec(`
 			INSERT INTO public.billing_plans (id, name, description, price_cents, currency, interval, stripe_price_id, stripe_product_id, features, limits, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-			ON CONFLICT (stripe_price_id) DO UPDATE SET
+			ON CONFLICT (id) DO UPDATE SET
 				name = EXCLUDED.name,
 				description = EXCLUDED.description,
 				price_cents = EXCLUDED.price_cents,
 				currency = EXCLUDED.currency,
 				interval = EXCLUDED.interval,
+				stripe_price_id = EXCLUDED.stripe_price_id,
 				stripe_product_id = EXCLUDED.stripe_product_id,
 				features = EXCLUDED.features,
 				limits = EXCLUDED.limits,
 				updated_at = NOW()
-		`, planID, price.Nickname, price.Metadata["description"], priceCents,
-			string(price.Currency), string(price.Recurring.Interval), price.ID, price.Product.ID, features, limits)
+		`, planID, planName, price.Metadata["description"], priceCents,
+			string(price.Currency), string(price.Recurring.Interval), price.ID, price.Product.ID, string(featuresJSON), string(limitsJSON))
 
 		if err != nil {
 			log.Printf("[Billing][PriceEvent] plan save error: %v", err)
+		} else {
+			log.Printf("[Billing][PriceEvent] Successfully saved/updated plan %s (%s) - $%d.%02d/%s", planID, planName, priceCents/100, priceCents%100, price.Recurring.Interval)
 		}
+	} else {
+		log.Printf("[Billing][PriceEvent] Price %s has no product association, skipping", price.ID)
+	}
+}
+
+// handlePlanEvent handles legacy Stripe plan events (for backwards compatibility)
+func (h *Handler) handlePlanEvent(event stripe.Event) {
+	var plan stripe.Plan
+	err := json.Unmarshal(event.Data.Raw, &plan)
+	if err != nil {
+		log.Printf("[Billing][PlanEvent] unmarshal error: %v", err)
+		return
+	}
+
+	log.Printf("[Billing][PlanEvent] Processing plan %s (%s) - $%d.%02d/%s", plan.ID, plan.Nickname, plan.Amount/100, plan.Amount%100, plan.Interval)
+
+	// Convert plan to price-like structure for processing
+	price := &stripe.Price{
+		ID: plan.ID,
+		Nickname: plan.Nickname,
+		Product: &stripe.Product{
+			ID: plan.Product.ID,
+		},
+		UnitAmount: plan.Amount,
+		Currency: plan.Currency,
+		Recurring: &stripe.PriceRecurring{
+			Interval: stripe.PriceRecurringInterval(plan.Interval),
+		},
+		Metadata: plan.Metadata,
+	}
+
+	// Process using the existing price event logic
+	h.handlePriceEventInternal(price)
+}
+
+// handlePlanDeletion handles legacy Stripe plan deletion events
+func (h *Handler) handlePlanDeletion(event stripe.Event) {
+	var plan stripe.Plan
+	err := json.Unmarshal(event.Data.Raw, &plan)
+	if err != nil {
+		log.Printf("[Billing][PlanDeletion] unmarshal error: %v", err)
+		return
+	}
+
+	// Deactivate the billing plan
+	_, err = h.db.Exec(`
+		UPDATE public.billing_plans
+		SET is_active = false, updated_at = NOW()
+		WHERE stripe_price_id = $1
+	`, plan.ID)
+
+	if err != nil {
+		log.Printf("[Billing][PlanDeletion] plan deactivation error: %v", err)
 	}
 }
 
@@ -957,16 +1198,1028 @@ func (h *Handler) handlePriceDeletion(event stripe.Event) {
 		return
 	}
 
-	// Deactivate the billing plan
+	// Protect legacy plans from deletion - only deactivate non-legacy plans
+	// Legacy plans (free, pro, enterprise) should only be deleted manually via admin UI
 	_, err = h.db.Exec(`
 		UPDATE public.billing_plans
 		SET is_active = false, updated_at = NOW()
-		WHERE stripe_price_id = $1
+		WHERE stripe_price_id = $1 AND id NOT IN ('free', 'pro', 'enterprise')
 	`, price.ID)
 
 	if err != nil {
-		log.Printf("[Billing][PriceDeletion] plan update error: %v", err)
+		log.Printf("[Billing][PriceDeletion] plan deactivation error: %v", err)
+	} else {
+		log.Printf("[Billing][PriceDeletion] Deactivated price %s (skipped legacy plans)", price.ID)
 	}
+}
+
+// UpdateBillingPlan updates a billing plan in both database and Stripe
+func (h *Handler) UpdateBillingPlan(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPut) {
+		return
+	}
+
+	planID := pathVar(r, "id")
+	if planID == "" {
+		writeError(w, http.StatusBadRequest, "plan ID is required")
+		return
+	}
+
+	// Get current plan to check if it has Stripe integration
+	var currentPlan BillingPlan
+	var desc, stripePriceID sql.NullString
+	var features, limits sql.NullString
+	err := h.db.QueryRow(`
+		SELECT id, name, description, price_cents, currency, interval, stripe_price_id, features, limits, is_active
+		FROM public.billing_plans
+		WHERE id = $1
+	`, planID).Scan(&currentPlan.ID, &currentPlan.Name, &desc, &currentPlan.PriceCents, &currentPlan.Currency, &currentPlan.Interval, &stripePriceID, &features, &limits, &currentPlan.IsActive)
+
+	if err != nil {
+		log.Printf("[Billing][UpdatePlan] plan not found: %v", err)
+		writeError(w, http.StatusNotFound, "plan not found")
+		return
+	}
+
+	// Parse updated plan data
+	var updatedPlan BillingPlan
+	if err := decodeJSON(r, &updatedPlan); err != nil {
+		log.Printf("[Billing][UpdatePlan] decode error: %v", err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Validate required fields
+	if updatedPlan.Name == "" {
+		writeError(w, http.StatusBadRequest, "plan name is required")
+		return
+	}
+	if updatedPlan.PriceCents < 0 {
+		writeError(w, http.StatusBadRequest, "price must be non-negative")
+		return
+	}
+
+	// Convert features and limits to JSON for database
+	featuresJSON := "{}"
+	if updatedPlan.Features != nil {
+		if jsonBytes, err := json.Marshal(updatedPlan.Features); err == nil {
+			featuresJSON = string(jsonBytes)
+		}
+	}
+
+	limitsJSON := "{}"
+	if updatedPlan.Limits != nil {
+		if jsonBytes, err := json.Marshal(updatedPlan.Limits); err == nil {
+			limitsJSON = string(jsonBytes)
+		}
+	}
+
+	// 1. Update database
+	description := updatedPlan.Description
+	if description == nil {
+		if desc.Valid {
+			description = &desc.String
+		}
+	}
+
+	_, err = h.db.Exec(`
+		UPDATE public.billing_plans
+		SET name = $1, description = $2, price_cents = $3, currency = $4, interval = $5,
+		    features = $6, limits = $7, updated_at = NOW()
+		WHERE id = $8
+	`, updatedPlan.Name, description, updatedPlan.PriceCents, updatedPlan.Currency, updatedPlan.Interval,
+		featuresJSON, limitsJSON, planID)
+
+	if err != nil {
+		log.Printf("[Billing][UpdatePlan] database update error: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to update plan")
+		return
+	}
+
+	// 2. Update Stripe if it has stripe_price_id
+	var stripeError error
+	if stripePriceID.Valid && stripePriceID.String != "" {
+		initStripe()
+		if stripeClient != nil {
+			// Update price in Stripe - only update nickname (name)
+			// Note: Stripe doesn't allow updating unit_amount or currency on existing prices
+			params := &stripe.PriceParams{
+				Nickname: stripe.String(updatedPlan.Name),
+			}
+
+			_, err := stripeClient.Prices.Update(stripePriceID.String, params)
+			if err != nil {
+				stripeError = err
+				log.Printf("[Billing][UpdatePlan] failed to update Stripe price %s: %v", stripePriceID.String, err)
+				// Continue anyway since database is updated
+			} else {
+				log.Printf("[Billing][UpdatePlan] successfully updated Stripe price %s", stripePriceID.String)
+			}
+		} else {
+			stripeError = fmt.Errorf("Stripe client not initialized")
+			log.Printf("[Billing][UpdatePlan] Stripe client not available")
+		}
+	}
+
+	// 3. Return response
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Plan updated successfully",
+		"plan": map[string]interface{}{
+			"id":           planID,
+			"name":         updatedPlan.Name,
+			"priceCents":   updatedPlan.PriceCents,
+			"currency":     updatedPlan.Currency,
+			"interval":     updatedPlan.Interval,
+			"features":     updatedPlan.Features,
+			"limits":       updatedPlan.Limits,
+			"stripeSynced": stripeError == nil,
+		},
+	}
+
+	if stripeError != nil {
+		response["stripeError"] = stripeError.Error()
+		response["warning"] = "Plan updated in database but failed to sync with Stripe"
+	}
+
+	log.Printf("[Billing][UpdatePlan] Successfully updated plan %s (Stripe sync: %v)", planID, stripeError == nil)
+	writeJSON(w, http.StatusOK, response)
+}
+
+// MigrateBillingPlanPrice creates a new product/price and schedules migration of existing subscriptions
+func (h *Handler) MigrateBillingPlanPrice(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	planID := pathVar(r, "id")
+	if planID == "" {
+		writeError(w, http.StatusBadRequest, "plan ID is required")
+		return
+	}
+
+	// Parse request body
+	var req struct {
+		NewPriceCents     int    `json:"newPriceCents"`
+		GracePeriodMonths int    `json:"gracePeriodMonths"`
+		Reason            string `json:"reason,omitempty"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if req.NewPriceCents < 0 {
+		writeError(w, http.StatusBadRequest, "price must be non-negative")
+		return
+	}
+	if req.GracePeriodMonths < 0 {
+		writeError(w, http.StatusBadRequest, "grace period must be non-negative")
+		return
+	}
+
+	// Get current plan
+	var currentPlan BillingPlan
+	var desc, stripePriceID, productVersionGroup, migratedFromPlanID sql.NullString
+	var features, limits sql.NullString
+	err := h.db.QueryRow(`
+		SELECT id, name, description, price_cents, currency, interval, stripe_price_id, features, limits,
+		       product_version_group, migrated_from_plan_id
+		FROM public.billing_plans
+		WHERE id = $1
+	`, planID).Scan(&currentPlan.ID, &currentPlan.Name, &desc, &currentPlan.PriceCents, &currentPlan.Currency,
+		&currentPlan.Interval, &stripePriceID, &features, &limits, &productVersionGroup, &migratedFromPlanID)
+
+	if err != nil {
+		log.Printf("[Billing][MigratePlan] plan not found: %v", err)
+		writeError(w, http.StatusNotFound, "plan not found")
+		return
+	}
+
+	// Parse features and limits
+	currentPlan.Features = make(map[string]interface{})
+	if features.Valid {
+		json.Unmarshal([]byte(features.String), &currentPlan.Features)
+	}
+	currentPlan.Limits = make(map[string]interface{})
+	if limits.Valid {
+		json.Unmarshal([]byte(limits.String), &currentPlan.Limits)
+	}
+
+	// Generate version group ID if not exists
+	versionGroup := productVersionGroup.String
+	if versionGroup == "" {
+		versionGroup = fmt.Sprintf("group_%s_%d", planID, time.Now().Unix())
+	}
+
+	// Create new product in Stripe
+	initStripe()
+	if stripeClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "Stripe not configured")
+		return
+	}
+
+	// Create new product with version suffix
+	newProductName := fmt.Sprintf("%s (v%d)", currentPlan.Name, time.Now().Unix())
+	productParams := &stripe.ProductParams{
+		Name: stripe.String(newProductName),
+		Type: stripe.String(string(stripe.ProductTypeService)),
+		Metadata: map[string]string{
+			"product_version_group": versionGroup,
+			"migrated_from_plan":    planID,
+			"migration_reason":      req.Reason,
+			"migration_date":        time.Now().Format(time.RFC3339),
+		},
+	}
+
+	// Only set description if it exists and is non-empty
+	if currentPlan.Description != nil && *currentPlan.Description != "" {
+		productParams.Description = stripe.String(*currentPlan.Description)
+	}
+
+	// Copy features and limits to metadata
+	if currentPlan.Features != nil {
+		if featuresJSON, err := json.Marshal(currentPlan.Features); err == nil {
+			productParams.Metadata["features"] = string(featuresJSON)
+		}
+	}
+	if currentPlan.Limits != nil {
+		if limitsJSON, err := json.Marshal(currentPlan.Limits); err == nil {
+			productParams.Metadata["limits"] = string(limitsJSON)
+		}
+	}
+
+	newProduct, err := stripeClient.Products.New(productParams)
+	if err != nil {
+		log.Printf("[Billing][MigratePlan] failed to create new product: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to create new product in Stripe")
+		return
+	}
+
+	// Insert the new product into stripe_products table to satisfy foreign key constraint
+	productID := fmt.Sprintf("prod_%s", newProduct.ID)
+
+	// Convert metadata to JSON for database storage
+	var metadataJSON []byte
+	if newProduct.Metadata != nil {
+		metadataJSON, err = json.Marshal(newProduct.Metadata)
+		if err != nil {
+			log.Printf("[Billing][MigratePlan] failed to marshal metadata: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to process product metadata")
+			return
+		}
+	} else {
+		metadataJSON = []byte("{}")
+	}
+
+	_, err = h.db.Exec(`
+		INSERT INTO public.stripe_products (id, stripe_product_id, name, description, active, metadata, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+		ON CONFLICT (stripe_product_id) DO UPDATE SET
+			name = EXCLUDED.name,
+			description = EXCLUDED.description,
+			active = EXCLUDED.active,
+			metadata = EXCLUDED.metadata,
+			updated_at = NOW()
+	`, productID, newProduct.ID, newProduct.Name, newProduct.Description, newProduct.Active, string(metadataJSON))
+
+	if err != nil {
+		log.Printf("[Billing][MigratePlan] failed to save product to database: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to save product to database")
+		return
+	}
+
+	// Create new price
+	priceParams := &stripe.PriceParams{
+		Product:    stripe.String(newProduct.ID),
+		UnitAmount: stripe.Int64(int64(req.NewPriceCents)),
+		Currency:   stripe.String(currentPlan.Currency),
+		Nickname:   stripe.String(currentPlan.Name),
+		Recurring: &stripe.PriceRecurringParams{
+			Interval: stripe.String(currentPlan.Interval),
+		},
+	}
+
+	newPrice, err := stripeClient.Prices.New(priceParams)
+	if err != nil {
+		log.Printf("[Billing][MigratePlan] failed to create new price: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to create new price in Stripe")
+		return
+	}
+
+	// Create new plan in database
+	newPlanID := fmt.Sprintf("price_%s", newPrice.ID)
+	migrationScheduledAt := time.Now().AddDate(0, req.GracePeriodMonths, 0)
+
+	_, err = h.db.Exec(`
+		INSERT INTO public.billing_plans
+		(id, name, description, price_cents, currency, interval, stripe_price_id, stripe_product_id,
+		 features, limits, grace_period_months, product_version_group, migrated_from_plan_id,
+		 migration_scheduled_at, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, NOW(), NOW())
+	`, newPlanID, currentPlan.Name, currentPlan.Description, req.NewPriceCents, currentPlan.Currency,
+		currentPlan.Interval, newPrice.ID, newProduct.ID,
+		string(must(json.Marshal(currentPlan.Features))), string(must(json.Marshal(currentPlan.Limits))),
+		req.GracePeriodMonths, versionGroup, planID, migrationScheduledAt)
+
+	if err != nil {
+		log.Printf("[Billing][MigratePlan] failed to create new plan: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to create new plan")
+		return
+	}
+
+	// Update old plan with version group and migration info
+	_, err = h.db.Exec(`
+		UPDATE public.billing_plans
+		SET product_version_group = $1, updated_at = NOW()
+		WHERE id = $2
+	`, versionGroup, planID)
+
+	if err != nil {
+		log.Printf("[Billing][MigratePlan] failed to update old plan: %v", err)
+	}
+
+	log.Printf("[Billing][MigratePlan] Created new plan %s (price: %d cents) with %d month grace period",
+		newPlanID, req.NewPriceCents, req.GracePeriodMonths)
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"success": true,
+		"message": "New plan created with grace period",
+		"oldPlanId": planID,
+		"newPlanId": newPlanID,
+		"newPrice": map[string]interface{}{
+			"id":        newPrice.ID,
+			"amount":    req.NewPriceCents,
+			"currency":  currentPlan.Currency,
+		},
+		"gracePeriodMonths": req.GracePeriodMonths,
+		"migrationScheduledAt": migrationScheduledAt,
+		"productVersionGroup": versionGroup,
+	})
+}
+
+// Helper function to handle json.Marshal errors
+func must(data []byte, err error) []byte {
+	if err != nil {
+		return []byte("{}")
+	}
+	return data
+}
+
+// MigrateSubscriptionsAfterGracePeriod migrates subscriptions from old plans to new plans after grace period
+func (h *Handler) MigrateSubscriptionsAfterGracePeriod(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	initStripe()
+	if stripeClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "Stripe not configured")
+		return
+	}
+
+	// Find all plans that have scheduled migrations
+	rows, err := h.db.Query(`
+		SELECT id, stripe_price_id, migrated_from_plan_id, migration_scheduled_at
+		FROM public.billing_plans
+		WHERE migrated_from_plan_id IS NOT NULL
+		  AND migration_scheduled_at IS NOT NULL
+		  AND migration_scheduled_at <= NOW()
+		ORDER BY migration_scheduled_at ASC
+	`)
+	if err != nil {
+		log.Printf("[Billing][MigrateSubscriptions] query error: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to query plans")
+		return
+	}
+	defer rows.Close()
+
+	type PlanMigration struct {
+		NewPlanID        string
+		NewStripePriceID string
+		OldPlanID        string
+		ScheduledAt      time.Time
+	}
+
+	var migrations []PlanMigration
+	for rows.Next() {
+		var migration PlanMigration
+		var stripePriceID, migratedFromPlanID sql.NullString
+		var scheduledAt sql.NullTime
+		if err := rows.Scan(&migration.NewPlanID, &stripePriceID, &migratedFromPlanID, &scheduledAt); err != nil {
+			continue
+		}
+		if stripePriceID.Valid {
+			migration.NewStripePriceID = stripePriceID.String
+		}
+		if migratedFromPlanID.Valid {
+			migration.OldPlanID = migratedFromPlanID.String
+		}
+		if scheduledAt.Valid {
+			migration.ScheduledAt = scheduledAt.Time
+		}
+		migrations = append(migrations, migration)
+	}
+
+	var migratedCount int
+	var errors []string
+
+	for _, migration := range migrations {
+		// Find all subscriptions using the old plan
+		subRows, err := h.db.Query(`
+			SELECT id, stripe_subscription_id
+			FROM public.subscriptions
+			WHERE plan_id = $1 AND status = 'active'
+		`, migration.OldPlanID)
+		if err != nil {
+			log.Printf("[Billing][MigrateSubscriptions] failed to query subscriptions: %v", err)
+			errors = append(errors, fmt.Sprintf("Failed to query subscriptions for plan %s", migration.OldPlanID))
+			continue
+		}
+
+		for subRows.Next() {
+			var subID string
+			var stripeSubIDNull sql.NullString
+			if err := subRows.Scan(&subID, &stripeSubIDNull); err != nil {
+				continue
+			}
+			if !stripeSubIDNull.Valid {
+				continue
+			}
+			stripeSubID := stripeSubIDNull.String
+
+			// Get subscription to find the item ID
+			stripeSub, err := stripeClient.Subscriptions.Get(stripeSubID, nil)
+			if err != nil {
+				log.Printf("[Billing][MigrateSubscriptions] failed to get Stripe subscription %s: %v", stripeSubID, err)
+				errors = append(errors, fmt.Sprintf("Failed to get Stripe subscription %s", stripeSubID))
+				continue
+			}
+
+			if len(stripeSub.Items.Data) == 0 {
+				log.Printf("[Billing][MigrateSubscriptions] no items found in subscription %s", stripeSubID)
+				continue
+			}
+
+			// Update the subscription item with new price
+			itemParams := &stripe.SubscriptionItemParams{
+				Price: stripe.String(migration.NewStripePriceID),
+			}
+
+			_, err = stripeClient.SubscriptionItems.Update(stripeSub.Items.Data[0].ID, itemParams)
+			if err != nil {
+				log.Printf("[Billing][MigrateSubscriptions] failed to update subscription item: %v", err)
+				errors = append(errors, fmt.Sprintf("Failed to update subscription %s", stripeSubID))
+				continue
+			}
+
+			// Update subscription in database
+			_, err = h.db.Exec(`
+				UPDATE public.subscriptions
+				SET plan_id = $1, updated_at = NOW()
+				WHERE id = $2
+			`, migration.NewPlanID, subID)
+
+			if err != nil {
+				log.Printf("[Billing][MigrateSubscriptions] failed to update subscription in database: %v", err)
+				errors = append(errors, fmt.Sprintf("Failed to update subscription %s in database", subID))
+				continue
+			}
+
+			migratedCount++
+			log.Printf("[Billing][MigrateSubscriptions] Migrated subscription %s from %s to %s", subID, migration.OldPlanID, migration.NewPlanID)
+		}
+		subRows.Close()
+
+		// Mark migration as complete by clearing migration_scheduled_at
+		_, err = h.db.Exec(`
+			UPDATE public.billing_plans
+			SET migration_scheduled_at = NULL, updated_at = NOW()
+			WHERE id = $1
+		`, migration.NewPlanID)
+
+		if err != nil {
+			log.Printf("[Billing][MigrateSubscriptions] failed to mark migration complete: %v", err)
+		}
+	}
+
+	log.Printf("[Billing][MigrateSubscriptions] Migrated %d subscriptions", migratedCount)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":         true,
+		"migratedCount":   migratedCount,
+		"errors":          errors,
+		"message":         fmt.Sprintf("Successfully migrated %d subscriptions", migratedCount),
+	})
+}
+
+// GetProductVersions returns all versions of a product (by product_version_group)
+func (h *Handler) GetProductVersions(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	versionGroup := pathVar(r, "versionGroup")
+	if versionGroup == "" {
+		writeError(w, http.StatusBadRequest, "version group is required")
+		return
+	}
+
+	rows, err := h.db.Query(`
+		SELECT id, name, description, price_cents, currency, interval, stripe_price_id,
+		       features, limits, grace_period_months, migrated_from_plan_id, migration_scheduled_at,
+		       is_active, created_at, updated_at
+		FROM public.billing_plans
+		WHERE product_version_group = $1
+		ORDER BY created_at ASC
+	`, versionGroup)
+	if err != nil {
+		log.Printf("[Billing][ProductVersions] query error: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to query product versions")
+		return
+	}
+	defer rows.Close()
+
+	var versions []map[string]interface{}
+	for rows.Next() {
+		var id, name, currency, interval string
+		var desc, stripePriceID, migratedFromPlanID sql.NullString
+		var features, limits sql.NullString
+		var priceCents, gracePeriodMonths int
+		var isActive bool
+		var createdAt, updatedAt time.Time
+		var migrationScheduledAt sql.NullTime
+
+		if err := rows.Scan(&id, &name, &desc, &priceCents, &currency, &interval, &stripePriceID,
+			&features, &limits, &gracePeriodMonths, &migratedFromPlanID, &migrationScheduledAt,
+			&isActive, &createdAt, &updatedAt); err != nil {
+			continue
+		}
+
+		version := map[string]interface{}{
+			"id":                 id,
+			"name":               name,
+			"priceCents":         priceCents,
+			"currency":           currency,
+			"interval":           interval,
+			"gracePeriodMonths":  gracePeriodMonths,
+			"isActive":           isActive,
+			"createdAt":          createdAt,
+			"updatedAt":          updatedAt,
+		}
+
+		if desc.Valid {
+			version["description"] = desc.String
+		}
+		if stripePriceID.Valid {
+			version["stripePriceId"] = stripePriceID.String
+		}
+		if migratedFromPlanID.Valid {
+			version["migratedFromPlanId"] = migratedFromPlanID.String
+		}
+		if migrationScheduledAt.Valid {
+			version["migrationScheduledAt"] = migrationScheduledAt.Time
+		}
+		if features.Valid {
+			var featuresMap map[string]interface{}
+			if err := json.Unmarshal([]byte(features.String), &featuresMap); err == nil {
+				version["features"] = featuresMap
+			}
+		}
+		if limits.Valid {
+			var limitsMap map[string]interface{}
+			if err := json.Unmarshal([]byte(limits.String), &limitsMap); err == nil {
+				version["limits"] = limitsMap
+			}
+		}
+
+		versions = append(versions, version)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":       true,
+		"versionGroup":  versionGroup,
+		"versions":      versions,
+		"totalVersions": len(versions),
+	})
+}
+
+// GetMigrationStatus returns migration status for a plan
+func (h *Handler) GetMigrationStatus(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	planID := pathVar(r, "id")
+	if planID == "" {
+		writeError(w, http.StatusBadRequest, "plan ID is required")
+		return
+	}
+
+	// Get plan info
+	var plan BillingPlan
+	var productVersionGroup, migratedFromPlanID sql.NullString
+	var migrationScheduledAt sql.NullTime
+	err := h.db.QueryRow(`
+		SELECT id, name, price_cents, grace_period_months, product_version_group,
+		       migrated_from_plan_id, migration_scheduled_at
+		FROM public.billing_plans
+		WHERE id = $1
+	`, planID).Scan(&plan.ID, &plan.Name, &plan.PriceCents, &plan.GracePeriodMonths,
+		&productVersionGroup, &migratedFromPlanID, &migrationScheduledAt)
+
+	if err != nil {
+		log.Printf("[Billing][MigrationStatus] plan not found: %v", err)
+		writeError(w, http.StatusNotFound, "plan not found")
+		return
+	}
+
+	// Count subscriptions on this plan
+	var subscriptionCount int
+	h.db.QueryRow(`
+		SELECT COUNT(*) FROM public.subscriptions
+		WHERE plan_id = $1 AND status = 'active'
+	`, planID).Scan(&subscriptionCount)
+
+	// Count subscriptions that need migration (on old plan)
+	var pendingMigrationCount int
+	if migratedFromPlanID.Valid {
+		h.db.QueryRow(`
+			SELECT COUNT(*) FROM public.subscriptions
+			WHERE plan_id = $1 AND status = 'active'
+		`, migratedFromPlanID.String).Scan(&pendingMigrationCount)
+	}
+
+	status := "active"
+	if migrationScheduledAt.Valid {
+		if time.Now().After(migrationScheduledAt.Time) {
+			status = "migration_overdue"
+		} else {
+			status = "migration_scheduled"
+		}
+	}
+
+	response := map[string]interface{}{
+		"success":              true,
+		"planId":               plan.ID,
+		"planName":             plan.Name,
+		"priceCents":           plan.PriceCents,
+		"gracePeriodMonths":    plan.GracePeriodMonths,
+		"status":               status,
+		"subscriptionCount":    subscriptionCount,
+		"pendingMigrationCount": pendingMigrationCount,
+	}
+
+	if productVersionGroup.Valid {
+		response["productVersionGroup"] = productVersionGroup.String
+	}
+	if migratedFromPlanID.Valid {
+		response["migratedFromPlanId"] = migratedFromPlanID.String
+	}
+	if migrationScheduledAt.Valid {
+		response["migrationScheduledAt"] = migrationScheduledAt.Time
+		response["daysUntilMigration"] = int(time.Until(migrationScheduledAt.Time).Hours() / 24)
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+// StartProductArchivalWorker starts a background goroutine that monitors and archives migrated products with no subscribers
+func (h *Handler) StartProductArchivalWorker() {
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+
+		log.Printf("[Billing][ArchivalWorker] Started product archival worker")
+
+		// Run immediately on startup
+		h.archiveOldMigratedProducts()
+
+		for range ticker.C {
+			h.archiveOldMigratedProducts()
+		}
+	}()
+}
+
+// archiveOldMigratedProducts finds migrated products with no active subscribers and archives them
+func (h *Handler) archiveOldMigratedProducts() int {
+	initStripe()
+	if stripeClient == nil {
+		log.Printf("[Billing][ArchivalWorker] Stripe not configured, skipping archival")
+		return 0
+	}
+
+	// Find all migrated products (those with migrated_from_plan_id set) that are not already archived
+	rows, err := h.db.Query(`
+		SELECT id, stripe_product_id, name, product_version_group
+		FROM public.billing_plans
+		WHERE migrated_from_plan_id IS NOT NULL
+		  AND is_archived = false
+		  AND stripe_product_id IS NOT NULL
+		ORDER BY migration_scheduled_at ASC
+	`)
+	if err != nil {
+		log.Printf("[Billing][ArchivalWorker] failed to query migrated products: %v", err)
+		return 0
+	}
+	defer rows.Close()
+
+	type MigratedProduct struct {
+		ID                   string
+		StripeProductID      string
+		Name                 string
+		ProductVersionGroup  string
+	}
+
+	var products []MigratedProduct
+	for rows.Next() {
+		var product MigratedProduct
+		var stripeProductID, versionGroup sql.NullString
+		if err := rows.Scan(&product.ID, &stripeProductID, &product.Name, &versionGroup); err != nil {
+			continue
+		}
+		if stripeProductID.Valid {
+			product.StripeProductID = stripeProductID.String
+		}
+		if versionGroup.Valid {
+			product.ProductVersionGroup = versionGroup.String
+		}
+		products = append(products, product)
+	}
+
+	var archivedCount int
+	for _, product := range products {
+		// Check if this product has any active subscriptions
+		var activeSubCount int
+		err := h.db.QueryRow(`
+			SELECT COUNT(*) FROM public.subscriptions
+			WHERE plan_id = $1 AND status = 'active'
+		`, product.ID).Scan(&activeSubCount)
+
+		if err != nil {
+			log.Printf("[Billing][ArchivalWorker] failed to count subscriptions for plan %s: %v", product.ID, err)
+			continue
+		}
+
+		// If there are active subscriptions, skip this product
+		if activeSubCount > 0 {
+			log.Printf("[Billing][ArchivalWorker] Plan %s has %d active subscriptions, skipping archival", product.ID, activeSubCount)
+			continue
+		}
+
+		// Archive the product in Stripe
+		stripeProductParams := &stripe.ProductParams{
+			Active: stripe.Bool(false),
+		}
+
+		_, err = stripeClient.Products.Update(product.StripeProductID, stripeProductParams)
+		if err != nil {
+			log.Printf("[Billing][ArchivalWorker] failed to archive Stripe product %s: %v", product.StripeProductID, err)
+			continue
+		}
+
+		// Mark as archived in database
+		_, err = h.db.Exec(`
+			UPDATE public.billing_plans
+			SET is_archived = true, archived_at = NOW(), is_active = false, updated_at = NOW()
+			WHERE id = $1
+		`, product.ID)
+
+		if err != nil {
+			log.Printf("[Billing][ArchivalWorker] failed to mark plan %s as archived: %v", product.ID, err)
+			continue
+		}
+
+		archivedCount++
+		log.Printf("[Billing][ArchivalWorker] Archived product %s (%s) - no active subscriptions", product.ID, product.Name)
+	}
+
+	if archivedCount > 0 {
+		log.Printf("[Billing][ArchivalWorker] Successfully archived %d products", archivedCount)
+	}
+
+	return archivedCount
+}
+
+// ArchiveOldProducts manually triggers the product archival process
+func (h *Handler) ArchiveOldProducts(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	initStripe()
+	if stripeClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "Stripe not configured")
+		return
+	}
+
+	log.Printf("[Billing][ArchiveOldProducts] Manual archival process triggered")
+
+	// Run the archival process
+	archivedCount := h.archiveOldMigratedProducts()
+
+	log.Printf("[Billing][ArchiveOldProducts] Manual archival completed, archived %d products", archivedCount)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":       true,
+		"message":       fmt.Sprintf("Successfully archived %d products", archivedCount),
+		"archivedCount": archivedCount,
+	})
+}
+
+// ArchiveProduct manually archives a specific product (admin endpoint)
+func (h *Handler) ArchiveProduct(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	planID := pathVar(r, "id")
+	if planID == "" {
+		writeError(w, http.StatusBadRequest, "plan ID is required")
+		return
+	}
+
+	initStripe()
+	if stripeClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "Stripe not configured")
+		return
+	}
+
+	// Get plan info
+	var stripeProductID sql.NullString
+	err := h.db.QueryRow(`
+		SELECT stripe_product_id FROM public.billing_plans WHERE id = $1
+	`, planID).Scan(&stripeProductID)
+
+	if err != nil {
+		log.Printf("[Billing][ArchiveProduct] plan not found: %v", err)
+		writeError(w, http.StatusNotFound, "plan not found")
+		return
+	}
+
+	if !stripeProductID.Valid {
+		writeError(w, http.StatusBadRequest, "plan has no Stripe product ID")
+		return
+	}
+
+	// Archive in Stripe
+	stripeProductParams := &stripe.ProductParams{
+		Active: stripe.Bool(false),
+	}
+
+	_, err = stripeClient.Products.Update(stripeProductID.String, stripeProductParams)
+	if err != nil {
+		log.Printf("[Billing][ArchiveProduct] failed to archive Stripe product: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to archive in Stripe")
+		return
+	}
+
+	// Mark as archived in database
+	_, err = h.db.Exec(`
+		UPDATE public.billing_plans
+		SET is_archived = true, archived_at = NOW(), is_active = false, updated_at = NOW()
+		WHERE id = $1
+	`, planID)
+
+	if err != nil {
+		log.Printf("[Billing][ArchiveProduct] failed to mark plan as archived: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to archive in database")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Product archived successfully",
+		"planId":  planID,
+	})
+}
+
+// SyncLegacyPlans creates proper Stripe plans for legacy plans that don't have real Stripe IDs
+func (h *Handler) SyncLegacyPlans(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	initStripe()
+	if stripeClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "Stripe not configured")
+		return
+	}
+
+	// Find all plans with legacy stripe_price_id values
+	rows, err := h.db.Query(`
+		SELECT id, name, description, price_cents, currency, interval, features, limits
+		FROM public.billing_plans
+		WHERE stripe_price_id LIKE 'legacy_%'
+		   AND is_active = true
+	`)
+	if err != nil {
+		log.Printf("[Billing][SyncLegacyPlans] failed to query legacy plans: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to query legacy plans")
+		return
+	}
+	defer rows.Close()
+
+	type LegacyPlan struct {
+		ID          string
+		Name        string
+		Description *string
+		PriceCents  int
+		Currency    string
+		Interval    string
+		Features    []byte
+		Limits      []byte
+	}
+
+	var legacyPlans []LegacyPlan
+	for rows.Next() {
+		var plan LegacyPlan
+		var desc sql.NullString
+		err := rows.Scan(&plan.ID, &plan.Name, &desc, &plan.PriceCents, &plan.Currency, &plan.Interval, &plan.Features, &plan.Limits)
+		if err != nil {
+			continue
+		}
+		if desc.Valid {
+			plan.Description = &desc.String
+		}
+		legacyPlans = append(legacyPlans, plan)
+	}
+
+	var syncedCount int
+	var errors []string
+
+	for _, plan := range legacyPlans {
+		log.Printf("[Billing][SyncLegacyPlans] Creating Stripe plan for legacy plan: %s", plan.ID)
+
+		// Create product in Stripe
+		productParams := &stripe.ProductParams{
+			Name: stripe.String(plan.Name),
+			Type: stripe.String(string(stripe.ProductTypeService)),
+		}
+
+		if plan.Description != nil && *plan.Description != "" {
+			productParams.Description = stripe.String(*plan.Description)
+		}
+
+		// Add metadata
+		productParams.Metadata = make(map[string]string)
+		if len(plan.Features) > 0 {
+			productParams.Metadata["features"] = string(plan.Features)
+		}
+		if len(plan.Limits) > 0 {
+			productParams.Metadata["limits"] = string(plan.Limits)
+		}
+
+		product, err := stripeClient.Products.New(productParams)
+		if err != nil {
+			log.Printf("[Billing][SyncLegacyPlans] failed to create product for %s: %v", plan.ID, err)
+			errors = append(errors, fmt.Sprintf("Failed to create product for %s: %v", plan.ID, err))
+			continue
+		}
+
+		// Create price in Stripe
+		priceParams := &stripe.PriceParams{
+			Product:    stripe.String(product.ID),
+			UnitAmount: stripe.Int64(int64(plan.PriceCents)),
+			Currency:   stripe.String(plan.Currency),
+			Nickname:   stripe.String(plan.Name),
+			Recurring: &stripe.PriceRecurringParams{
+				Interval: stripe.String(plan.Interval),
+			},
+		}
+
+		price, err := stripeClient.Prices.New(priceParams)
+		if err != nil {
+			log.Printf("[Billing][SyncLegacyPlans] failed to create price for %s: %v", plan.ID, err)
+			errors = append(errors, fmt.Sprintf("Failed to create price for %s: %v", plan.ID, err))
+			continue
+		}
+
+		// Update the plan in database with real Stripe IDs
+		_, err = h.db.Exec(`
+			UPDATE public.billing_plans
+			SET stripe_product_id = $1, stripe_price_id = $2, updated_at = NOW()
+			WHERE id = $3
+		`, product.ID, price.ID, plan.ID)
+
+		if err != nil {
+			log.Printf("[Billing][SyncLegacyPlans] failed to update plan %s: %v", plan.ID, err)
+			errors = append(errors, fmt.Sprintf("Failed to update plan %s: %v", plan.ID, err))
+			continue
+		}
+
+		log.Printf("[Billing][SyncLegacyPlans] Successfully created Stripe plan for %s: product=%s, price=%s", plan.ID, product.ID, price.ID)
+		syncedCount++
+	}
+
+	log.Printf("[Billing][SyncLegacyPlans] Synced %d legacy plans to Stripe", syncedCount)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":     true,
+		"syncedCount": syncedCount,
+		"errors":      errors,
+		"message":     fmt.Sprintf("Successfully synced %d legacy plans to Stripe", syncedCount),
+	})
 }
 
 // Invoice event handlers
@@ -1133,18 +2386,19 @@ func (h *Handler) SyncStripePlans(w http.ResponseWriter, r *http.Request) {
 			limits = convertMetadata(product.Metadata)
 		}
 
-		// Convert price from dollars to cents
-		priceCents := int(price.UnitAmount * 100)
+		// Convert price from cents (Stripe unit_amount is already in cents)
+		priceCents := int(price.UnitAmount)
 
 		_, err := h.db.Exec(`
 			INSERT INTO public.billing_plans (id, name, description, price_cents, currency, interval, stripe_price_id, stripe_product_id, features, limits, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-			ON CONFLICT (stripe_price_id) DO UPDATE SET
+			ON CONFLICT (id) DO UPDATE SET
 				name = EXCLUDED.name,
 				description = EXCLUDED.description,
 				price_cents = EXCLUDED.price_cents,
 				currency = EXCLUDED.currency,
 				interval = EXCLUDED.interval,
+				stripe_price_id = EXCLUDED.stripe_price_id,
 				stripe_product_id = EXCLUDED.stripe_product_id,
 				features = EXCLUDED.features,
 				limits = EXCLUDED.limits,
