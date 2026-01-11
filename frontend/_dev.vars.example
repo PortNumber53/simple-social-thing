@@ -20,7 +20,7 @@ PINTEREST_CLIENT_SECRET=your_pinterest_client_secret
 THREADS_OAUTH_BASE=https://threads.net
 
 # Backend Configuration
-BACKEND_ORIGIN=http://localhost:18002
+BACKEND_ORIGIN=http://localhost:18911
 DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 LOG_LEVEL=info
 INTERNAL_WS_SECRET=your_internal_ws_secret_here
