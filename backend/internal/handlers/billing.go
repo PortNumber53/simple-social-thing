@@ -12,6 +12,7 @@ import (
 
 	"github.com/stripe/stripe-go/v79"
 	"github.com/stripe/stripe-go/v79/client"
+	"github.com/stripe/stripe-go/v79/webhook"
 )
 
 type BillingPlan struct {
@@ -71,6 +72,17 @@ type Invoice struct {
 	PeriodStart         *time.Time `json:"periodStart,omitempty"`
 	PeriodEnd           *time.Time `json:"periodEnd,omitempty"`
 	CreatedAt           time.Time  `json:"createdAt"`
+}
+
+type StripeProduct struct {
+	ID            string                 `json:"id"`
+	StripeProductID string              `json:"stripeProductId"`
+	Name          string                 `json:"name"`
+	Description   *string                `json:"description,omitempty"`
+	Active        bool                   `json:"active"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt     time.Time              `json:"createdAt"`
+	UpdatedAt     time.Time              `json:"updatedAt"`
 }
 
 // Stripe client instance
@@ -566,9 +578,32 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement proper webhook signature verification
-	// For now, accept all webhooks (not recommended for production)
+	// Verify webhook signature
+	webhookSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
+	if webhookSecret == "" {
+		log.Printf("[Billing][Webhook] STRIPE_WEBHOOK_SECRET not set, skipping signature verification")
+	} else {
+		sig := r.Header.Get("Stripe-Signature")
+		if sig == "" {
+			log.Printf("[Billing][Webhook] missing Stripe-Signature header")
+			writeError(w, http.StatusBadRequest, "Missing signature")
+			return
+		}
 
+		event, err := webhook.ConstructEvent(payload, sig, webhookSecret)
+		if err != nil {
+			log.Printf("[Billing][Webhook] signature verification error: %v", err)
+			writeError(w, http.StatusBadRequest, "Invalid signature")
+			return
+		}
+
+		// Process the verified event
+		h.processStripeEvent(event)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "success"})
+		return
+	}
+
+	// Fallback: process without verification (not recommended for production)
 	var event stripe.Event
 	err = json.Unmarshal(payload, &event)
 	if err != nil {
@@ -577,31 +612,60 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.processStripeEvent(event)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "success"})
+}
+
+func (h *Handler) processStripeEvent(event stripe.Event) {
 	// Save event for processing
 	eventID := fmt.Sprintf("evt_%s", event.ID)
-	_, err = h.db.Exec(`
+	_, err := h.db.Exec(`
 		INSERT INTO public.billing_events (id, stripe_event_id, stripe_event_type, data, created_at)
 		VALUES ($1, $2, $3, $4, NOW())
 		ON CONFLICT (stripe_event_id) DO NOTHING
-	`, eventID, event.ID, event.Type, payload)
+	`, eventID, event.ID, event.Type, event.Data.Raw)
 
 	if err != nil {
 		log.Printf("[Billing][Webhook] event save error: %v", err)
 	}
 
-	// Process event
+	// Process event based on type
 	switch event.Type {
+	// Product events
+	case "product.created", "product.updated":
+		h.handleProductEvent(event)
+	case "product.deleted":
+		h.handleProductDeletion(event)
+
+	// Price events
+	case "price.created", "price.updated":
+		h.handlePriceEvent(event)
+	case "price.deleted":
+		h.handlePriceDeletion(event)
+
+	// Subscription events
 	case "customer.subscription.created", "customer.subscription.updated":
 		h.handleSubscriptionEvent(event)
 	case "customer.subscription.deleted":
 		h.handleSubscriptionCancellation(event)
+
+	// Invoice events
 	case "invoice.payment_succeeded":
 		h.handlePaymentSuccess(event)
 	case "invoice.payment_failed":
 		h.handlePaymentFailure(event)
-	}
+	case "invoice.created":
+		h.handleInvoiceCreated(event)
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "success"})
+	// Customer events
+	case "customer.created":
+		h.handleCustomerCreated(event)
+	case "customer.updated":
+		h.handleCustomerUpdated(event)
+
+	default:
+		log.Printf("[Billing][Webhook] unhandled event type: %s", event.Type)
+	}
 }
 
 func (h *Handler) handleSubscriptionEvent(event stripe.Event) {
@@ -759,4 +823,351 @@ func inlineNullTime(t int64) *time.Time {
 	}
 	tm := time.Unix(t, 0)
 	return &tm
+}
+
+// Product event handlers
+func (h *Handler) handleProductEvent(event stripe.Event) {
+	var product stripe.Product
+	err := json.Unmarshal(event.Data.Raw, &product)
+	if err != nil {
+		log.Printf("[Billing][ProductEvent] unmarshal error: %v", err)
+		return
+	}
+
+	// Upsert product
+	productID := fmt.Sprintf("prod_%s", product.ID)
+	_, err = h.db.Exec(`
+		INSERT INTO public.stripe_products (id, stripe_product_id, name, description, active, metadata, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+		ON CONFLICT (stripe_product_id) DO UPDATE SET
+			name = EXCLUDED.name,
+			description = EXCLUDED.description,
+			active = EXCLUDED.active,
+			metadata = EXCLUDED.metadata,
+			updated_at = NOW()
+	`, productID, product.ID, product.Name, product.Description, product.Active, product.Metadata)
+
+	if err != nil {
+		log.Printf("[Billing][ProductEvent] product save error: %v", err)
+	}
+}
+
+func (h *Handler) handleProductDeletion(event stripe.Event) {
+	var product stripe.Product
+	err := json.Unmarshal(event.Data.Raw, &product)
+	if err != nil {
+		log.Printf("[Billing][ProductDeletion] unmarshal error: %v", err)
+		return
+	}
+
+	// Mark product as inactive instead of deleting
+	_, err = h.db.Exec(`
+		UPDATE public.stripe_products
+		SET active = false, updated_at = NOW()
+		WHERE stripe_product_id = $1
+	`, product.ID)
+
+	if err != nil {
+		log.Printf("[Billing][ProductDeletion] product update error: %v", err)
+	}
+}
+
+// Price event handlers
+func (h *Handler) handlePriceEvent(event stripe.Event) {
+	var price stripe.Price
+	err := json.Unmarshal(event.Data.Raw, &price)
+	if err != nil {
+		log.Printf("[Billing][PriceEvent] unmarshal error: %v", err)
+		return
+	}
+
+	// If price is associated with a product, update or create billing plan
+	if price.Product != nil && price.Product.ID != "" {
+		planID := fmt.Sprintf("price_%s", price.ID)
+		var features, limits map[string]interface{}
+
+		// Convert metadata from map[string]string to map[string]interface{}
+		if product, err := stripeClient.Products.Get(price.Product.ID, nil); err == nil {
+			features = make(map[string]interface{})
+			limits = make(map[string]interface{})
+			for k, v := range product.Metadata {
+				features[k] = v
+				limits[k] = v
+			}
+		}
+
+		// Convert price from dollars to cents
+		priceCents := int(price.UnitAmount * 100)
+
+		_, err = h.db.Exec(`
+			INSERT INTO public.billing_plans (id, name, description, price_cents, currency, interval, stripe_price_id, stripe_product_id, features, limits, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+			ON CONFLICT (stripe_price_id) DO UPDATE SET
+				name = EXCLUDED.name,
+				description = EXCLUDED.description,
+				price_cents = EXCLUDED.price_cents,
+				currency = EXCLUDED.currency,
+				interval = EXCLUDED.interval,
+				stripe_product_id = EXCLUDED.stripe_product_id,
+				features = EXCLUDED.features,
+				limits = EXCLUDED.limits,
+				updated_at = NOW()
+		`, planID, price.Nickname, price.Metadata["description"], priceCents,
+			string(price.Currency), string(price.Recurring.Interval), price.ID, price.Product.ID, features, limits)
+
+		if err != nil {
+			log.Printf("[Billing][PriceEvent] plan save error: %v", err)
+		}
+	}
+}
+
+func (h *Handler) handlePriceDeletion(event stripe.Event) {
+	var price stripe.Price
+	err := json.Unmarshal(event.Data.Raw, &price)
+	if err != nil {
+		log.Printf("[Billing][PriceDeletion] unmarshal error: %v", err)
+		return
+	}
+
+	// Deactivate the billing plan
+	_, err = h.db.Exec(`
+		UPDATE public.billing_plans
+		SET is_active = false, updated_at = NOW()
+		WHERE stripe_price_id = $1
+	`, price.ID)
+
+	if err != nil {
+		log.Printf("[Billing][PriceDeletion] plan update error: %v", err)
+	}
+}
+
+// Invoice event handlers
+func (h *Handler) handleInvoiceCreated(event stripe.Event) {
+	var invoice stripe.Invoice
+	err := json.Unmarshal(event.Data.Raw, &invoice)
+	if err != nil {
+		log.Printf("[Billing][InvoiceCreated] unmarshal error: %v", err)
+		return
+	}
+
+	// Get user ID from customer
+	var userID string
+	err = h.db.QueryRow(`
+		SELECT user_id FROM public.subscriptions
+		WHERE stripe_customer_id = $1
+	`, invoice.Customer.ID).Scan(&userID)
+
+	if err != nil {
+		log.Printf("[Billing][InvoiceCreated] user lookup error: %v", err)
+		return
+	}
+
+	// Save invoice record
+	invoiceID := fmt.Sprintf("inv_%s", invoice.ID)
+	_, err = h.db.Exec(`
+		INSERT INTO public.invoices (
+			id, user_id, stripe_invoice_id, amount_due, amount_paid, currency, status,
+			invoice_pdf, hosted_invoice_url, period_start, period_end, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+		ON CONFLICT (stripe_invoice_id) DO UPDATE SET
+			amount_due = EXCLUDED.amount_due,
+			amount_paid = EXCLUDED.amount_paid,
+			currency = EXCLUDED.currency,
+			status = EXCLUDED.status,
+			invoice_pdf = EXCLUDED.invoice_pdf,
+			hosted_invoice_url = EXCLUDED.hosted_invoice_url,
+			period_start = EXCLUDED.period_start,
+			period_end = EXCLUDED.period_end
+	`, invoiceID, userID, invoice.ID, invoice.AmountDue, invoice.AmountPaid,
+		invoice.Currency, invoice.Status, invoice.InvoicePDF, invoice.HostedInvoiceURL,
+		inlineNullTime(invoice.PeriodStart), inlineNullTime(invoice.PeriodEnd))
+
+	if err != nil {
+		log.Printf("[Billing][InvoiceCreated] invoice save error: %v", err)
+	}
+}
+
+// Customer event handlers
+func (h *Handler) handleCustomerCreated(event stripe.Event) {
+	var customer stripe.Customer
+	err := json.Unmarshal(event.Data.Raw, &customer)
+	if err != nil {
+		log.Printf("[Billing][CustomerCreated] unmarshal error: %v", err)
+		return
+	}
+
+	log.Printf("[Billing][CustomerCreated] Customer created: %s (%s)", customer.ID, customer.Email)
+}
+
+func (h *Handler) handleCustomerUpdated(event stripe.Event) {
+	var customer stripe.Customer
+	err := json.Unmarshal(event.Data.Raw, &customer)
+	if err != nil {
+		log.Printf("[Billing][CustomerUpdated] unmarshal error: %v", err)
+		return
+	}
+
+	log.Printf("[Billing][CustomerUpdated] Customer updated: %s (%s)", customer.ID, customer.Email)
+}
+
+// SyncStripeProducts syncs all products from Stripe to local database
+func (h *Handler) SyncStripeProducts(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	initStripe()
+	if stripeClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "Stripe not configured")
+		return
+	}
+
+	params := &stripe.ProductListParams{}
+	params.Filters.AddFilter("active", "true", "true")
+	products := stripeClient.Products.List(params)
+
+	var syncedProducts []StripeProduct
+	for products.Next() {
+		product := products.Product()
+
+		productID := fmt.Sprintf("prod_%s", product.ID)
+		_, err := h.db.Exec(`
+			INSERT INTO public.stripe_products (id, stripe_product_id, name, description, active, metadata, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+			ON CONFLICT (stripe_product_id) DO UPDATE SET
+				name = EXCLUDED.name,
+				description = EXCLUDED.description,
+				active = EXCLUDED.active,
+				metadata = EXCLUDED.metadata,
+				updated_at = NOW()
+		`, productID, product.ID, product.Name, product.Description, product.Active, product.Metadata)
+
+		if err != nil {
+			log.Printf("[Billing][SyncProducts] product save error: %v", err)
+			continue
+		}
+
+		syncedProducts = append(syncedProducts, StripeProduct{
+			ID:            productID,
+			StripeProductID: product.ID,
+			Name:          product.Name,
+			Description:   &product.Description,
+			Active:        product.Active,
+			Metadata:      convertMetadata(product.Metadata),
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		})
+	}
+
+	if products.Err() != nil {
+		log.Printf("[Billing][SyncProducts] Stripe API error: %v", products.Err())
+		writeError(w, http.StatusInternalServerError, "Failed to sync products")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Products synced successfully",
+		"count":   len(syncedProducts),
+		"products": syncedProducts,
+	})
+}
+
+// SyncStripePlans syncs all prices from Stripe to local billing plans
+func (h *Handler) SyncStripePlans(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	initStripe()
+	if stripeClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "Stripe not configured")
+		return
+	}
+
+	params := &stripe.PriceListParams{}
+	params.Filters.AddFilter("active", "true", "true")
+	prices := stripeClient.Prices.List(params)
+
+	var syncedPlans []BillingPlan
+	for prices.Next() {
+		price := prices.Price()
+
+		if price.Product == nil || price.Product.ID == "" {
+			continue
+		}
+
+		planID := fmt.Sprintf("price_%s", price.ID)
+		var features, limits map[string]interface{}
+
+		// Get product metadata
+		if product, err := stripeClient.Products.Get(price.Product.ID, nil); err == nil {
+			features = convertMetadata(product.Metadata)
+			limits = convertMetadata(product.Metadata)
+		}
+
+		// Convert price from dollars to cents
+		priceCents := int(price.UnitAmount * 100)
+
+		_, err := h.db.Exec(`
+			INSERT INTO public.billing_plans (id, name, description, price_cents, currency, interval, stripe_price_id, stripe_product_id, features, limits, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+			ON CONFLICT (stripe_price_id) DO UPDATE SET
+				name = EXCLUDED.name,
+				description = EXCLUDED.description,
+				price_cents = EXCLUDED.price_cents,
+				currency = EXCLUDED.currency,
+				interval = EXCLUDED.interval,
+				stripe_product_id = EXCLUDED.stripe_product_id,
+				features = EXCLUDED.features,
+				limits = EXCLUDED.limits,
+				updated_at = NOW()
+		`, planID, price.Nickname, price.Metadata["description"], priceCents,
+			string(price.Currency), string(price.Recurring.Interval), price.ID, price.Product.ID, features, limits)
+
+		if err != nil {
+			log.Printf("[Billing][SyncPlans] plan save error: %v", err)
+			continue
+		}
+
+		syncedPlans = append(syncedPlans, BillingPlan{
+			ID:            planID,
+			Name:          price.Nickname,
+			Description:   getStringFromMap(price.Metadata, "description"),
+			PriceCents:    priceCents,
+			Currency:      string(price.Currency),
+			Interval:      string(price.Recurring.Interval),
+			StripePriceID: &price.ID,
+			Features:      features,
+			Limits:        limits,
+			IsActive:      true,
+		})
+	}
+
+	if prices.Err() != nil {
+		log.Printf("[Billing][SyncPlans] Stripe API error: %v", prices.Err())
+		writeError(w, http.StatusInternalServerError, "Failed to sync plans")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Plans synced successfully",
+		"count":   len(syncedPlans),
+		"plans":   syncedPlans,
+	})
+}
+
+// Helper functions
+func convertMetadata(metadata map[string]string) map[string]interface{} {
+	result := make(map[string]interface{})
+	for k, v := range metadata {
+		result[k] = v
+	}
+	return result
+}
+
+func getStringFromMap(m map[string]string, key string) *string {
+	if val, exists := m[key]; exists {
+		return &val
+	}
+	return nil
 }
