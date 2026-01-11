@@ -93,7 +93,7 @@ export const TopNavigation: React.FC = () => {
 
   const loadNotifications = async () => {
     if (!user) return;
-    const res = await apiJson<any[]>(`/api/notifications?limit=30`);
+    const res = await apiJson<any[]>(`/api/notifications/user/${encodeURIComponent(user.id)}?limit=30`);
     if (res.ok && Array.isArray(res.data)) {
       setNotifications(res.data);
       const unread = res.data.filter((n: any) => !n.readAt).length;
