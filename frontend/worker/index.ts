@@ -171,26 +171,40 @@ function getSql(env: Env): SqlClient {
 }
 
 async function sqlUpsertUser(sql: NonNullable<SqlClient>, user: { id: string; email: string; name: string; imageUrl?: string | null }): Promise<string> {
-  // Try update by email first (handles existing rows created with a different id)
-  const updated = await sql<{ id: string }[]>`
-    UPDATE public.users
-    SET name = ${user.name}, image_url = ${user.imageUrl ?? null}
-    WHERE email = ${user.email}
-    RETURNING id;
-  `;
-  if (updated.length > 0) return updated[0].id;
+  try {
+    // Try update by email first (handles existing rows created with a different id)
+    console.log('[sqlUpsertUser] Attempting UPDATE for email:', user.email);
+    const updated = await sql<{ id: string }[]>`
+      UPDATE public.users
+      SET name = ${user.name}, image_url = ${user.imageUrl ?? null}
+      WHERE email = ${user.email}
+      RETURNING id;
+    `;
+    console.log('[sqlUpsertUser] UPDATE result:', updated.length, 'rows');
+    if (updated.length > 0) {
+      console.log('[sqlUpsertUser] Found existing user, returning id:', updated[0].id);
+      return updated[0].id;
+    }
 
-  // If no row for that email, insert a new one using the Google id
-  const inserted = await sql<{ id: string }[]>`
-    INSERT INTO public.users (id, email, name, image_url)
-    VALUES (${user.id}, ${user.email}, ${user.name}, ${user.imageUrl ?? null})
-    ON CONFLICT (id) DO UPDATE SET
-      email=EXCLUDED.email,
-      name=EXCLUDED.name,
-      image_url=EXCLUDED.image_url
-    RETURNING id;
-  `;
-  return inserted[0]?.id ?? user.id;
+    // If no row for that email, insert a new one using the Google id
+    console.log('[sqlUpsertUser] No existing user, attempting INSERT for id:', user.id);
+    const inserted = await sql<{ id: string }[]>`
+      INSERT INTO public.users (id, email, name, image_url)
+      VALUES (${user.id}, ${user.email}, ${user.name}, ${user.imageUrl ?? null})
+      ON CONFLICT (id) DO UPDATE SET
+        email=EXCLUDED.email,
+        name=EXCLUDED.name,
+        image_url=EXCLUDED.image_url
+      RETURNING id;
+    `;
+    console.log('[sqlUpsertUser] INSERT result:', inserted.length, 'rows');
+    const resultId = inserted[0]?.id ?? user.id;
+    console.log('[sqlUpsertUser] Returning id:', resultId);
+    return resultId;
+  } catch (e) {
+    console.error('[sqlUpsertUser] Error:', e);
+    throw e;
+  }
 }
 
 async function sqlUpsertSocial(sql: NonNullable<SqlClient>, conn: { userId: string; provider: string; providerId: string; email?: string | null; name?: string | null }) {
