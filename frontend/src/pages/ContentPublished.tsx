@@ -6,6 +6,7 @@ import { useSelectionSet } from '../lib/useSelectionSet';
 import { PublishedFiltersToolbar } from '../components/published/PublishedFiltersToolbar';
 import { PublishedGallery } from '../components/published/PublishedGallery';
 import { PublishedTable } from '../components/published/PublishedTable';
+import { ConfirmModal } from '../components/ConfirmModal';
 import type { PublishedItem } from '../components/published/types';
 
 export const ContentPublished: React.FC = () => {
@@ -34,6 +35,7 @@ export const ContentPublished: React.FC = () => {
   } = useSelectionSet<string>(allItems.map((it) => it.id));
   const [deleting, setDeleting] = useState<boolean>(false);
   const [deleteExternal, setDeleteExternal] = useState<boolean>(false);
+  const [confirmModalOpen, setConfirmModalOpen] = useState<boolean>(false);
   const pendingDeleteIdsRef = useRef<Set<string>>(new Set());
   const deleteAckTimerRef = useRef<number | null>(null);
 
@@ -174,14 +176,11 @@ export const ContentPublished: React.FC = () => {
       console.info('[PublishedDelete] skipped (no selection)');
       return;
     }
-    const ids = Array.from(selectedIds);
-    const ok = window.confirm(
-      deleteExternal
-        ? `Remove ${ids.length} selected item(s) from this app AND attempt to delete them from the social network (where supported).\n\nThis is irreversible.\n\nNote: only Instagram is supported right now; other networks will be skipped and kept in the library.`
-        : `Remove ${ids.length} selected item(s) from this app?\n\nNote: this removes the cached items from the Published gallery in this app. It does NOT delete the post on Instagram/Facebook/etc.`,
-    );
-    if (!ok) return;
+    setConfirmModalOpen(true);
+  };
 
+  const handleConfirmDelete = async () => {
+    const ids = Array.from(selectedIds);
     setDeleting(true);
     setError(null);
     try {
@@ -352,6 +351,33 @@ export const ContentPublished: React.FC = () => {
         ) : (
           <PublishedGallery items={filteredItems} selectedIds={selectedIds} onSelect={setSelected} />
         )}
+
+        <ConfirmModal
+          isOpen={confirmModalOpen}
+          title={deleteExternal ? 'Delete from app and social networks?' : 'Remove from library?'}
+          description={
+            deleteExternal ? (
+              <div className="space-y-2 text-left">
+                <p>Remove {selectedIds.size} selected item(s) from this app AND attempt to delete them from the social network (where supported).</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">This is irreversible. Note: only Instagram is supported right now; other networks will be skipped and kept in the library.</p>
+              </div>
+            ) : (
+              <div className="space-y-2 text-left">
+                <p>Remove {selectedIds.size} selected item(s) from this app?</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">This removes the cached items from the Published gallery in this app. It does NOT delete the post on Instagram/Facebook/etc.</p>
+              </div>
+            )
+          }
+          variant={deleteExternal ? 'danger' : 'warning'}
+          confirmLabel={deleteExternal ? 'Delete' : 'Remove'}
+          cancelLabel="Cancel"
+          isLoading={deleting}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => {
+            setConfirmModalOpen(false);
+            setDeleting(false);
+          }}
+        />
       </div>
     </Layout>
   );

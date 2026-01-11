@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { apiJson } from '../lib/api';
 import { safeStorage } from '../lib/safeStorage';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { ConfirmModal } from '../components/ConfirmModal';
 
 type LocalPost = {
   id: string;
@@ -810,20 +811,33 @@ export const Library: React.FC = () => {
     }
   };
 
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState<LocalPost | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const remove = async (p: LocalPost) => {
-    const ok = window.confirm('Delete this item?');
-    if (!ok) return;
+    setDeleteConfirmItem(p);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleConfirmRemove = async () => {
+    if (!deleteConfirmItem) return;
+    setIsDeleting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/local-library/items/${encodeURIComponent(p.id)}`, { method: 'DELETE', credentials: 'include' });
+      const res = await fetch(`/api/local-library/items/${encodeURIComponent(deleteConfirmItem.id)}`, { method: 'DELETE', credentials: 'include' });
       if (!res.ok) {
         setError('Failed to delete.');
         return;
       }
-      setItems((prev) => prev.filter((x) => x.id !== p.id));
+      setItems((prev) => prev.filter((x) => x.id !== deleteConfirmItem.id));
+      setDeleteConfirmOpen(false);
+      setDeleteConfirmItem(null);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg || 'Failed to delete.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -1361,6 +1375,21 @@ export const Library: React.FC = () => {
           </PanelGroup>
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={deleteConfirmOpen}
+        title="Delete draft?"
+        description={`Delete "${deleteConfirmItem?.content?.substring(0, 50) || 'Untitled'}"? This cannot be undone.`}
+        variant="danger"
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        isLoading={isDeleting}
+        onConfirm={handleConfirmRemove}
+        onCancel={() => {
+          setDeleteConfirmOpen(false);
+          setDeleteConfirmItem(null);
+        }}
+      />
     </Layout>
   );
 };
