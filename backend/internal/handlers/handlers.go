@@ -1093,6 +1093,19 @@ func (h *Handler) SyncSocialLibrariesForUser(w http.ResponseWriter, r *http.Requ
 			Reason:   rr.Reason,
 			Error:    rr.Error,
 		}
+
+		// Create notification for successful syncs with content
+		if rr.Fetched > 0 && rr.Error == "" {
+			title := fmt.Sprintf("Synced. %s fetched=%d upserted=%d", strings.Title(rr.Provider), rr.Fetched, rr.Upserted)
+			notifID := fmt.Sprintf("sync:%s:%s:%d", userID, rr.Provider, time.Now().Unix())
+			_, _ = h.db.ExecContext(ctx, `
+				INSERT INTO public.notifications
+				  (id, user_id, type, title, body, url, created_at)
+				VALUES
+				  ($1, $2, 'sync', $3, '', '', NOW())
+				ON CONFLICT (id) DO NOTHING
+			`, notifID, userID, title)
+		}
 	}
 
 	resp.DurationMs = time.Since(start).Milliseconds()
