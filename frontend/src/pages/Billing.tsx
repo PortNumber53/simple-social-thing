@@ -69,6 +69,7 @@ export const Billing: React.FC = () => {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Stripe Elements state
@@ -83,9 +84,14 @@ export const Billing: React.FC = () => {
   }, []);
 
   const loadBillingData = async () => {
-    if (!user) return;
+    if (!user) {
+      setError('User not authenticated');
+      setIsLoading(false);
+      return;
+    }
 
     try {
+      setError(null);
       const [plansRes, subscriptionRes, invoicesRes] = await Promise.all([
         apiJson<BillingPlan[]>('/api/billing/plans'),
         apiJson<Subscription>(`/api/billing/subscription/user/${user.id}`),
@@ -95,8 +101,15 @@ export const Billing: React.FC = () => {
       if (plansRes.ok) setPlans(plansRes.data);
       if (subscriptionRes.ok) setSubscription(subscriptionRes.data);
       if (invoicesRes.ok) setInvoices(invoicesRes.data);
-    } catch (error) {
+
+      // Check if we got any successful responses
+      if (!plansRes.ok && !subscriptionRes.ok && !invoicesRes.ok) {
+        setError('Failed to load billing data. Please try refreshing the page.');
+      }
+
+    } catch (error: any) {
       console.error('Failed to load billing data:', error);
+      setError(error.message || 'An unexpected error occurred while loading billing data.');
     } finally {
       setIsLoading(false);
     }
@@ -134,9 +147,12 @@ export const Billing: React.FC = () => {
         if (cardElementDiv) {
           card.mount('#card-element');
         }
+      } else {
+        console.warn('Stripe failed to load - payment features will be disabled');
       }
     } catch (error) {
       console.error('Failed to load Stripe:', error);
+      // Don't set error state for Stripe loading failure - just disable payment features
     }
   };
 
@@ -157,8 +173,7 @@ export const Billing: React.FC = () => {
         throw new Error(methodError.message);
       }
 
-      // Create subscription
-      const res = await apiJson('/api/billing/subscription/user/' + user.id, {
+      const res = await apiJson<{ clientSecret: string; subscriptionId: string; stripeSubscriptionId: string; status: string }>(`/api/billing/subscription/user/${user.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -243,6 +258,48 @@ export const Billing: React.FC = () => {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (error) {
+    return (
+      <Layout>
+        <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
+          <div className="mb-8 animate-fade-in">
+            <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-2">Billing</h1>
+            <p className="text-lg text-slate-600 dark:text-slate-400">Manage your subscription and payment methods</p>
+          </div>
+
+          <AlertBanner
+            variant="error"
+            className="mb-6 animate-slide-down"
+          >
+            {error}
+          </AlertBanner>
+
+          <div className="card">
+            <div className="text-center py-12">
+              <svg className="w-16 h-16 text-slate-400 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-2">Unable to Load Billing Data</h3>
+              <p className="text-slate-600 dark:text-slate-400 mb-6">
+                We're having trouble loading your billing information. Please try refreshing the page or contact support if the problem persists.
+              </p>
+              <button
+                onClick={() => {
+                  setError(null);
+                  setIsLoading(true);
+                  loadBillingData();
+                }}
+                className="btn btn-primary"
+              >
+                Try Again
+              </button>
             </div>
           </div>
         </div>

@@ -13,6 +13,8 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
 	github.com/rs/cors v1.10.1
+	github.com/stripe/stripe-go/v76 v76.25.0
+	github.com/stripe/stripe-go/v79 v79.12.0
 	golang.org/x/image v0.34.0
 	golang.org/x/net v0.18.0
 	golang.org/x/time v0.3.0
@@ -28,6 +30,5 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/spf13/pflag v1.0.7 // indirect
-	github.com/stripe/stripe-go/v79 v79.12.0 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 )
