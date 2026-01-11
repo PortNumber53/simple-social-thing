@@ -147,20 +147,25 @@ function getSql(env: Env): SqlClient {
     if (!cs || /hyperdrive\.local/i.test(cs)) {
       cs = env.DATABASE_URL || cs;
     }
-    if (!cs) return null;
+    if (!cs) {
+      console.warn('[getSql] No database connection string available. HYPERDRIVE:', !!env.HYPERDRIVE, 'DATABASE_URL:', !!env.DATABASE_URL);
+      return null;
+    }
     const url = new URL(cs);
     const sslmode = url.searchParams.get('sslmode');
     const ssl =
       sslmode === 'disable'
         ? false
         : 'require';
+    console.log('[getSql] Creating postgres connection with ssl:', ssl);
     return postgres(cs, {
       ssl,
       connect_timeout: 5,  // 5 second timeout instead of default 30s
       idle_timeout: 10,
       max_lifetime: 60
     });
-  } catch {
+  } catch (e) {
+    console.error('[getSql] Error creating connection:', e);
     return null;
   }
 }
