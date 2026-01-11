@@ -455,6 +455,9 @@ export const TopNavigation: React.FC = () => {
                     <a href="/account/settings" className="block px-4 py-2 text-sm rounded-md text-slate-700 dark:text-slate-200 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-700 dark:hover:text-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
                       Settings
                     </a>
+                    <a href="/account/billing" className="block px-4 py-2 text-sm rounded-md text-slate-700 dark:text-slate-200 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-700 dark:hover:text-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+                      Billing
+                    </a>
                     <a href="/integrations" className="block px-4 py-2 text-sm rounded-md text-slate-700 dark:text-slate-200 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-700 dark:hover:text-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
                       Integrations
                     </a>
