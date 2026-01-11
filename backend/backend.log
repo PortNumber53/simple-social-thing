@@ -1,0 +1,20 @@
+2026/01/10 20:58:29 Database is up-to-date
+2026/01/10 20:58:29 [SocialWorker] disabled (set SOCIAL_IMPORT_WORKERS_ENABLED=true to enable)
+2026/01/10 20:58:29 Server starting on port 18911
+2026/01/10 20:58:29 [ScheduledPosts] CRITICAL: PUBLIC_ORIGIN environment variable is not set and no origin was provided. Using localhost as fallback, but this will cause Instagram publishing to fail. Set PUBLIC_ORIGIN to your public https origin (e.g., https://app.example.com)
+2026/01/10 20:58:29 [ScheduledPosts] worker started interval=1m0s origin=http://localhost
+2026/01/10 20:59:40 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63473 ua=""
+2026/01/10 20:59:40 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63475 ua=""
+2026/01/10 20:59:40 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63473
+2026/01/10 21:00:02 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63475
+2026/01/10 21:00:03 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63681 ua=""
+2026/01/10 21:00:03 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63673 ua=""
+2026/01/10 21:00:03 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63673
+2026/01/10 21:00:17 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63681
+2026/01/10 21:00:18 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63844 ua=""
+2026/01/10 21:00:18 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63870 ua=""
+2026/01/10 21:00:18 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63844
+2026/01/10 21:01:11 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63870
+2026/01/10 21:01:11 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:64307 ua=""
+2026/01/10 21:01:11 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:64307
+2026/01/10 21:01:11 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:64337 ua=""
