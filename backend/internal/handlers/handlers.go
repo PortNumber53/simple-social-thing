@@ -62,6 +62,57 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// StartNotificationCleanupWorker starts a background job that removes read notifications after the configured retention period.
+// retentionHours: how long to keep read notifications (default: 24)
+// checkIntervalMs: how often to run cleanup (default: 3600000 = 1 hour)
+func (h *Handler) StartNotificationCleanupWorker(ctx context.Context, retentionHours int, checkIntervalMs int) {
+	if h == nil || h.db == nil {
+		return
+	}
+	if retentionHours <= 0 {
+		retentionHours = 24
+	}
+	if checkIntervalMs <= 0 {
+		checkIntervalMs = 3600000 // 1 hour
+	}
+
+	ticker := time.NewTicker(time.Duration(checkIntervalMs) * time.Millisecond)
+	defer ticker.Stop()
+
+	log.Printf("[NotificationCleanup] worker started (retention=%dh, interval=%dms)", retentionHours, checkIntervalMs)
+
+	cleanup := func() {
+		cutoffTime := time.Now().Add(-time.Duration(retentionHours) * time.Hour)
+		result, err := h.db.ExecContext(ctx, `
+			DELETE FROM public.notifications
+			WHERE read_at IS NOT NULL
+			AND read_at < $1
+		`, cutoffTime)
+		if err != nil {
+			log.Printf("[NotificationCleanup] error: %v", err)
+			return
+		}
+		deleted, err := result.RowsAffected()
+		if err != nil {
+			log.Printf("[NotificationCleanup] error getting rows affected: %v", err)
+			return
+		}
+		if deleted > 0 {
+			log.Printf("[NotificationCleanup] deleted %d old read notifications", deleted)
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[NotificationCleanup] worker stopped")
+			return
+		case <-ticker.C:
+			cleanup()
+		}
+	}
+}
+
 func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 	if err := decodeJSON(r, &user); err != nil {

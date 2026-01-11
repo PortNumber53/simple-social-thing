@@ -110,17 +110,19 @@ export const TopNavigation: React.FC = () => {
 
   const dismissNotification = async (id: string) => {
     if (!user) return;
-    await apiJson(`/api/notifications/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    setNotifications((prev) => prev.filter((n: any) => n.id !== id));
-    setUnreadCount((c) => Math.max(0, c - (notifications.find((n: any) => n.id === id)?.readAt ? 0 : 1)));
+    await apiJson(`/api/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
+    setNotifications((prev) => prev.map((n: any) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n)));
+    setUnreadCount((c) => Math.max(0, c - 1));
   };
 
   const dismissAllNotifications = async () => {
     if (!user || notifications.length === 0) return;
     for (const n of notifications) {
-      await apiJson(`/api/notifications/${encodeURIComponent(n.id)}`, { method: 'DELETE' });
+      if (!n.readAt) {
+        await apiJson(`/api/notifications/${encodeURIComponent(n.id)}/read`, { method: 'POST' });
+      }
     }
-    setNotifications([]);
+    setNotifications((prev) => prev.map((n: any) => ({ ...n, readAt: n.readAt || new Date().toISOString() })));
     setUnreadCount(0);
   };
 
