@@ -103,26 +103,31 @@ export const TopNavigation: React.FC = () => {
 
   const markRead = async (id: string) => {
     if (!user) return;
-    await apiJson(`/api/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
+    await apiJson(`/api/notifications/${encodeURIComponent(id)}/read/user/${encodeURIComponent(user.id)}`, { method: 'POST' });
     setNotifications((prev) => prev.map((n: any) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n)));
     setUnreadCount((c) => Math.max(0, c - 1));
   };
 
   const dismissNotification = async (id: string) => {
     if (!user) return;
-    await apiJson(`/api/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
-    setNotifications((prev) => prev.map((n: any) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n)));
-    setUnreadCount((c) => Math.max(0, c - 1));
+    const notif = notifications.find((n: any) => n.id === id);
+    const wasUnread = notif && !notif.readAt;
+
+    await apiJson(`/api/notifications/${encodeURIComponent(id)}/read/user/${encodeURIComponent(user.id)}`, { method: 'POST' });
+    setNotifications((prev) => prev.filter((n: any) => n.id !== id));
+    if (wasUnread) {
+      setUnreadCount((c) => Math.max(0, c - 1));
+    }
   };
 
   const dismissAllNotifications = async () => {
     if (!user || notifications.length === 0) return;
     for (const n of notifications) {
       if (!n.readAt) {
-        await apiJson(`/api/notifications/${encodeURIComponent(n.id)}/read`, { method: 'POST' });
+        await apiJson(`/api/notifications/${encodeURIComponent(n.id)}/read/user/${encodeURIComponent(user.id)}`, { method: 'POST' });
       }
     }
-    setNotifications((prev) => prev.map((n: any) => ({ ...n, readAt: n.readAt || new Date().toISOString() })));
+    setNotifications([]);
     setUnreadCount(0);
   };
 
