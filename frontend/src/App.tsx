@@ -18,6 +18,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Profile } from './pages/Profile';
 import { Settings } from './pages/Settings';
 import { Billing } from './pages/Billing';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
 function App() {
@@ -116,7 +117,9 @@ function App() {
           path="/account/billing"
           element={
             <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <Billing />
+              <ErrorBoundary>
+                <Billing />
+              </ErrorBoundary>
             </ProtectedRoute>
           }
         />

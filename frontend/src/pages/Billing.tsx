@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Layout } from '../components/Layout';
 import { AlertBanner } from '../components/AlertBanner';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useAuth } from '../contexts/AuthContext';
 import { apiJson } from '../lib/api';
 
@@ -67,10 +68,6 @@ export const Billing: React.FC = () => {
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Stripe Elements state
   const [stripe, setStripe] = useState<any>(null);
@@ -79,6 +76,7 @@ export const Billing: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
+    console.log('Billing component mounted');
     loadBillingData();
     loadStripe();
   }, []);
@@ -336,7 +334,7 @@ export const Billing: React.FC = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                        {plans.find(p => p.id === subscription.planId)?.name || 'Unknown Plan'}
+                        {subscription ? (plans.find(p => p.id === subscription.planId)?.name || 'Unknown Plan') : 'Loading...'}
                       </h3>
                       <p className="text-sm text-slate-600 dark:text-slate-400">
                         {subscription.status === 'active' ? 'Active' : subscription.status}
@@ -382,7 +380,7 @@ export const Billing: React.FC = () => {
           <div className="card animate-slide-up">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-6">Available Plans</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {plans.map((plan) => (
+              {plans && plans.length > 0 ? plans.map((plan) => (
                 <div
                   key={plan.id}
                   className={`p-6 rounded-lg border-2 transition-colors ${
@@ -401,7 +399,7 @@ export const Billing: React.FC = () => {
                     </span>
                     <span className="text-slate-600 dark:text-slate-400">/{plan.interval}</span>
                   </div>
-                  {plan.features?.features && (
+                  {plan.features?.features && Array.isArray(plan.features.features) && (
                     <ul className="text-sm text-slate-600 dark:text-slate-400 space-y-1 mb-6">
                       {plan.features.features.map((feature: string, idx: number) => (
                         <li key={idx} className="flex items-center">
@@ -445,7 +443,11 @@ export const Billing: React.FC = () => {
                     </div>
                   )}
                 </div>
-              ))}
+              )) : (
+                <div className="col-span-full text-center py-8">
+                  <p className="text-slate-600 dark:text-slate-400">Loading available plans...</p>
+                </div>
+              )}
             </div>
           </div>
 
