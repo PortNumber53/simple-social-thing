@@ -395,7 +395,8 @@ export const Billing: React.FC = () => {
           <div className="card animate-slide-up">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-6">Available Plans</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {plans && plans.length > 0 ? plans.map((plan) => (
+              {!isLoading && plans && Array.isArray(plans) ? (
+                plans.length > 0 ? plans.map((plan) => (
                 <div
                   key={plan.id}
                   className={`p-6 rounded-lg border-2 transition-colors ${
@@ -458,7 +459,12 @@ export const Billing: React.FC = () => {
                     </div>
                   )}
                 </div>
-              )) : (
+                )) : (
+                  <div className="col-span-full text-center py-8">
+                    <p className="text-slate-600 dark:text-slate-400">No plans available.</p>
+                  </div>
+                )
+              ) : (
                 <div className="col-span-full text-center py-8">
                   <p className="text-slate-600 dark:text-slate-400">Loading available plans...</p>
                 </div>
