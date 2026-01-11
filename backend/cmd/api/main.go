@@ -304,7 +304,7 @@ func startScheduledPostsWorker(ctx context.Context, h *handlers.Handler, getenv 
 
 func buildCORSHandler(r http.Handler) http.Handler {
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"},
+		AllowedOrigins:   []string{"http://localhost:18910", "http://localhost:3000", "https://api-simple.dev.portnumber53.com"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"*"},
 		AllowCredentials: true,
@@ -343,6 +343,20 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	r.HandleFunc("/api/users", h.CreateUser).Methods("POST")
 	r.HandleFunc("/api/users/{id}", h.GetUser).Methods("GET")
 	r.HandleFunc("/api/users/{id}", h.UpdateUser).Methods("PUT")
+
+	// Billing endpoints
+	r.HandleFunc("/api/billing/plans", h.GetBillingPlans).Methods("GET")
+	r.HandleFunc("/api/billing/subscription/user/{userId}", h.GetUserSubscription).Methods("GET")
+	r.HandleFunc("/api/billing/subscription/user/{userId}", h.CreateSubscription).Methods("POST")
+	r.HandleFunc("/api/billing/subscription/cancel/user/{userId}", h.CancelSubscription).Methods("POST")
+	r.HandleFunc("/api/billing/invoices/user/{userId}", h.GetUserInvoices).Methods("GET")
+
+	// Stripe webhook endpoint - the one you requested!
+	r.HandleFunc("/webhook/stripe", h.StripeWebhook).Methods("POST")
+
+	// Sync endpoints for Stripe integration
+	r.HandleFunc("/api/billing/sync/products", h.SyncStripeProducts).Methods("POST")
+	r.HandleFunc("/api/billing/sync/plans", h.SyncStripePlans).Methods("POST")
 
 	// Social connections endpoints
 	r.HandleFunc("/api/social-connections", h.CreateSocialConnection).Methods("POST")

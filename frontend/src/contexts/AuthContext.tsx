@@ -62,13 +62,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const fetchUserProfile = async (userId: string): Promise<User['profile'] | null> => {
     try {
-      const res = await apiJson<{ profile?: string }>(`/api/users/${encodeURIComponent(userId)}`);
+      // Use backend origin from environment variable
+      const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18911';
+      const url = `${backendOrigin}/api/users/${encodeURIComponent(userId)}`;
+      const res = await apiJson<{ profile?: string }>(url);
       if (res.ok && res.data?.profile) {
         // Parse the JSON string from the database
         const profileData = JSON.parse(res.data.profile);
         return profileData as User['profile'];
       }
-    } catch { void 0; }
+    } catch (error) {
+      console.error('AuthContext - Error fetching profile:', error);
+    }
     return null;
   };
 
@@ -127,6 +132,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     void fetchAndCacheUserSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Ensure profile is loaded for existing users
+  useEffect(() => {
+    if (user && !user.profile) {
+      void fetchUserProfile(user.id).then((profile) => {
+        if (profile) {
+          const updatedUser = { ...user, profile };
+          setUser(updatedUser);
+          storage.setJSON('user', updatedUser);
+        }
+      });
+    }
+  }, [user]);
 
   const login = async (userData: User) => {
     setUser(userData);

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -562,6 +563,19 @@ func (h *Handler) GetUserInvoices(w http.ResponseWriter, r *http.Request) {
 
 // StripeWebhook handles Stripe webhook events
 func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[Billing][Webhook] received webhook: %s %s", r.Method, r.URL.Path)
+
+	// Log full payload in debug mode
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "debug" {
+		body, err := io.ReadAll(r.Body)
+		if err == nil {
+			log.Printf("[Billing][Webhook] DEBUG - Full payload: %s", string(body))
+			// Restore the body for further processing
+			r.Body = io.NopCloser(bytes.NewBuffer(body))
+		}
+	}
+
 	initStripe()
 	if stripeClient == nil {
 		writeError(w, http.StatusServiceUnavailable, "Stripe not configured")
@@ -578,6 +592,10 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if logLevel == "debug" {
+		log.Printf("[Billing][Webhook] DEBUG - Processed payload: %s", string(payload))
+	}
+
 	// Verify webhook signature
 	webhookSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
 	if webhookSecret == "" {
@@ -590,7 +608,9 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		event, err := webhook.ConstructEvent(payload, sig, webhookSecret)
+		event, err := webhook.ConstructEventWithOptions(payload, sig, webhookSecret, webhook.ConstructEventOptions{
+			IgnoreAPIVersionMismatch: true,
+		})
 		if err != nil {
 			log.Printf("[Billing][Webhook] signature verification error: %v", err)
 			writeError(w, http.StatusBadRequest, "Invalid signature")
@@ -619,9 +639,10 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) processStripeEvent(event stripe.Event) {
 	// Save event for processing
 	eventID := fmt.Sprintf("evt_%s", event.ID)
+
 	_, err := h.db.Exec(`
-		INSERT INTO public.billing_events (id, stripe_event_id, stripe_event_type, data, created_at)
-		VALUES ($1, $2, $3, $4, NOW())
+		INSERT INTO public.billing_events (id, stripe_event_id, type, data, created_at, user_id)
+		VALUES ($1, $2, $3, $4, NOW(), NULL)
 		ON CONFLICT (stripe_event_id) DO NOTHING
 	`, eventID, event.ID, event.Type, event.Data.Raw)
 
@@ -834,8 +855,15 @@ func (h *Handler) handleProductEvent(event stripe.Event) {
 		return
 	}
 
-	// Upsert product
 	productID := fmt.Sprintf("prod_%s", product.ID)
+
+	// Convert metadata to JSON for database storage
+	metadataJSON, err := json.Marshal(product.Metadata)
+	if err != nil {
+		log.Printf("[Billing][ProductEvent] metadata marshal error: %v", err)
+		metadataJSON = []byte("{}")
+	}
+
 	_, err = h.db.Exec(`
 		INSERT INTO public.stripe_products (id, stripe_product_id, name, description, active, metadata, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
@@ -845,7 +873,7 @@ func (h *Handler) handleProductEvent(event stripe.Event) {
 			active = EXCLUDED.active,
 			metadata = EXCLUDED.metadata,
 			updated_at = NOW()
-	`, productID, product.ID, product.Name, product.Description, product.Active, product.Metadata)
+	`, productID, product.ID, product.Name, product.Description, product.Active, metadataJSON)
 
 	if err != nil {
 		log.Printf("[Billing][ProductEvent] product save error: %v", err)
