@@ -1,9 +1,254 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layout } from '../components/Layout';
 import { AlertBanner } from '../components/AlertBanner';
+import { useAuth } from '../contexts/AuthContext';
+import { apiJson } from '../lib/api';
+
+interface BillingPlan {
+  id: string;
+  name: string;
+  description?: string;
+  priceCents: number;
+  currency: string;
+  interval: string;
+  features?: Record<string, any>;
+  limits?: Record<string, any>;
+  isActive: boolean;
+}
+
+interface Subscription {
+  id: string;
+  userId: string;
+  planId: string;
+  stripeSubscriptionId?: string;
+  stripeCustomerId?: string;
+  status: string;
+  currentPeriodStart?: string;
+  currentPeriodEnd?: string;
+  cancelAtPeriodEnd: boolean;
+  canceledAt?: string;
+  trialStart?: string;
+  trialEnd?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface PaymentMethod {
+  id: string;
+  userId: string;
+  stripePaymentMethodId: string;
+  type: string;
+  last4?: string;
+  brand?: string;
+  expMonth?: number;
+  expYear?: number;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface Invoice {
+  id: string;
+  userId: string;
+  stripeInvoiceId: string;
+  amountDue: number;
+  amountPaid: number;
+  currency: string;
+  status: string;
+  invoicePdf?: string;
+  hostedInvoiceUrl?: string;
+  periodStart?: string;
+  periodEnd?: string;
+  createdAt: string;
+}
 
 export const Billing: React.FC = () => {
+  const { user } = useAuth();
+  const [plans, setPlans] = useState<BillingPlan[]>([]);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Stripe Elements state
+  const [stripe, setStripe] = useState<any>(null);
+  const [elements, setElements] = useState<any>(null);
+  const [cardElement, setCardElement] = useState<any>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  useEffect(() => {
+    loadBillingData();
+    loadStripe();
+  }, []);
+
+  const loadBillingData = async () => {
+    if (!user) return;
+
+    try {
+      const [plansRes, subscriptionRes, invoicesRes] = await Promise.all([
+        apiJson<BillingPlan[]>('/api/billing/plans'),
+        apiJson<Subscription>(`/api/billing/subscription/user/${user.id}`),
+        apiJson<Invoice[]>(`/api/billing/invoices/user/${user.id}`),
+      ]);
+
+      if (plansRes.ok) setPlans(plansRes.data);
+      if (subscriptionRes.ok) setSubscription(subscriptionRes.data);
+      if (invoicesRes.ok) setInvoices(invoicesRes.data);
+    } catch (error) {
+      console.error('Failed to load billing data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadStripe = async () => {
+    try {
+      // Load Stripe.js
+      const stripeModule = await import('@stripe/stripe-js');
+      const stripeInstance = await stripeModule.loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
+
+      if (stripeInstance) {
+        setStripe(stripeInstance);
+
+        // Create Elements instance
+        const elementsInstance = stripeInstance.elements();
+        setElements(elementsInstance);
+
+        // Create card element
+        const card = elementsInstance.create('card', {
+          style: {
+            base: {
+              fontSize: '16px',
+              color: '#424770',
+              '::placeholder': {
+                color: '#aab7c4',
+              },
+            },
+          },
+        });
+        setCardElement(card);
+
+        // Mount the card element to the DOM
+        const cardElementDiv = document.getElementById('card-element');
+        if (cardElementDiv) {
+          card.mount('#card-element');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load Stripe:', error);
+    }
+  };
+
+  const handleSubscribe = async (planId: string) => {
+    if (!user || !stripe || !elements || !cardElement) return;
+
+    setIsProcessing(true);
+    setMessage(null);
+
+    try {
+      // Create payment method
+      const { error: methodError, paymentMethod } = await stripe.createPaymentMethod({
+        type: 'card',
+        card: cardElement,
+      });
+
+      if (methodError) {
+        throw new Error(methodError.message);
+      }
+
+      // Create subscription
+      const res = await apiJson('/api/billing/subscription/user/' + user.id, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planId,
+          paymentMethodId: paymentMethod.id,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(res.error?.message || 'Failed to create subscription');
+      }
+
+      const { clientSecret } = res.data;
+
+      // Confirm payment
+      const { error: confirmError } = await stripe.confirmCardPayment(clientSecret);
+
+      if (confirmError) {
+        throw new Error(confirmError.message);
+      }
+
+      setMessage({ type: 'success', text: 'Subscription created successfully!' });
+      await loadBillingData();
+
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.message || 'Failed to process payment' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    if (!user || !subscription) return;
+
+    try {
+      const res = await apiJson('/api/billing/subscription/cancel/user/' + user.id, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cancelAtPeriodEnd: true }),
+      });
+
+      if (!res.ok) {
+        throw new Error(res.error?.message || 'Failed to cancel subscription');
+      }
+
+      setMessage({ type: 'success', text: 'Subscription will be cancelled at the end of the billing period.' });
+      await loadBillingData();
+
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.message || 'Failed to cancel subscription' });
+    }
+  };
+
+  const formatPrice = (cents: number, currency: string) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: currency.toUpperCase(),
+    }).format(cents / 100);
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  };
+
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
+          <div className="animate-pulse">
+            <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-48 mb-6"></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="card">
+                  <div className="h-6 bg-slate-200 dark:bg-slate-700 rounded w-32 mb-4"></div>
+                  <div className="space-y-2">
+                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-full"></div>
+                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
@@ -29,19 +274,121 @@ export const Billing: React.FC = () => {
           <div className="card animate-slide-up">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-6">Current Plan</h2>
             <div className="space-y-4">
-              <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border-2 border-primary-500">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Pro Plan</h3>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">$29/month</p>
+              {subscription ? (
+                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border-2 border-primary-500">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                        {plans.find(p => p.id === subscription.planId)?.name || 'Unknown Plan'}
+                      </h3>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        {subscription.status === 'active' ? 'Active' : subscription.status}
+                        {subscription.cancelAtPeriodEnd && ' (Cancelling)'}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      {subscription.currentPeriodEnd && (
+                        <>
+                          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Renews on</p>
+                          <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                            {formatDate(subscription.currentPeriodEnd)}
+                          </p>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Renews on</p>
-                    <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">Feb 10, 2026</p>
+                  {subscription.cancelAtPeriodEnd && (
+                    <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-900/50 rounded-lg">
+                      <p className="text-sm text-amber-800 dark:text-amber-200">
+                        Your subscription will be cancelled on {subscription.currentPeriodEnd ? formatDate(subscription.currentPeriodEnd) : 'the next billing date'}.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border-2 border-slate-300 dark:border-slate-600">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Free Plan</h3>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">Basic features included</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">$0/month</p>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <button className="w-full btn btn-ghost">Change Plan</button>
+              )}
+            </div>
+          </div>
+
+          {/* Plans Card */}
+          <div className="card animate-slide-up">
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-6">Available Plans</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {plans.map((plan) => (
+                <div
+                  key={plan.id}
+                  className={`p-6 rounded-lg border-2 transition-colors ${
+                    subscription?.planId === plan.id
+                      ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                  }`}
+                >
+                  <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">{plan.name}</h3>
+                  {plan.description && (
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">{plan.description}</p>
+                  )}
+                  <div className="mb-4">
+                    <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
+                      {formatPrice(plan.priceCents, plan.currency)}
+                    </span>
+                    <span className="text-slate-600 dark:text-slate-400">/{plan.interval}</span>
+                  </div>
+                  {plan.features?.features && (
+                    <ul className="text-sm text-slate-600 dark:text-slate-400 space-y-1 mb-6">
+                      {plan.features.features.map((feature: string, idx: number) => (
+                        <li key={idx} className="flex items-center">
+                          <svg className="w-4 h-4 text-green-500 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          {feature}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {subscription?.planId === plan.id ? (
+                    <button className="w-full btn btn-secondary" disabled>
+                      Current Plan
+                    </button>
+                  ) : plan.id === 'free' ? (
+                    <button
+                      onClick={() => handleSubscribe(plan.id)}
+                      className="w-full btn btn-ghost"
+                      disabled={isProcessing}
+                    >
+                      Downgrade to Free
+                    </button>
+                  ) : (
+                    <div className="space-y-3">
+                      {cardElement && (
+                        <div className="p-3 border border-slate-300 dark:border-slate-600 rounded-lg">
+                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                            Card Details
+                          </label>
+                          <div id="card-element" className="p-3 border border-slate-300 dark:border-slate-600 rounded"></div>
+                        </div>
+                      )}
+                      <button
+                        onClick={() => handleSubscribe(plan.id)}
+                        disabled={isProcessing || !cardElement}
+                        className="w-full btn btn-primary"
+                      >
+                        {isProcessing ? 'Processing...' : `Subscribe to ${plan.name}`}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -49,27 +396,37 @@ export const Billing: React.FC = () => {
           <div className="card animate-slide-up">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-6">Payment Methods</h2>
             <div className="space-y-4">
-              <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-8 bg-gradient-to-r from-blue-600 to-blue-700 rounded flex items-center justify-center">
-                      <span className="text-white text-xs font-bold">VISA</span>
-                    </div>
-                    <div>
-                      <p className="font-medium text-slate-900 dark:text-slate-100">Visa ending in 4242</p>
-                      <p className="text-sm text-slate-600 dark:text-slate-400">Expires 12/2026</p>
+              {paymentMethods.length === 0 ? (
+                <p className="text-slate-600 dark:text-slate-400">No payment methods saved.</p>
+              ) : (
+                paymentMethods.map((pm) => (
+                  <div key={pm.id} className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-8 bg-gradient-to-r from-blue-600 to-blue-700 rounded flex items-center justify-center">
+                          <span className="text-white text-xs font-bold">VISA</span>
+                        </div>
+                        <div>
+                          <p className="font-medium text-slate-900 dark:text-slate-100">
+                            {pm.brand} ending in {pm.last4}
+                          </p>
+                          <p className="text-sm text-slate-600 dark:text-slate-400">
+                            Expires {pm.expMonth}/{pm.expYear}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button className="px-3 py-1 text-sm rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                          Edit
+                        </button>
+                        <button className="px-3 py-1 text-sm rounded-lg border border-red-300 dark:border-red-600 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                          Remove
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button className="px-3 py-1 text-sm rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
-                      Edit
-                    </button>
-                    <button className="px-3 py-1 text-sm rounded-lg border border-red-300 dark:border-red-600 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              </div>
+                ))
+              )}
               <button className="w-full btn btn-secondary">Add Payment Method</button>
             </div>
           </div>
@@ -89,86 +446,70 @@ export const Billing: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="py-3 px-4 text-slate-700 dark:text-slate-300">Jan 10, 2026</td>
-                    <td className="py-3 px-4 text-slate-700 dark:text-slate-300">Pro Plan - Monthly</td>
-                    <td className="py-3 px-4 text-slate-700 dark:text-slate-300">$29.00</td>
-                    <td className="py-3 px-4">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300">
-                        Paid
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <button className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 text-sm font-medium">
-                        Download
-                      </button>
-                    </td>
-                  </tr>
-                  <tr className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="py-3 px-4 text-slate-700 dark:text-slate-300">Dec 10, 2025</td>
-                    <td className="py-3 px-4 text-slate-700 dark:text-slate-300">Pro Plan - Monthly</td>
-                    <td className="py-3 px-4 text-slate-700 dark:text-slate-300">$29.00</td>
-                    <td className="py-3 px-4">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300">
-                        Paid
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <button className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 text-sm font-medium">
-                        Download
-                      </button>
-                    </td>
-                  </tr>
+                  {invoices.map((invoice) => (
+                    <tr key={invoice.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                      <td className="py-3 px-4 text-slate-700 dark:text-slate-300">{formatDate(invoice.createdAt)}</td>
+                      <td className="py-3 px-4 text-slate-700 dark:text-slate-300">
+                        {invoice.periodStart && invoice.periodEnd
+                          ? `${formatDate(invoice.periodStart)} - ${formatDate(invoice.periodEnd)}`
+                          : 'Invoice'
+                        }
+                      </td>
+                      <td className="py-3 px-4 text-slate-700 dark:text-slate-300">
+                        {formatPrice(invoice.amountPaid, invoice.currency)}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          invoice.status === 'paid'
+                            ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300'
+                            : 'bg-slate-100 dark:bg-slate-900/30 text-slate-800 dark:text-slate-300'
+                        }`}>
+                          {invoice.status}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        {invoice.hostedInvoiceUrl && (
+                          <a
+                            href={invoice.hostedInvoiceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 text-sm font-medium"
+                          >
+                            View
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           </div>
 
-          {/* Billing Settings Card */}
-          <div className="card animate-slide-up">
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-6">Billing Settings</h2>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Billing Email</label>
-                <input
-                  type="email"
-                  defaultValue="user@example.com"
-                  className="input"
-                  placeholder="Enter billing email"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Company Name (Optional)</label>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="Enter company name"
-                />
-              </div>
-              <div className="flex gap-3">
-                <button className="btn btn-primary">Save Billing Settings</button>
-                <button className="btn btn-ghost">Cancel</button>
-              </div>
-            </div>
-          </div>
-
           {/* Danger Zone */}
-          <div className="card border-2 border-red-200 dark:border-red-900/30 animate-slide-up">
-            <h2 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-6">Danger Zone</h2>
-            <div className="space-y-4">
-              <button className="w-full p-4 bg-red-50 dark:bg-red-900/20 rounded-lg text-left hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors border border-red-200 dark:border-red-900/50">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-base font-semibold text-red-600 dark:text-red-400">Cancel Subscription</h3>
-                    <p className="text-sm text-red-600/70 dark:text-red-400/70 mt-1">Downgrade to free plan and lose access to premium features</p>
+          {subscription && subscription.status === 'active' && !subscription.cancelAtPeriodEnd && (
+            <div className="card border-2 border-red-200 dark:border-red-900/30 animate-slide-up">
+              <h2 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-6">Danger Zone</h2>
+              <div className="space-y-4">
+                <button
+                  onClick={handleCancelSubscription}
+                  className="w-full p-4 bg-red-50 dark:bg-red-900/20 rounded-lg text-left hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors border border-red-200 dark:border-red-900/50"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-red-600 dark:text-red-400">Cancel Subscription</h3>
+                      <p className="text-sm text-red-600/70 dark:text-red-400/70 mt-1">
+                        Cancel your subscription and downgrade to the free plan
+                      </p>
+                    </div>
+                    <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
                   </div>
-                  <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </div>
-              </button>
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </Layout>

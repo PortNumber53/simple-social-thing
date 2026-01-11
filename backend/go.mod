@@ -28,5 +28,6 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/spf13/pflag v1.0.7 // indirect
+	github.com/stripe/stripe-go/v79 v79.12.0 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 )
