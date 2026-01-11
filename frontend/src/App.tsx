@@ -17,6 +17,7 @@ import { InstagramHelp } from './pages/InstagramHelp';
 import { Dashboard } from './pages/Dashboard';
 import { Profile } from './pages/Profile';
 import { Settings } from './pages/Settings';
+import { Billing } from './pages/Billing';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
 function App() {
@@ -108,6 +109,14 @@ function App() {
           element={
             <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <Settings />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/account/billing"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
+              <Billing />
             </ProtectedRoute>
           }
         />
