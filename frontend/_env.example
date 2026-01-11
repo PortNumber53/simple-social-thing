@@ -1,0 +1,6 @@
+# Google OAuth Configuration
+# Note: VITE_GOOGLE_CLIENT_SECRET is not needed in frontend - only used in worker
+VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
+
+# Stripe Configuration (for frontend payment processing)
+VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...
