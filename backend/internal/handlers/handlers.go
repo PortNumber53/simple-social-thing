@@ -145,9 +145,10 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 	id := pathVar(r, "id")
 
 	var user models.User
-	query := `SELECT id, email, name, image_url, created_at FROM public.users WHERE id = $1`
+	query := `SELECT id, email, name, image_url, created_at, profile FROM public.users WHERE id = $1`
 
-	err := h.db.QueryRow(query, id).Scan(&user.ID, &user.Email, &user.Name, &user.ImageURL, &user.CreatedAt)
+	var profile sql.NullString
+	err := h.db.QueryRow(query, id).Scan(&user.ID, &user.Email, &user.Name, &user.ImageURL, &user.CreatedAt, &profile)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, "User not found")
 		return
@@ -157,7 +158,20 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, user)
+	// Include profile in response if present
+	response := map[string]interface{}{
+		"id":         user.ID,
+		"email":      user.Email,
+		"name":       user.Name,
+		"imageUrl":   user.ImageURL,
+		"createdAt":  user.CreatedAt,
+	}
+
+	if profile.Valid && profile.String != "" {
+		response["profile"] = profile.String
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {

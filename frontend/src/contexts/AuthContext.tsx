@@ -60,6 +60,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } catch { void 0; }
   };
 
+  const fetchUserProfile = async (userId: string): Promise<User['profile'] | null> => {
+    try {
+      const res = await apiJson<{ profile?: string }>(`/api/users/${encodeURIComponent(userId)}`);
+      if (res.ok && res.data?.profile) {
+        // Parse the JSON string from the database
+        const profileData = JSON.parse(res.data.profile);
+        return profileData as User['profile'];
+      }
+    } catch { void 0; }
+    return null;
+  };
+
   useEffect(() => {
     // Check for OAuth callback data in URL (for redirect flow)
     const run = async () => {
@@ -116,10 +128,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  const login = (userData: User) => {
+  const login = async (userData: User) => {
     setUser(userData);
     setError(null);
-    storage.setJSON('user', userData);
+
+    // Fetch profile data if not already included
+    if (!userData.profile) {
+      const profile = await fetchUserProfile(userData.id);
+      if (profile) {
+        const updatedUser = { ...userData, profile };
+        setUser(updatedUser);
+        storage.setJSON('user', updatedUser);
+      } else {
+        storage.setJSON('user', userData);
+      }
+    } else {
+      storage.setJSON('user', userData);
+    }
+
     void fetchAndCacheUserSettings();
   };
 
