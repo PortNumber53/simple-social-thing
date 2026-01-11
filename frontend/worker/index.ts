@@ -2953,6 +2953,7 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
     {
       const sql = getSql(env);
       if (sql) {
+        console.log('[OAuth] Database connection available, upserting user', frontendUserData.id);
         let canonicalUserId = frontendUserData.id;
         try {
           canonicalUserId = await sqlUpsertUser(sql, {
@@ -2961,6 +2962,7 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
             name: frontendUserData.name,
             imageUrl: frontendUserData.imageUrl || null,
           });
+          console.log('[OAuth] User upserted successfully:', canonicalUserId);
         } catch (e) {
           console.error('[DB] sqlUpsertUser failed', e);
         }
@@ -2973,6 +2975,7 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
             email: frontendUserData.email,
             name: frontendUserData.name,
           });
+          console.log('[OAuth] Social connection recorded for user:', canonicalUserId);
         } catch (e) {
           console.error('[DB] sqlUpsertSocial (google) failed', e);
         }
