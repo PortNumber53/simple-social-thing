@@ -62,10 +62,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const fetchUserProfile = async (userId: string): Promise<User['profile'] | null> => {
     try {
-      // Use backend origin from environment variable
-      const backendOrigin = import.meta.env.VITE_BACKEND_ORIGIN || 'http://localhost:18911';
-      const url = `${backendOrigin}/api/users/${encodeURIComponent(userId)}`;
-      const res = await apiJson<{ profile?: string }>(url);
+      const res = await apiJson<{ profile?: string }>(`/api/users/${encodeURIComponent(userId)}`);
       if (res.ok && res.data?.profile) {
         // Parse the JSON string from the database
         const profileData = JSON.parse(res.data.profile);
