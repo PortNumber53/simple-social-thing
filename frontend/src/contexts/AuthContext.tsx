@@ -10,6 +10,11 @@ interface User {
   name: string;
   imageUrl?: string;
   accessToken?: string;
+  profile?: {
+    role?: string;
+    adminLevel?: string;
+    permissions?: Record<string, boolean>;
+  };
 }
 
 interface AuthContextType {

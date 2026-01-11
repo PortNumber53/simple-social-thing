@@ -12,6 +12,7 @@ export const TopNavigation: React.FC = () => {
   const [mobileOpen, setMobileOpen] = useState(false); // mobile hamburger menu
   const [notifOpen, setNotifOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   const [notifications, setNotifications] = useState<Array<any>>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -19,6 +20,7 @@ export const TopNavigation: React.FC = () => {
   const mobileButtonRef = useRef<HTMLButtonElement | null>(null);
   const notifRef = useRef<HTMLDivElement | null>(null);
   const themeRef = useRef<HTMLDivElement | null>(null);
+  const adminRef = useRef<HTMLDivElement | null>(null);
 
   const navItemBase =
     "inline-flex items-center h-10 px-3 rounded-md text-sm font-medium transition-colors";
@@ -63,6 +65,7 @@ export const TopNavigation: React.FC = () => {
       if (menuOpen && menuRef.current && !menuRef.current.contains(target)) setMenuOpen(false);
       if (notifOpen && notifRef.current && !notifRef.current.contains(target)) setNotifOpen(false);
       if (themeOpen && themeRef.current && !themeRef.current.contains(target)) setThemeOpen(false);
+      if (adminOpen && adminRef.current && !adminRef.current.contains(target)) setAdminOpen(false);
       if (mobileOpen) {
         const inPanel = mobileMenuRef.current && mobileMenuRef.current.contains(target);
         const inButton = mobileButtonRef.current && mobileButtonRef.current.contains(target);
@@ -74,6 +77,7 @@ export const TopNavigation: React.FC = () => {
         setMenuOpen(false);
         setNotifOpen(false);
         setThemeOpen(false);
+        setAdminOpen(false);
         setMobileOpen(false);
       }
     };
@@ -83,7 +87,7 @@ export const TopNavigation: React.FC = () => {
       document.removeEventListener('click', onDocClick);
       document.removeEventListener('keydown', onDocKeyDown);
     };
-  }, [menuOpen, notifOpen, themeOpen, mobileOpen]);
+  }, [menuOpen, notifOpen, themeOpen, adminOpen, mobileOpen]);
 
   const themeOptions: Array<{ value: ThemeMode; label: string }> = [
     { value: 'system', label: 'System' },
@@ -150,6 +154,8 @@ export const TopNavigation: React.FC = () => {
     window.addEventListener('realtime:event', onRealtime as EventListener);
     return () => window.removeEventListener('realtime:event', onRealtime as EventListener);
   }, [user?.id]);
+
+  const isAdmin = user?.profile?.role === 'admin' || user?.profile?.adminLevel === 'superuser';
 
   const handleLogout = () => {
     logout();
@@ -221,6 +227,46 @@ export const TopNavigation: React.FC = () => {
 
           {/* User Menu */}
           <div className="flex items-center gap-4">
+            {/* Admin Menu */}
+            {isAdmin && (
+              <div className="relative" ref={adminRef}>
+                <button
+                  type="button"
+                  aria-label="Admin menu"
+                  className="relative inline-flex items-center justify-center w-10 h-10 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                  onClick={() => {
+                    setAdminOpen((v) => !v);
+                    setMenuOpen(false);
+                    setNotifOpen(false);
+                    setThemeOpen(false);
+                  }}
+                >
+                  <svg className="w-5 h-5 text-slate-700 dark:text-slate-200" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M5 4a3 3 0 00-3 3v6a3 3 0 003 3h10a3 3 0 003-3V7a3 3 0 00-3-3H5zm-1 9v-1h5v2H5a1 1 0 01-1-1zm7-1a1 1 0 011 1v1h1a1 1 0 110-2h-3zm0 0H9a1 1 0 000 2h3V7a3 3 0 00-3-3H5a3 3 0 00-3 3v1h5V7a1 1 0 111 0v3z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                {adminOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-48 rounded-md shadow-lg bg-white dark:bg-slate-900 ring-1 ring-black/5 dark:ring-white/10 focus:outline-none py-1">
+                    <div className="px-3 py-2 text-[11px] font-semibold tracking-wide text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-700/50">
+                      Admin Panel
+                    </div>
+                    <a href="/admin/billing" className="block px-4 py-2 text-sm rounded-md text-slate-700 dark:text-slate-200 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-700 dark:hover:text-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+                      Billing Management
+                    </a>
+                    <a href="/admin/users" className="block px-4 py-2 text-sm rounded-md text-slate-700 dark:text-slate-200 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-700 dark:hover:text-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+                      User Management
+                    </a>
+                    <a href="/admin/analytics" className="block px-4 py-2 text-sm rounded-md text-slate-700 dark:text-slate-200 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-700 dark:hover:text-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+                      System Analytics
+                    </a>
+                    <a href="/admin/settings" className="block px-4 py-2 text-sm rounded-md text-slate-700 dark:text-slate-200 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-700 dark:hover:text-primary-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+                      System Settings
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Theme */}
             <div className="relative" ref={themeRef}>
               <button
