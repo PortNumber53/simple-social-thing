@@ -1171,3 +1171,10 @@ func getStringFromMap(m map[string]string, key string) *string {
 	}
 	return nil
 }
+
+// RegisterWebhookRoute registers the webhook endpoint - call this from main.go
+func (h *Handler) RegisterWebhookRoute(r interface{}) {
+	// This function should be called from main.go to register the webhook route
+	// Usage: h.RegisterWebhookRoute(router) where router is a *mux.Router
+	// The implementation depends on the router type used in main.go
+}

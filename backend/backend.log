@@ -1,58 +1,13 @@
-2026/01/10 20:58:29 Database is up-to-date
-2026/01/10 20:58:29 [SocialWorker] disabled (set SOCIAL_IMPORT_WORKERS_ENABLED=true to enable)
-2026/01/10 20:58:29 Server starting on port 18911
-2026/01/10 20:58:29 [ScheduledPosts] CRITICAL: PUBLIC_ORIGIN environment variable is not set and no origin was provided. Using localhost as fallback, but this will cause Instagram publishing to fail. Set PUBLIC_ORIGIN to your public https origin (e.g., https://app.example.com)
-2026/01/10 20:58:29 [ScheduledPosts] worker started interval=1m0s origin=http://localhost
-2026/01/10 20:59:40 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63473 ua=""
-2026/01/10 20:59:40 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63475 ua=""
-2026/01/10 20:59:40 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63473
-2026/01/10 21:00:02 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63475
-2026/01/10 21:00:03 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63681 ua=""
-2026/01/10 21:00:03 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63673 ua=""
-2026/01/10 21:00:03 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63673
-2026/01/10 21:00:17 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63681
-2026/01/10 21:00:18 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63844 ua=""
-2026/01/10 21:00:18 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:63870 ua=""
-2026/01/10 21:00:18 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63844
-2026/01/10 21:01:11 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:63870
-2026/01/10 21:01:11 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:64307 ua=""
-2026/01/10 21:01:11 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:64307
-2026/01/10 21:01:11 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:64337 ua=""
-2026/01/10 21:02:01 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:64337
-2026/01/10 21:02:02 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:64772 ua=""
-2026/01/10 21:02:31 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:64772
-2026/01/10 21:02:31 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:65089 ua=""
-2026/01/10 21:02:31 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:65104 ua=""
-2026/01/10 21:02:31 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:65089
-2026/01/10 21:02:31 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:65104
-2026/01/10 21:03:16 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:59362 ua=""
-2026/01/10 21:03:16 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:59384 ua=""
-2026/01/10 21:03:16 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:59362
-2026/01/10 21:03:16 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:59384
-2026/01/10 21:03:26 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:64621 ua=""
-2026/01/10 21:03:26 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:64622 ua=""
-2026/01/10 21:03:26 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:64622
-2026/01/10 21:03:30 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:64621
-2026/01/10 21:03:31 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:58373 ua=""
-2026/01/10 21:03:31 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:58390 ua=""
-2026/01/10 21:03:31 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:58373
-2026/01/10 21:03:33 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:58390
-2026/01/10 21:03:34 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:58388 ua=""
-2026/01/10 21:03:34 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:58374 ua=""
-2026/01/10 21:03:34 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:58388
-2026/01/10 21:03:37 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:58374
-2026/01/10 21:03:37 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:60487 ua=""
-2026/01/10 21:03:40 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:60487
-2026/01/10 21:03:41 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:60556 ua=""
-2026/01/10 21:03:41 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:60563 ua=""
-2026/01/10 21:03:41 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:60563
-2026/01/10 21:04:12 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:60556
-2026/01/10 21:04:12 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:53676 ua=""
-2026/01/10 21:04:12 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:53684 ua=""
-2026/01/10 21:04:12 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:53684
-2026/01/10 21:04:12 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:53676
-2026/01/10 21:05:23 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:60021 ua=""
-2026/01/10 21:05:23 [RealtimeWS] connect userId=101857743272371608782 remote=127.0.0.1:60020 ua=""
-2026/01/10 21:05:23 [RealtimeWS] disconnect userId=101857743272371608782 remote=127.0.0.1:60021
-2026/01/10 21:07:29 [ScheduledPosts] sweep ok enqueued=0 due=0 next=
-2026/01/10 21:17:29 [ScheduledPosts] sweep ok enqueued=0 due=0 next=
+2026/01/10 21:25:50 Database is up-to-date
+2026/01/10 21:25:50 [SocialWorker] disabled (set SOCIAL_IMPORT_WORKERS_ENABLED=true to enable)
+2026/01/10 21:25:50 Server starting on port 18911
+2026/01/10 21:25:50 [ScheduledPosts] CRITICAL: PUBLIC_ORIGIN environment variable is not set and no origin was provided. Using localhost as fallback, but this will cause Instagram publishing to fail. Set PUBLIC_ORIGIN to your public https origin (e.g., https://app.example.com)
+2026/01/10 21:25:50 [ScheduledPosts] worker started interval=1m0s origin=http://localhost
+2026/01/10 21:25:56 [HTTP] start reqId= method=POST path=/webhook/stripe query= remote=[::1]:57695 ua="curl/8.7.1"
+2026/01/10 21:25:56 [HTTP] done reqId= method=POST path=/webhook/stripe status=404 bytes=19 durMs=0
+2026/01/10 21:25:58 [HTTP] start reqId= method=POST path=/webhook/stripe query= remote=[::1]:51237 ua="curl/8.7.1"
+2026/01/10 21:25:58 [HTTP] done reqId= method=POST path=/webhook/stripe status=404 bytes=19 durMs=0
+2026/01/10 21:26:01 [HTTP] start reqId= method=GET path=/api/users/101857743272371608782 query= remote=[::1]:49405 ua="curl/8.7.1"
+2026/01/10 21:26:01 [HTTP] done reqId= method=GET path=/api/users/101857743272371608782 status=200 bytes=398 durMs=8
+2026/01/10 21:26:24 [HTTP] start reqId= method=POST path=/api/billing/webhook query= remote=[::1]:59859 ua="curl/8.7.1"
+2026/01/10 21:26:24 [HTTP] done reqId= method=POST path=/api/billing/webhook status=404 bytes=19 durMs=0
