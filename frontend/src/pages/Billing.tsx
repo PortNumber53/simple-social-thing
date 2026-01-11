@@ -68,6 +68,10 @@ export const Billing: React.FC = () => {
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Stripe Elements state
   const [stripe, setStripe] = useState<any>(null);
@@ -96,9 +100,16 @@ export const Billing: React.FC = () => {
         apiJson<Invoice[]>(`/api/billing/invoices/user/${user.id}`),
       ]);
 
-      if (plansRes.ok) setPlans(plansRes.data);
-      if (subscriptionRes.ok) setSubscription(subscriptionRes.data);
-      if (invoicesRes.ok) setInvoices(invoicesRes.data);
+      console.log('API responses:', { plansRes, subscriptionRes, invoicesRes });
+
+      if (plansRes.ok && Array.isArray(plansRes.data)) {
+        console.log('Setting plans to:', plansRes.data);
+        setPlans(plansRes.data);
+      } else {
+        console.log('Not setting plans, response not OK or not array:', plansRes);
+        // Ensure plans stays as empty array
+        setPlans([]);
+      }
 
       // Check if we got any successful responses
       if (!plansRes.ok && !subscriptionRes.ok && !invoicesRes.ok) {
@@ -334,7 +345,11 @@ export const Billing: React.FC = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                        {subscription ? (plans.find(p => p.id === subscription.planId)?.name || 'Unknown Plan') : 'Loading...'}
+                        {(() => {
+                          console.log('plans type:', typeof plans, 'plans value:', plans);
+                          const safePlans = Array.isArray(plans) ? plans : [];
+                          return subscription ? (safePlans.find(p => p.id === subscription.planId)?.name || 'Unknown Plan') : 'Loading...';
+                        })()}
                       </h3>
                       <p className="text-sm text-slate-600 dark:text-slate-400">
                         {subscription.status === 'active' ? 'Active' : subscription.status}
