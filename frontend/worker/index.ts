@@ -2589,7 +2589,7 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
     : url.origin.replace(/\/api.*$/, '');
 
   // The redirect_uri must match what was sent to Google in the auth request
-  // In dev: frontend sends localhost:18910, in prod: same as url.origin
+  // Since the frontend sends the frontend URL to Google, use that for token exchange
   const redirectUri = isLocalhost
     ? `${clientUrl}/api/auth/google/callback`
     : new URL('/api/auth/google/callback', url.origin).toString();

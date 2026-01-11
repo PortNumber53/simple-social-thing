@@ -18,6 +18,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Profile } from './pages/Profile';
 import { Settings } from './pages/Settings';
 import { Billing } from './pages/Billing';
+import { AdminBilling } from './pages/AdminBilling';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
@@ -119,6 +120,16 @@ function App() {
             <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <ErrorBoundary>
                 <Billing />
+              </ErrorBoundary>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/billing"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
+              <ErrorBoundary>
+                <AdminBilling />
               </ErrorBoundary>
             </ProtectedRoute>
           }

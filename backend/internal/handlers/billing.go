@@ -697,7 +697,48 @@ func (h *Handler) handlePaymentFailure(event stripe.Event) {
 	log.Printf("[Billing][PaymentFailure] Payment failed for invoice %s, customer %s", invoice.ID, invoice.Customer.ID)
 }
 
-// Inline helper functions to avoid conflicts with handlers.go
+// DeleteBillingPlan deletes a billing plan
+func (h *Handler) DeleteBillingPlan(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodDelete) {
+		return
+	}
+
+	planID := pathVar(r, "planId")
+	if planID == "" {
+		writeError(w, http.StatusBadRequest, "planId is required")
+		return
+	}
+
+	// Check if plan is being used by active subscriptions
+	var count int
+	err := h.db.QueryRow("SELECT COUNT(*) FROM public.subscriptions WHERE plan_id = $1 AND status = 'active'", planID).Scan(&count)
+	if err != nil {
+		log.Printf("[Billing][DeletePlan] count error: %v", err)
+		writeError(w, http.StatusInternalServerError, "Failed to check plan usage")
+		return
+	}
+
+	if count > 0 {
+		writeError(w, http.StatusConflict, "Cannot delete plan that has active subscriptions")
+		return
+	}
+
+	result, err := h.db.Exec("DELETE FROM public.billing_plans WHERE id = $1", planID)
+	if err != nil {
+		log.Printf("[Billing][DeletePlan] error: %v", err)
+		writeError(w, http.StatusInternalServerError, "Failed to delete plan")
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		writeError(w, http.StatusNotFound, "Plan not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "success"})
+}
+
 func inlineNullStringPtr(ns sql.NullString) *string {
 	if ns.Valid {
 		return &ns.String
