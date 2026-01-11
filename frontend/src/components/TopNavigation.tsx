@@ -108,6 +108,22 @@ export const TopNavigation: React.FC = () => {
     setUnreadCount((c) => Math.max(0, c - 1));
   };
 
+  const dismissNotification = async (id: string) => {
+    if (!user) return;
+    await apiJson(`/api/notifications/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    setNotifications((prev) => prev.filter((n: any) => n.id !== id));
+    setUnreadCount((c) => Math.max(0, c - (notifications.find((n: any) => n.id === id)?.readAt ? 0 : 1)));
+  };
+
+  const dismissAllNotifications = async () => {
+    if (!user || notifications.length === 0) return;
+    for (const n of notifications) {
+      await apiJson(`/api/notifications/${encodeURIComponent(n.id)}`, { method: 'DELETE' });
+    }
+    setNotifications([]);
+    setUnreadCount(0);
+  };
+
   useEffect(() => {
     if (!user) {
       setNotifications([]);
@@ -277,13 +293,24 @@ export const TopNavigation: React.FC = () => {
                   <div className="absolute right-0 top-full mt-2 w-96 rounded-md shadow-lg bg-white dark:bg-slate-900 ring-1 ring-black/5 dark:ring-white/10 overflow-hidden">
                     <div className="flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-700/50">
                       <div className="text-xs font-semibold tracking-wide text-slate-600 dark:text-slate-300">Notifications</div>
-                      <button
-                        type="button"
-                        className="text-xs text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100"
-                        onClick={() => void loadNotifications()}
-                      >
-                        Refresh
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="text-xs text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100"
+                          onClick={() => void loadNotifications()}
+                        >
+                          Refresh
+                        </button>
+                        {notifications.length > 0 && (
+                          <button
+                            type="button"
+                            className="text-xs text-slate-600 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                            onClick={() => void dismissAllNotifications()}
+                          >
+                            Dismiss all
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="max-h-[420px] overflow-auto">
                       {notifications.length === 0 ? (
@@ -295,37 +322,50 @@ export const TopNavigation: React.FC = () => {
                             const url = typeof n.url === 'string' ? n.url : '';
                             return (
                               <li key={n.id} className={`${isUnread ? 'bg-primary-50/40 dark:bg-primary-900/10' : ''}`}>
-                                <a
-                                  href={url || '#'}
-                                  target={url ? '_blank' : undefined}
-                                  rel={url ? 'noreferrer' : undefined}
-                                  onClick={(e) => {
-                                    if (!url) e.preventDefault();
-                                    void markRead(String(n.id));
-                                  }}
-                                  className="block px-4 py-3 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 transition-colors"
-                                >
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div className="min-w-0">
-                                      <div className={`text-sm font-medium ${isUnread ? 'text-slate-900 dark:text-slate-100' : 'text-slate-700 dark:text-slate-200'} truncate`}>
-                                        {String(n.title || 'Notification')}
-                                      </div>
-                                      {n.body && (
-                                        <div className="text-xs text-slate-600 dark:text-slate-300 mt-1 overflow-hidden">
-                                          {String(n.body)}
-                                        </div>
-                                      )}
-                                      {url && (
-                                        <div className="text-xs text-primary-700 dark:text-primary-300 mt-1 truncate">
-                                          {url}
-                                        </div>
-                                      )}
+                                <div className="flex items-start gap-3 px-4 py-3 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 transition-colors group">
+                                  <a
+                                    href={url || '#'}
+                                    target={url ? '_blank' : undefined}
+                                    rel={url ? 'noreferrer' : undefined}
+                                    onClick={(e) => {
+                                      if (!url) e.preventDefault();
+                                      void markRead(String(n.id));
+                                    }}
+                                    className="flex-1 min-w-0"
+                                  >
+                                    <div className={`text-sm font-medium ${isUnread ? 'text-slate-900 dark:text-slate-100' : 'text-slate-700 dark:text-slate-200'} truncate`}>
+                                      {String(n.title || 'Notification')}
                                     </div>
-                                    <div className="shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
+                                    {n.body && (
+                                      <div className="text-xs text-slate-600 dark:text-slate-300 mt-1 overflow-hidden">
+                                        {String(n.body)}
+                                      </div>
+                                    )}
+                                    {url && (
+                                      <div className="text-xs text-primary-700 dark:text-primary-300 mt-1 truncate">
+                                        {url}
+                                      </div>
+                                    )}
+                                  </a>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <div className="text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">
                                       {n.createdAt ? new Date(String(n.createdAt)).toLocaleString() : ''}
                                     </div>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        void dismissNotification(String(n.id));
+                                      }}
+                                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700"
+                                      aria-label="Dismiss notification"
+                                    >
+                                      <svg className="w-4 h-4 text-slate-500 dark:text-slate-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                        <path fillRule="evenodd" d="M4.22 4.22a.75.75 0 011.06 0L10 8.94l4.72-4.72a.75.75 0 111.06 1.06L11.06 10l4.72 4.72a.75.75 0 11-1.06 1.06L10 11.06l-4.72 4.72a.75.75 0 11-1.06-1.06L8.94 10 4.22 5.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                                      </svg>
+                                    </button>
                                   </div>
-                                </a>
+                                </div>
                               </li>
                             );
                           })}
