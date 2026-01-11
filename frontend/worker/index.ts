@@ -2993,6 +2993,8 @@ async function handleOAuthCallback(request: Request, env: Env): Promise<Response
     const userDataParam = encodeURIComponent(JSON.stringify({ success: true, user: frontendUserData }));
     const headers = new Headers();
     headers.set('Location', `${clientUrl}?oauth=${userDataParam}`);
+    // Debug header to check if DATABASE_URL is available
+    headers.set('X-Database-URL-Available', env.DATABASE_URL ? 'true' : 'false');
     // Prefer canonical DB user id in the session cookie to satisfy FK constraints later
     const sql = getSql(env);
     let sidValue = frontendUserData.id;
