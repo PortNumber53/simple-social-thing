@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Layout } from '../components/Layout';
 import { AlertBanner } from '../components/AlertBanner';
-import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useAuth } from '../contexts/AuthContext';
 import { apiJson } from '../lib/api';
 
@@ -34,20 +33,6 @@ interface Subscription {
   updatedAt: string;
 }
 
-interface PaymentMethod {
-  id: string;
-  userId: string;
-  stripePaymentMethodId: string;
-  type: string;
-  last4?: string;
-  brand?: string;
-  expMonth?: number;
-  expYear?: number;
-  isDefault: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
 interface Invoice {
   id: string;
   userId: string;
@@ -66,9 +51,8 @@ interface Invoice {
 export const Billing: React.FC = () => {
   const { user } = useAuth();
   const [plans, setPlans] = useState<BillingPlan[]>([]);
-  const [subscription, setSubscription] = useState<Subscription | null>(null);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [subscription] = useState<Subscription | null>(null);
+  const [invoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -472,44 +456,14 @@ export const Billing: React.FC = () => {
             </div>
           </div>
 
-          {/* Payment Methods Card */}
-          <div className="card animate-slide-up">
+          {/* Payment Methods Card - TODO: Implement payment methods management */}
+          {/* <div className="card animate-slide-up">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-6">Payment Methods</h2>
             <div className="space-y-4">
-              {paymentMethods.length === 0 ? (
-                <p className="text-slate-600 dark:text-slate-400">No payment methods saved.</p>
-              ) : (
-                paymentMethods.map((pm) => (
-                  <div key={pm.id} className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-8 bg-gradient-to-r from-blue-600 to-blue-700 rounded flex items-center justify-center">
-                          <span className="text-white text-xs font-bold">VISA</span>
-                        </div>
-                        <div>
-                          <p className="font-medium text-slate-900 dark:text-slate-100">
-                            {pm.brand} ending in {pm.last4}
-                          </p>
-                          <p className="text-sm text-slate-600 dark:text-slate-400">
-                            Expires {pm.expMonth}/{pm.expYear}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button className="px-3 py-1 text-sm rounded-lg border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
-                          Edit
-                        </button>
-                        <button className="px-3 py-1 text-sm rounded-lg border border-red-300 dark:border-red-600 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-              <button className="w-full btn btn-secondary">Add Payment Method</button>
+              <p className="text-slate-600 dark:text-slate-400">Payment methods management coming soon.</p>
+              <button className="w-full btn btn-secondary" disabled>Add Payment Method</button>
             </div>
-          </div>
+          </div> */}
 
           {/* Billing History Card */}
           <div className="card animate-slide-up">

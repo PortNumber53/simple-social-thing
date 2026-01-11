@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Layout } from '../components/Layout';
 import { AlertBanner } from '../components/AlertBanner';
-import { useAuth } from '../contexts/AuthContext';
 import { apiJson } from '../lib/api';
 
 interface BillingPlan {
@@ -13,17 +12,19 @@ interface BillingPlan {
   interval: string;
   stripePriceId?: string;
   features?: Record<string, any>;
-  limits?: Record<string, any>;
+  limits?: {
+    social_accounts: number;
+    posts_per_month: number;
+    analytics: string;
+  };
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 export const AdminBilling: React.FC = () => {
-  const { user } = useAuth();
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingPlan, setEditingPlan] = useState<BillingPlan | null>(null);
@@ -52,16 +53,16 @@ export const AdminBilling: React.FC = () => {
 
   const loadPlans = async () => {
     try {
-      setError(null);
       const res = await apiJson<BillingPlan[]>('/api/billing/plans');
       if (res.ok) {
         setPlans(res.data);
       } else {
-        setError('Failed to load plans');
+        console.error('Failed to load plans:', res.error);
+        setMessage({ type: 'error', text: 'Failed to load plans' });
       }
     } catch (error: any) {
       console.error('Failed to load plans:', error);
-      setError(error.message || 'Failed to load plans');
+      setMessage({ type: 'error', text: error.message || 'Failed to load plans' });
     } finally {
       setIsLoading(false);
     }
