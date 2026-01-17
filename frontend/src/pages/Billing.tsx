@@ -51,23 +51,59 @@ interface Invoice {
 export const Billing: React.FC = () => {
   const { user } = useAuth();
   const [plans, setPlans] = useState<BillingPlan[]>([]);
-  const [subscription] = useState<Subscription | null>(null);
-  const [invoices] = useState<Invoice[]>([]);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Stripe Elements state
+  // Stripe state
   const [stripe, setStripe] = useState<any>(null);
-  const [elements, setElements] = useState<any>(null);
   const [cardElement, setCardElement] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Modal / Selection state
+  const [selectedPlan, setSelectedPlan] = useState<BillingPlan | null>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
 
   useEffect(() => {
     console.log('Billing component mounted');
     loadBillingData();
     loadStripe();
   }, []);
+
+  // Mount card element when modal opens
+  useEffect(() => {
+    if (showPaymentModal && stripe) {
+      // Create fresh elements instance
+      const elementsInstance = stripe.elements();
+      const card = elementsInstance.create('card', {
+        style: {
+          base: {
+            fontSize: '16px',
+            color: '#424770',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            '::placeholder': { color: '#aab7c4' },
+          },
+        },
+      });
+
+      // Mount to the DOM element
+      // We use a small timeout to ensure DOM is ready.
+      // Since this effect runs after render, the #card-element div should exist.
+      const mountPoint = document.getElementById('card-element');
+      if (mountPoint) {
+        card.mount('#card-element');
+        setCardElement(card);
+      }
+
+      // Cleanup
+      return () => {
+        card.destroy();
+        setCardElement(null);
+      };
+    }
+  }, [showPaymentModal, stripe]);
 
   const loadBillingData = async () => {
     if (!user) {
@@ -84,20 +120,17 @@ export const Billing: React.FC = () => {
         apiJson<Invoice[]>(`/api/billing/invoices/user/${user.id}`),
       ]);
 
-      console.log('API responses:', { plansRes, subscriptionRes, invoicesRes });
-
       if (plansRes.ok && Array.isArray(plansRes.data)) {
-        console.log('Setting plans to:', plansRes.data);
         setPlans(plansRes.data);
       } else {
-        console.log('Not setting plans, response not OK or not array:', plansRes);
-        // Ensure plans stays as empty array
         setPlans([]);
       }
 
-      // Check if we got any successful responses
       if (!plansRes.ok && !subscriptionRes.ok && !invoicesRes.ok) {
         setError('Failed to load billing data. Please try refreshing the page.');
+      } else {
+        if (subscriptionRes.ok) setSubscription(subscriptionRes.data);
+        if (invoicesRes.ok && Array.isArray(invoicesRes.data)) setInvoices(invoicesRes.data);
       }
 
     } catch (error: any) {
@@ -110,89 +143,74 @@ export const Billing: React.FC = () => {
 
   const loadStripe = async () => {
     try {
-      // Load Stripe.js
       const stripeModule = await import('@stripe/stripe-js');
       const stripeInstance = await stripeModule.loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
 
       if (stripeInstance) {
         setStripe(stripeInstance);
-
-        // Create Elements instance
-        const elementsInstance = stripeInstance.elements();
-        setElements(elementsInstance);
-
-        // Create card element
-        const card = elementsInstance.create('card', {
-          style: {
-            base: {
-              fontSize: '16px',
-              color: '#424770',
-              '::placeholder': {
-                color: '#aab7c4',
-              },
-            },
-          },
-        });
-        setCardElement(card);
-
-        // Mount the card element to the DOM
-        const cardElementDiv = document.getElementById('card-element');
-        if (cardElementDiv) {
-          card.mount('#card-element');
-        }
-      } else {
-        console.warn('Stripe failed to load - payment features will be disabled');
       }
     } catch (error) {
       console.error('Failed to load Stripe:', error);
-      // Don't set error state for Stripe loading failure - just disable payment features
     }
   };
 
-  const handleSubscribe = async (planId: string) => {
-    if (!user || !stripe || !elements || !cardElement) return;
+  const handleInitiateSubscribe = (plan: BillingPlan) => {
+    if (plan.id === 'free') {
+      performSubscription(plan.id, null);
+    } else {
+      setSelectedPlan(plan);
+      setShowPaymentModal(true);
+    }
+  };
+
+  const confirmPayment = async () => {
+    if (!stripe || !cardElement || !selectedPlan) return;
 
     setIsProcessing(true);
-    setMessage(null);
-
     try {
-      // Create payment method
       const { error: methodError, paymentMethod } = await stripe.createPaymentMethod({
         type: 'card',
         card: cardElement,
       });
 
-      if (methodError) {
-        throw new Error(methodError.message);
-      }
+      if (methodError) throw new Error(methodError.message);
+      await performSubscription(selectedPlan.id, paymentMethod.id);
+      setShowPaymentModal(false);
+      setSelectedPlan(null);
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.message || 'Payment failed' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
+  const performSubscription = async (planId: string, paymentMethodId: string | null) => {
+    if (!user) return;
+    setIsProcessing(true);
+    setMessage(null);
+
+    try {
       const res = await apiJson<{ clientSecret: string; subscriptionId: string; stripeSubscriptionId: string; status: string }>(`/api/billing/subscription/user/${user.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           planId,
-          paymentMethodId: paymentMethod.id,
+          paymentMethodId,
         }),
       });
 
-      if (!res.ok) {
-        throw new Error(res.error?.message || 'Failed to create subscription');
+      if (!res.ok) throw new Error(res.error?.message || 'Failed to create subscription');
+
+      if (res.data.clientSecret && paymentMethodId) {
+        const { error: confirmError } = await stripe.confirmCardPayment(res.data.clientSecret);
+        if (confirmError) throw new Error(confirmError.message);
       }
 
-      const { clientSecret } = res.data;
-
-      // Confirm payment
-      const { error: confirmError } = await stripe.confirmCardPayment(clientSecret);
-
-      if (confirmError) {
-        throw new Error(confirmError.message);
-      }
-
-      setMessage({ type: 'success', text: 'Subscription created successfully!' });
+      setMessage({ type: 'success', text: 'Subscription updated successfully!' });
       await loadBillingData();
 
     } catch (error: any) {
-      setMessage({ type: 'error', text: error.message || 'Failed to process payment' });
+      setMessage({ type: 'error', text: error.message || 'Failed to process subscription' });
     } finally {
       setIsProcessing(false);
     }
@@ -264,41 +282,18 @@ export const Billing: React.FC = () => {
         <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
           <div className="mb-8 animate-fade-in">
             <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-2">Billing</h1>
-            <p className="text-lg text-slate-600 dark:text-slate-400">Manage your subscription and payment methods</p>
           </div>
-
-          <AlertBanner
-            variant="error"
-            className="mb-6 animate-slide-down"
-          >
-            {error}
-          </AlertBanner>
-
-          <div className="card">
-            <div className="text-center py-12">
-              <svg className="w-16 h-16 text-slate-400 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-              </svg>
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-2">Unable to Load Billing Data</h3>
-              <p className="text-slate-600 dark:text-slate-400 mb-6">
-                We're having trouble loading your billing information. Please try refreshing the page or contact support if the problem persists.
-              </p>
-              <button
-                onClick={() => {
-                  setError(null);
-                  setIsLoading(true);
-                  loadBillingData();
-                }}
-                className="btn btn-primary"
-              >
-                Try Again
-              </button>
-            </div>
+          <AlertBanner variant="error" className="mb-6 animate-slide-down">{error}</AlertBanner>
+          <div className="card text-center py-12">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-2">Unable to Load Billing Data</h3>
+            <button onClick={() => { setError(null); setIsLoading(true); loadBillingData(); }} className="btn btn-primary">Try Again</button>
           </div>
         </div>
       </Layout>
     );
   }
+
+  const currentPlanId = subscription?.planId || 'free';
 
   return (
     <Layout>
@@ -329,11 +324,7 @@ export const Billing: React.FC = () => {
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                        {(() => {
-                          console.log('plans type:', typeof plans, 'plans value:', plans);
-                          const safePlans = Array.isArray(plans) ? plans : [];
-                          return subscription ? (safePlans.find(p => p.id === subscription.planId)?.name || 'Unknown Plan') : 'Loading...';
-                        })()}
+                        {plans.find(p => p.id === subscription.planId)?.name || 'Unknown Plan'}
                       </h3>
                       <p className="text-sm text-slate-600 dark:text-slate-400">
                         {subscription.status === 'active' ? 'Active' : subscription.status}
@@ -379,15 +370,13 @@ export const Billing: React.FC = () => {
           <div className="card animate-slide-up">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-6">Available Plans</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {!isLoading && plans && Array.isArray(plans) ? (
-                plans.length > 0 ? plans.map((plan) => (
+              {plans.map((plan) => (
                 <div
                   key={plan.id}
-                  className={`p-6 rounded-lg border-2 transition-colors ${
-                    subscription?.planId === plan.id
+                  className={`p-6 rounded-lg border-2 transition-colors ${currentPlanId === plan.id
                       ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
                       : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
-                  }`}
+                    }`}
                 >
                   <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-100 mb-2">{plan.name}</h3>
                   {plan.description && (
@@ -399,6 +388,7 @@ export const Billing: React.FC = () => {
                     </span>
                     <span className="text-slate-600 dark:text-slate-400">/{plan.interval}</span>
                   </div>
+
                   {plan.features?.features && Array.isArray(plan.features.features) && (
                     <ul className="text-sm text-slate-600 dark:text-slate-400 space-y-1 mb-6">
                       {plan.features.features.map((feature: string, idx: number) => (
@@ -411,59 +401,24 @@ export const Billing: React.FC = () => {
                       ))}
                     </ul>
                   )}
-                  {subscription?.planId === plan.id ? (
+
+                  {currentPlanId === plan.id ? (
                     <button className="w-full btn btn-secondary" disabled>
                       Current Plan
                     </button>
-                  ) : plan.id === 'free' ? (
+                  ) : (
                     <button
-                      onClick={() => handleSubscribe(plan.id)}
-                      className="w-full btn btn-ghost"
+                      onClick={() => handleInitiateSubscribe(plan)}
+                      className={`w-full btn ${plan.id === 'free' ? 'btn-ghost' : 'btn-primary'}`}
                       disabled={isProcessing}
                     >
-                      Downgrade to Free
+                      {plan.id === 'free' ? 'Downgrade to Free' : `Subscribe to ${plan.name}`}
                     </button>
-                  ) : (
-                    <div className="space-y-3">
-                      {cardElement && (
-                        <div className="p-3 border border-slate-300 dark:border-slate-600 rounded-lg">
-                          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                            Card Details
-                          </label>
-                          <div id="card-element" className="p-3 border border-slate-300 dark:border-slate-600 rounded"></div>
-                        </div>
-                      )}
-                      <button
-                        onClick={() => handleSubscribe(plan.id)}
-                        disabled={isProcessing || !cardElement}
-                        className="w-full btn btn-primary"
-                      >
-                        {isProcessing ? 'Processing...' : `Subscribe to ${plan.name}`}
-                      </button>
-                    </div>
                   )}
                 </div>
-                )) : (
-                  <div className="col-span-full text-center py-8">
-                    <p className="text-slate-600 dark:text-slate-400">No plans available.</p>
-                  </div>
-                )
-              ) : (
-                <div className="col-span-full text-center py-8">
-                  <p className="text-slate-600 dark:text-slate-400">Loading available plans...</p>
-                </div>
-              )}
+              ))}
             </div>
           </div>
-
-          {/* Payment Methods Card - TODO: Implement payment methods management */}
-          {/* <div className="card animate-slide-up">
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-6">Payment Methods</h2>
-            <div className="space-y-4">
-              <p className="text-slate-600 dark:text-slate-400">Payment methods management coming soon.</p>
-              <button className="w-full btn btn-secondary" disabled>Add Payment Method</button>
-            </div>
-          </div> */}
 
           {/* Billing History Card */}
           <div className="card animate-slide-up">
@@ -480,7 +435,7 @@ export const Billing: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {invoices.map((invoice) => (
+                  {invoices.length > 0 ? invoices.map((invoice) => (
                     <tr key={invoice.id} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                       <td className="py-3 px-4 text-slate-700 dark:text-slate-300">{formatDate(invoice.createdAt)}</td>
                       <td className="py-3 px-4 text-slate-700 dark:text-slate-300">
@@ -493,11 +448,10 @@ export const Billing: React.FC = () => {
                         {formatPrice(invoice.amountPaid, invoice.currency)}
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          invoice.status === 'paid'
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${invoice.status === 'paid'
                             ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300'
                             : 'bg-slate-100 dark:bg-slate-900/30 text-slate-800 dark:text-slate-300'
-                        }`}>
+                          }`}>
                           {invoice.status}
                         </span>
                       </td>
@@ -514,7 +468,11 @@ export const Billing: React.FC = () => {
                         )}
                       </td>
                     </tr>
-                  ))}
+                  )) : (
+                    <tr>
+                      <td colSpan={5} className="py-4 text-center text-slate-500 dark:text-slate-400">No invoices found</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -536,7 +494,7 @@ export const Billing: React.FC = () => {
                         Cancel your subscription and downgrade to the free plan
                       </p>
                     </div>
-                    <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   </div>
@@ -545,6 +503,49 @@ export const Billing: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Modal for Payment */}
+        {showPaymentModal && selectedPlan && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
+            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl max-w-md w-full p-6 space-y-6" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100">
+                Subscribe to {selectedPlan.name}
+              </h3>
+              <div className="mb-4">
+                <span className="text-3xl font-bold text-slate-900 dark:text-slate-100">
+                  {formatPrice(selectedPlan.priceCents, selectedPlan.currency)}
+                </span>
+                <span className="text-slate-600 dark:text-slate-400">/{selectedPlan.interval}</span>
+              </div>
+
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Card Details
+                </label>
+                <div id="card-element" className="p-3 border border-slate-300 dark:border-slate-600 rounded bg-white">
+                  {/* Stripe Element mounts here */}
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => { setShowPaymentModal(false); setSelectedPlan(null); }}
+                  className="flex-1 btn btn-ghost"
+                  disabled={isProcessing}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmPayment}
+                  className="flex-1 btn btn-primary"
+                  disabled={isProcessing}
+                >
+                  {isProcessing ? 'Processing...' : 'Confirm Payment'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </Layout>
   );
