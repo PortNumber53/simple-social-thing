@@ -82,7 +82,7 @@ func TestStartProviderWorker_StopsOnContextCancel(t *testing.T) {
 	}}
 
 	// StartProviderWorker queries users from UserSettings for oauth key.
-	mock.ExpectQuery(`SELECT DISTINCT user_id FROM public\."UserSettings" WHERE key = \$1 AND value IS NOT NULL`).
+	mock.ExpectQuery(`SELECT DISTINCT user_id FROM public\.user_settings WHERE key = \$1 AND value IS NOT NULL`).
 		WithArgs("x_oauth").
 		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow("u1"))
 

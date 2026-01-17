@@ -22,10 +22,10 @@ func TestGetUser_Success(t *testing.T) {
 	h := New(db)
 
 	now := time.Now().UTC()
-		mock.ExpectQuery(`SELECT id, email, name, image_url, created_at FROM public\.users WHERE id = \$1`).
+	mock.ExpectQuery(`SELECT id, email, name, image_url, created_at, profile FROM public\.users WHERE id = \$1`).
 		WithArgs("u1").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "name", "imageUrl", "createdAt"}).
-			AddRow("u1", "e@example.com", "Alice", nil, now))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "name", "imageUrl", "createdAt", "profile"}).
+			AddRow("u1", "e@example.com", "Alice", nil, now, nil))
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/users/u1", nil)
