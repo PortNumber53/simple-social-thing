@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
@@ -57,7 +57,8 @@ describe('Profile page', () => {
     await u.clear(input);
     await u.type(input, 'Alice');
     await u.click(screen.getByRole('button', { name: /^save$/i }));
-    await new Promise((r) => setTimeout(r, 1100));
-    expect(screen.getByText(/Display name updated successfully!/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/Display name updated successfully!/i)).toBeInTheDocument();
+    }, { timeout: 2000 });
   });
 });

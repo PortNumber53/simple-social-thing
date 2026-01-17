@@ -41,7 +41,7 @@ describe('Dashboard', () => {
     })) as any;
   });
 
-  it('shows dashboard tasks and live state pulled from the app contexts', async () => {
+  it('shows dashboard stats and next steps pulled from the app contexts', async () => {
     render(
       <MemoryRouter>
         <ThemeProvider>
@@ -52,7 +52,8 @@ describe('Dashboard', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/delivery dashboard/i)).toBeInTheDocument();
+    // Welcome heading with user's first name
+    expect(screen.getByRole('heading', { name: /Welcome back, Alice/i })).toBeInTheDocument();
 
     // Top metric cards
     await waitFor(() => expect(screen.getByText(/Ready to edit or publish now/i)).toBeInTheDocument());
@@ -61,13 +62,10 @@ describe('Dashboard', () => {
     // With 3 connected publish-capable providers in the mock: instagram, facebook, youtube
     expect(screen.getByText(/3 \/ 5/i)).toBeInTheDocument();
 
-    expect(screen.getByText(/implementation board/i)).toBeInTheDocument();
-    expect(screen.getByText(/OAuth \+ session bootstrap/i)).toBeInTheDocument();
-    expect(screen.getByText(/Social integrations/i)).toBeInTheDocument();
-    expect(screen.getByText(/Publishing pipeline/i)).toBeInTheDocument();
-    expect(screen.getByText(/Local library \+ scheduler/i)).toBeInTheDocument();
-    expect(screen.getByText(/AI music \(Suno\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/^Instagram video tool$/i)).toBeInTheDocument();
-    expect(screen.getByText(/Backend \+ deploy/i)).toBeInTheDocument();
+    // What to do next section
+    expect(screen.getByText(/What to do next/i)).toBeInTheDocument();
+    expect(screen.getByText(/Connect remaining providers/i)).toBeInTheDocument();
+    expect(screen.getByText(/Wire the Instagram video tool/i)).toBeInTheDocument();
+    expect(screen.getByText(/Refresh Suno credits/i)).toBeInTheDocument();
   });
 });

@@ -1,4 +1,29 @@
 import '@testing-library/jest-dom/vitest';
+import { vi, beforeAll, afterEach } from 'vitest';
+
+// Global fetch mock to prevent real network requests (ECONNREFUSED errors).
+// Individual tests can override this with vi.stubGlobal('fetch', ...) for specific responses.
+const defaultFetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const url = String(input);
+  // Return sensible defaults for common API patterns
+  if (url.includes('/api/')) {
+    return new Response(JSON.stringify({ ok: true, data: {} }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  // Default empty response for anything else
+  return new Response('', { status: 200 });
+});
+
+beforeAll(() => {
+  vi.stubGlobal('fetch', defaultFetchMock);
+});
+
+afterEach(() => {
+  // Reset the mock between tests but keep it in place
+  defaultFetchMock.mockClear();
+});
 
 // Some environments (notably Cloudflare worker runtimes) expose a `localStorage` implementation
 // that requires extra runtime flags (e.g. `--localstorage-file`). Our frontend code relies on
