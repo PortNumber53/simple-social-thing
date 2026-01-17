@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/stripe/stripe-go/v79"
@@ -17,20 +19,20 @@ import (
 )
 
 type BillingPlan struct {
-	ID                    string                 `json:"id"`
-	Name                  string                 `json:"name"`
-	Description           *string                `json:"description,omitempty"`
-	PriceCents            int                    `json:"priceCents"`
-	Currency              string                 `json:"currency"`
-	Interval              string                 `json:"interval"`
-	StripePriceID         *string                `json:"stripePriceId,omitempty"`
-	Features              map[string]interface{} `json:"features,omitempty"`
-	Limits                map[string]interface{} `json:"limits,omitempty"`
-	IsActive              bool                   `json:"isActive"`
-	GracePeriodMonths     int                    `json:"gracePeriodMonths,omitempty"`
-	ProductVersionGroup   *string                `json:"productVersionGroup,omitempty"`
-	MigratedFromPlanID    *string                `json:"migratedFromPlanId,omitempty"`
-	MigrationScheduledAt  *time.Time             `json:"migrationScheduledAt,omitempty"`
+	ID                   string                 `json:"id"`
+	Name                 string                 `json:"name"`
+	Description          *string                `json:"description,omitempty"`
+	PriceCents           int                    `json:"priceCents"`
+	Currency             string                 `json:"currency"`
+	Interval             string                 `json:"interval"`
+	StripePriceID        *string                `json:"stripePriceId,omitempty"`
+	Features             map[string]interface{} `json:"features,omitempty"`
+	Limits               map[string]interface{} `json:"limits,omitempty"`
+	IsActive             bool                   `json:"isActive"`
+	GracePeriodMonths    int                    `json:"gracePeriodMonths,omitempty"`
+	ProductVersionGroup  *string                `json:"productVersionGroup,omitempty"`
+	MigratedFromPlanID   *string                `json:"migratedFromPlanId,omitempty"`
+	MigrationScheduledAt *time.Time             `json:"migrationScheduledAt,omitempty"`
 }
 
 type Subscription struct {
@@ -51,43 +53,43 @@ type Subscription struct {
 }
 
 type PaymentMethod struct {
-	ID                       string `json:"id"`
-	UserID                   string `json:"userId"`
-	StripePaymentMethodID    string `json:"stripePaymentMethodId"`
-	Type                     string `json:"type"`
-	Last4                    *string `json:"last4,omitempty"`
-	Brand                    *string `json:"brand,omitempty"`
-	ExpMonth                 *int    `json:"expMonth,omitempty"`
-	ExpYear                  *int    `json:"expYear,omitempty"`
-	IsDefault                bool    `json:"isDefault"`
-	CreatedAt                time.Time `json:"createdAt"`
-	UpdatedAt                time.Time `json:"updatedAt"`
+	ID                    string    `json:"id"`
+	UserID                string    `json:"userId"`
+	StripePaymentMethodID string    `json:"stripePaymentMethodId"`
+	Type                  string    `json:"type"`
+	Last4                 *string   `json:"last4,omitempty"`
+	Brand                 *string   `json:"brand,omitempty"`
+	ExpMonth              *int      `json:"expMonth,omitempty"`
+	ExpYear               *int      `json:"expYear,omitempty"`
+	IsDefault             bool      `json:"isDefault"`
+	CreatedAt             time.Time `json:"createdAt"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 type Invoice struct {
-	ID                  string     `json:"id"`
-	UserID              string     `json:"userId"`
-	StripeInvoiceID     string     `json:"stripeInvoiceId"`
-	AmountDue           int        `json:"amountDue"`
-	AmountPaid          int        `json:"amountPaid"`
-	Currency            string     `json:"currency"`
-	Status              string     `json:"status"`
-	InvoicePDF          *string    `json:"invoicePdf,omitempty"`
-	HostedInvoiceURL    *string    `json:"hostedInvoiceUrl,omitempty"`
-	PeriodStart         *time.Time `json:"periodStart,omitempty"`
-	PeriodEnd           *time.Time `json:"periodEnd,omitempty"`
-	CreatedAt           time.Time  `json:"createdAt"`
+	ID               string     `json:"id"`
+	UserID           string     `json:"userId"`
+	StripeInvoiceID  string     `json:"stripeInvoiceId"`
+	AmountDue        int        `json:"amountDue"`
+	AmountPaid       int        `json:"amountPaid"`
+	Currency         string     `json:"currency"`
+	Status           string     `json:"status"`
+	InvoicePDF       *string    `json:"invoicePdf,omitempty"`
+	HostedInvoiceURL *string    `json:"hostedInvoiceUrl,omitempty"`
+	PeriodStart      *time.Time `json:"periodStart,omitempty"`
+	PeriodEnd        *time.Time `json:"periodEnd,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
 }
 
 type StripeProduct struct {
-	ID            string                 `json:"id"`
-	StripeProductID string              `json:"stripeProductId"`
-	Name          string                 `json:"name"`
-	Description   *string                `json:"description,omitempty"`
-	Active        bool                   `json:"active"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt     time.Time              `json:"createdAt"`
-	UpdatedAt     time.Time              `json:"updatedAt"`
+	ID              string                 `json:"id"`
+	StripeProductID string                 `json:"stripeProductId"`
+	Name            string                 `json:"name"`
+	Description     *string                `json:"description,omitempty"`
+	Active          bool                   `json:"active"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt       time.Time              `json:"createdAt"`
+	UpdatedAt       time.Time              `json:"updatedAt"`
 }
 
 // Stripe client instance
@@ -255,10 +257,10 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		PlanID              string `json:"planId"`
-		PaymentMethodID     string `json:"paymentMethodId"`
-		PromotionCode       *string `json:"promotionCode,omitempty"`
-		TrialDays           *int    `json:"trialDays,omitempty"`
+		PlanID          string  `json:"planId"`
+		PaymentMethodID string  `json:"paymentMethodId"`
+		PromotionCode   *string `json:"promotionCode,omitempty"`
+		TrialDays       *int    `json:"trialDays,omitempty"`
 	}
 
 	if err := decodeJSON(r, &req); err != nil {
@@ -408,10 +410,10 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 
 	// Return subscription data with client secret for payment confirmation
 	response := map[string]interface{}{
-		"subscriptionId":     subID,
+		"subscriptionId":       subID,
 		"stripeSubscriptionId": subscription.ID,
-		"clientSecret":       subscription.LatestInvoice.PaymentIntent.ClientSecret,
-		"status":             subscription.Status,
+		"clientSecret":         subscription.LatestInvoice.PaymentIntent.ClientSecret,
+		"status":               subscription.Status,
 	}
 
 	writeJSON(w, http.StatusOK, response)
@@ -615,6 +617,15 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// Verify webhook signature
 	webhookSecret := os.Getenv("STRIPE_WEBHOOK_SECRET")
+	if strings.Contains(r.URL.Path, "/snapshot") {
+		if s := os.Getenv("STRIPE_WEBHOOK_SECRET_SNAPSHOT"); s != "" {
+			webhookSecret = s
+		}
+	} else if strings.Contains(r.URL.Path, "/thin") {
+		if s := os.Getenv("STRIPE_WEBHOOK_SECRET_THIN"); s != "" {
+			webhookSecret = s
+		}
+	}
 	if webhookSecret == "" {
 		log.Printf("[Billing][Webhook] STRIPE_WEBHOOK_SECRET not set, skipping signature verification")
 	} else {
@@ -1086,9 +1097,26 @@ func (h *Handler) handlePriceEventInternal(price *stripe.Price) {
 			if planName == "" {
 				planName = product.Name
 			}
+
+			// UPSERT Product to ensure FK constraint is satisfied
+			productID := fmt.Sprintf("prod_%s", product.ID)
+			metadataJSON, _ := json.Marshal(product.Metadata)
+			_, err = h.db.Exec(`
+                INSERT INTO public.stripe_products (id, stripe_product_id, name, description, active, metadata, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+                ON CONFLICT (stripe_product_id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    active = EXCLUDED.active,
+                    metadata = EXCLUDED.metadata,
+                    updated_at = NOW()
+            `, productID, product.ID, product.Name, product.Description, product.Active, metadataJSON)
+			if err != nil {
+				log.Printf("[Billing][PriceEvent] product upsert error: %v", err)
+			}
 		} else {
-			log.Printf("[Billing][PriceEvent] Failed to fetch product %s for price %s: %v", price.Product.ID, price.ID, err)
-			planName = price.Nickname
+			log.Printf("[Billing][PriceEvent] Failed to fetch product %s for price %s: %v. Aborting sync.", price.Product.ID, price.ID, err)
+			return
 		}
 
 		// Convert price from cents (Stripe unit_amount is already in cents)
@@ -1152,13 +1180,13 @@ func (h *Handler) handlePlanEvent(event stripe.Event) {
 
 	// Convert plan to price-like structure for processing
 	price := &stripe.Price{
-		ID: plan.ID,
+		ID:       plan.ID,
 		Nickname: plan.Nickname,
 		Product: &stripe.Product{
 			ID: plan.Product.ID,
 		},
 		UnitAmount: plan.Amount,
-		Currency: plan.Currency,
+		Currency:   plan.Currency,
 		Recurring: &stripe.PriceRecurring{
 			Interval: stripe.PriceRecurringInterval(plan.Interval),
 		},
@@ -1543,18 +1571,18 @@ func (h *Handler) MigrateBillingPlanPrice(w http.ResponseWriter, r *http.Request
 		newPlanID, req.NewPriceCents, req.GracePeriodMonths)
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"success": true,
-		"message": "New plan created with grace period",
+		"success":   true,
+		"message":   "New plan created with grace period",
 		"oldPlanId": planID,
 		"newPlanId": newPlanID,
 		"newPrice": map[string]interface{}{
-			"id":        newPrice.ID,
-			"amount":    req.NewPriceCents,
-			"currency":  currentPlan.Currency,
+			"id":       newPrice.ID,
+			"amount":   req.NewPriceCents,
+			"currency": currentPlan.Currency,
 		},
-		"gracePeriodMonths": req.GracePeriodMonths,
+		"gracePeriodMonths":    req.GracePeriodMonths,
 		"migrationScheduledAt": migrationScheduledAt,
-		"productVersionGroup": versionGroup,
+		"productVersionGroup":  versionGroup,
 	})
 }
 
@@ -1706,10 +1734,10 @@ func (h *Handler) MigrateSubscriptionsAfterGracePeriod(w http.ResponseWriter, r 
 	log.Printf("[Billing][MigrateSubscriptions] Migrated %d subscriptions", migratedCount)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"success":         true,
-		"migratedCount":   migratedCount,
-		"errors":          errors,
-		"message":         fmt.Sprintf("Successfully migrated %d subscriptions", migratedCount),
+		"success":       true,
+		"migratedCount": migratedCount,
+		"errors":        errors,
+		"message":       fmt.Sprintf("Successfully migrated %d subscriptions", migratedCount),
 	})
 }
 
@@ -1757,15 +1785,15 @@ func (h *Handler) GetProductVersions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		version := map[string]interface{}{
-			"id":                 id,
-			"name":               name,
-			"priceCents":         priceCents,
-			"currency":           currency,
-			"interval":           interval,
-			"gracePeriodMonths":  gracePeriodMonths,
-			"isActive":           isActive,
-			"createdAt":          createdAt,
-			"updatedAt":          updatedAt,
+			"id":                id,
+			"name":              name,
+			"priceCents":        priceCents,
+			"currency":          currency,
+			"interval":          interval,
+			"gracePeriodMonths": gracePeriodMonths,
+			"isActive":          isActive,
+			"createdAt":         createdAt,
+			"updatedAt":         updatedAt,
 		}
 
 		if desc.Valid {
@@ -1860,13 +1888,13 @@ func (h *Handler) GetMigrationStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"success":              true,
-		"planId":               plan.ID,
-		"planName":             plan.Name,
-		"priceCents":           plan.PriceCents,
-		"gracePeriodMonths":    plan.GracePeriodMonths,
-		"status":               status,
-		"subscriptionCount":    subscriptionCount,
+		"success":               true,
+		"planId":                plan.ID,
+		"planName":              plan.Name,
+		"priceCents":            plan.PriceCents,
+		"gracePeriodMonths":     plan.GracePeriodMonths,
+		"status":                status,
+		"subscriptionCount":     subscriptionCount,
 		"pendingMigrationCount": pendingMigrationCount,
 	}
 
@@ -1925,10 +1953,10 @@ func (h *Handler) archiveOldMigratedProducts() int {
 	defer rows.Close()
 
 	type MigratedProduct struct {
-		ID                   string
-		StripeProductID      string
-		Name                 string
-		ProductVersionGroup  string
+		ID                  string
+		StripeProductID     string
+		Name                string
+		ProductVersionGroup string
 	}
 
 	var products []MigratedProduct
@@ -2094,29 +2122,21 @@ func (h *Handler) ArchiveProduct(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// SyncLegacyPlans creates proper Stripe plans for legacy plans that don't have real Stripe IDs
-func (h *Handler) SyncLegacyPlans(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodPost) {
-		return
-	}
-
+// EnsureDefaultPlans checks and syncs the default plans (free, pro, enterprise)
+func (h *Handler) EnsureDefaultPlans(ctx context.Context) (int, error) {
 	initStripe()
 	if stripeClient == nil {
-		writeError(w, http.StatusServiceUnavailable, "Stripe not configured")
-		return
+		return 0, fmt.Errorf("Stripe not configured")
 	}
 
-	// Find all plans with legacy stripe_price_id values
-	rows, err := h.db.Query(`
+	// Find all default plans to ensure they are synced with the correct namespaced Stripe products
+	rows, err := h.db.QueryContext(ctx, `
 		SELECT id, name, description, price_cents, currency, interval, features, limits
 		FROM public.billing_plans
-		WHERE stripe_price_id LIKE 'legacy_%'
-		   AND is_active = true
+		WHERE id IN ('free', 'pro', 'enterprise')
 	`)
 	if err != nil {
-		log.Printf("[Billing][SyncLegacyPlans] failed to query legacy plans: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to query legacy plans")
-		return
+		return 0, fmt.Errorf("failed to query legacy plans: %v", err)
 	}
 	defer rows.Close()
 
@@ -2149,76 +2169,147 @@ func (h *Handler) SyncLegacyPlans(w http.ResponseWriter, r *http.Request) {
 	var errors []string
 
 	for _, plan := range legacyPlans {
-		log.Printf("[Billing][SyncLegacyPlans] Creating Stripe plan for legacy plan: %s", plan.ID)
+		log.Printf("[Billing][EnsureDefaultPlans] Creating Stripe plan for default plan: %s", plan.ID)
 
-		// Create product in Stripe
-		productParams := &stripe.ProductParams{
-			Name: stripe.String(plan.Name),
-			Type: stripe.String(string(stripe.ProductTypeService)),
+		// 1. Check if product already exists in Stripe by name (to avoid duplicates)
+		// We filter by 'internal' metadata to ensure we only touch products belonging to this project
+		searchParams := &stripe.ProductSearchParams{}
+		searchParams.Query = fmt.Sprintf("active:'true' AND name:'%s' AND metadata['internal']:'simple-truvis-co'", plan.Name)
+		products := stripeClient.Products.Search(searchParams)
+
+		var product *stripe.Product
+		if products.Next() {
+			product = products.Product()
+			log.Printf("[Billing][EnsureDefaultPlans] Found existing product for %s: %s", plan.ID, product.ID)
 		}
 
-		if plan.Description != nil && *plan.Description != "" {
-			productParams.Description = stripe.String(*plan.Description)
+		// 2. If not found, create product
+		if product == nil {
+			productParams := &stripe.ProductParams{
+				Name: stripe.String(plan.Name),
+				Type: stripe.String(string(stripe.ProductTypeService)),
+			}
+
+			if plan.Description != nil && *plan.Description != "" {
+				productParams.Description = stripe.String(*plan.Description)
+			}
+
+			// Add metadata
+			productParams.Metadata = make(map[string]string)
+			productParams.Metadata["internal"] = "simple-truvis-co"
+
+			if len(plan.Features) > 0 {
+				productParams.Metadata["features"] = string(plan.Features)
+			}
+			if len(plan.Limits) > 0 {
+				productParams.Metadata["limits"] = string(plan.Limits)
+			}
+
+			var err error
+			product, err = stripeClient.Products.New(productParams)
+			if err != nil {
+				log.Printf("[Billing][EnsureDefaultPlans] failed to create product for %s: %v", plan.ID, err)
+				errors = append(errors, fmt.Sprintf("Failed to create product for %s: %v", plan.ID, err))
+				continue
+			}
 		}
 
-		// Add metadata
-		productParams.Metadata = make(map[string]string)
-		if len(plan.Features) > 0 {
-			productParams.Metadata["features"] = string(plan.Features)
-		}
-		if len(plan.Limits) > 0 {
-			productParams.Metadata["limits"] = string(plan.Limits)
-		}
+		// Ensure product exists in local stripe_products table (FK constraint)
+		productID := fmt.Sprintf("prod_%s", product.ID)
+		metadataJSON, _ := json.Marshal(product.Metadata)
+		_, err := h.db.Exec(`
+			INSERT INTO public.stripe_products (id, stripe_product_id, name, description, active, metadata, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+			ON CONFLICT (stripe_product_id) DO UPDATE SET
+				name = EXCLUDED.name,
+				description = EXCLUDED.description,
+				active = EXCLUDED.active,
+				metadata = EXCLUDED.metadata,
+				updated_at = NOW()
+		`, productID, product.ID, product.Name, product.Description, product.Active, string(metadataJSON))
 
-		product, err := stripeClient.Products.New(productParams)
 		if err != nil {
-			log.Printf("[Billing][SyncLegacyPlans] failed to create product for %s: %v", plan.ID, err)
-			errors = append(errors, fmt.Sprintf("Failed to create product for %s: %v", plan.ID, err))
+			log.Printf("[Billing][EnsureDefaultPlans] failed to save stripe_product for %s: %v", plan.ID, err)
+			errors = append(errors, fmt.Sprintf("Failed to save stripe_product for %s: %v", plan.ID, err))
 			continue
 		}
 
-		// Create price in Stripe
-		priceParams := &stripe.PriceParams{
-			Product:    stripe.String(product.ID),
-			UnitAmount: stripe.Int64(int64(plan.PriceCents)),
-			Currency:   stripe.String(plan.Currency),
-			Nickname:   stripe.String(plan.Name),
-			Recurring: &stripe.PriceRecurringParams{
-				Interval: stripe.String(plan.Interval),
-			},
+		// 3. Check for existing price (simplified: just list prices for product and match amount)
+		priceParamsList := &stripe.PriceListParams{}
+		priceParamsList.Product = stripe.String(product.ID)
+		priceParamsList.Active = stripe.Bool(true)
+		prices := stripeClient.Prices.List(priceParamsList)
+
+		var price *stripe.Price
+		for prices.Next() {
+			p := prices.Price()
+			if p.UnitAmount == int64(plan.PriceCents) && string(p.Currency) == plan.Currency && string(p.Recurring.Interval) == plan.Interval {
+				price = p
+				log.Printf("[Billing][EnsureDefaultPlans] Found existing price for %s: %s", plan.ID, price.ID)
+				break
+			}
 		}
 
-		price, err := stripeClient.Prices.New(priceParams)
-		if err != nil {
-			log.Printf("[Billing][SyncLegacyPlans] failed to create price for %s: %v", plan.ID, err)
-			errors = append(errors, fmt.Sprintf("Failed to create price for %s: %v", plan.ID, err))
-			continue
+		// 4. Create price if not found
+		if price == nil {
+			priceParams := &stripe.PriceParams{
+				Product:    stripe.String(product.ID),
+				UnitAmount: stripe.Int64(int64(plan.PriceCents)),
+				Currency:   stripe.String(plan.Currency),
+				Nickname:   stripe.String(plan.Name),
+				Recurring: &stripe.PriceRecurringParams{
+					Interval: stripe.String(plan.Interval),
+				},
+			}
+
+			var err error
+			price, err = stripeClient.Prices.New(priceParams)
+			if err != nil {
+				log.Printf("[Billing][EnsureDefaultPlans] failed to create price for %s: %v", plan.ID, err)
+				errors = append(errors, fmt.Sprintf("Failed to create price for %s: %v", plan.ID, err))
+				continue
+			}
 		}
 
-		// Update the plan in database with real Stripe IDs
+		// 5. Update the plan in database with real Stripe IDs
 		_, err = h.db.Exec(`
 			UPDATE public.billing_plans
-			SET stripe_product_id = $1, stripe_price_id = $2, updated_at = NOW()
+			SET stripe_price_id = $1, stripe_product_id = $2, is_active = true, updated_at = NOW()
 			WHERE id = $3
-		`, product.ID, price.ID, plan.ID)
+		`, price.ID, product.ID, plan.ID)
 
 		if err != nil {
-			log.Printf("[Billing][SyncLegacyPlans] failed to update plan %s: %v", plan.ID, err)
+			log.Printf("[Billing][EnsureDefaultPlans] failed to update plan %s: %v", plan.ID, err)
 			errors = append(errors, fmt.Sprintf("Failed to update plan %s: %v", plan.ID, err))
-			continue
+		} else {
+			syncedCount++
+			log.Printf("[Billing][EnsureDefaultPlans] Successfully synced plan %s -> %s / %s", plan.ID, product.ID, price.ID)
 		}
-
-		log.Printf("[Billing][SyncLegacyPlans] Successfully created Stripe plan for %s: product=%s, price=%s", plan.ID, product.ID, price.ID)
-		syncedCount++
 	}
 
-	log.Printf("[Billing][SyncLegacyPlans] Synced %d legacy plans to Stripe", syncedCount)
+	if len(errors) > 0 {
+		return syncedCount, fmt.Errorf("encountered errors: %s", strings.Join(errors, "; "))
+	}
+	return syncedCount, nil
+}
+
+// SyncLegacyPlans creates proper Stripe plans for legacy plans that don't have real Stripe IDs
+func (h *Handler) SyncLegacyPlans(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	count, err := h.EnsureDefaultPlans(r.Context())
+	if err != nil {
+		log.Printf("[Billing][SyncLegacyPlans] error: %v", err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success":     true,
-		"syncedCount": syncedCount,
-		"errors":      errors,
-		"message":     fmt.Sprintf("Successfully synced %d legacy plans to Stripe", syncedCount),
+		"syncedCount": count,
+		"message":     fmt.Sprintf("Legacy sync completed! Created Stripe plans for %d legacy plans.", count),
 	})
 }
 
@@ -2329,14 +2420,14 @@ func (h *Handler) SyncStripeProducts(w http.ResponseWriter, r *http.Request) {
 		}
 
 		syncedProducts = append(syncedProducts, StripeProduct{
-			ID:            productID,
+			ID:              productID,
 			StripeProductID: product.ID,
-			Name:          product.Name,
-			Description:   &product.Description,
-			Active:        product.Active,
-			Metadata:      convertMetadata(product.Metadata),
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
+			Name:            product.Name,
+			Description:     &product.Description,
+			Active:          product.Active,
+			Metadata:        convertMetadata(product.Metadata),
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
 		})
 	}
 
@@ -2347,8 +2438,8 @@ func (h *Handler) SyncStripeProducts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "Products synced successfully",
-		"count":   len(syncedProducts),
+		"message":  "Products synced successfully",
+		"count":    len(syncedProducts),
 		"products": syncedProducts,
 	})
 }

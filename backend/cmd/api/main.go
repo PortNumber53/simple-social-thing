@@ -134,6 +134,13 @@ func run(d deps) error {
 	// Start background workers
 	h.StartProductArchivalWorker()
 
+	// Ensure default billing plans exist and are synced
+	if count, err := h.EnsureDefaultPlans(rootCtx); err != nil {
+		log.Printf("[Startup] Failed to ensure default plans: %v", err)
+	} else {
+		log.Printf("[Startup] Ensured default plans (%d synced)", count)
+	}
+
 	// Setup router
 	r := buildRouter(h)
 
@@ -173,7 +180,7 @@ func run(d deps) error {
 		}
 	}()
 
-	log.Printf("Server starting on port %s", port)
+	log.Printf("Server starting on %s", srv.Addr)
 	if d.listenAndServe == nil {
 		return fmt.Errorf("listenAndServe dependency is required")
 	}
@@ -316,9 +323,19 @@ func buildCORSHandler(r http.Handler) http.Handler {
 }
 
 func newHTTPServer(handler http.Handler, port string) *http.Server {
+	// Listen on all interfaces (IPv4 and IPv6) by default.
+	// This is important for Tailscale and other overlay networks that might prefer IPv6.
+	// We handle the address formatting here to ensure we don't accidentally bind to just IPv4 (0.0.0.0)
+	// or create an invalid address.
+	addr := ":" + port
+	if strings.Contains(port, ":") {
+		// If port string already contains ":", assume it's a full address (e.g. "127.0.0.1:8080")
+		addr = port
+	}
+
 	return &http.Server{
 		Handler: handler,
-		Addr:    ":" + port,
+		Addr:    addr,
 		// Publishing (Facebook pages fan-out + Instagram container creation/publish) can legitimately take > 15s.
 		// If these are too low, nginx will see "upstream prematurely closed connection" and return 502.
 		WriteTimeout: 120 * time.Second,
@@ -365,6 +382,8 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 
 	// Stripe webhook endpoint - the one you requested!
 	r.HandleFunc("/webhook/stripe", h.StripeWebhook).Methods("POST")
+	r.HandleFunc("/webhook/stripe/snapshot", h.StripeWebhook).Methods("POST")
+	r.HandleFunc("/webhook/stripe/thin", h.StripeWebhook).Methods("POST")
 
 	// Sync endpoints for Stripe integration
 	r.HandleFunc("/api/billing/sync/products", h.SyncStripeProducts).Methods("POST")
