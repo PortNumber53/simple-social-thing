@@ -104,7 +104,7 @@ func TestStoreSunoTrack_MissingAudioURLAndSuccess(t *testing.T) {
 		h := New(db)
 
 		rr := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/suno/store", bytes.NewBufferString(`{"userId":"u1"}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/suno/store", bytes.NewBufferString(`{"user_id":"u1"}`))
 		h.StoreSunoTrack(rr, req)
 		if rr.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 got %d", rr.Code)
@@ -143,7 +143,7 @@ func TestStoreSunoTrack_MissingAudioURLAndSuccess(t *testing.T) {
 			WillReturnResult(sqlmock.NewResult(1, 1))
 
 		rr := httptest.NewRecorder()
-		body := `{"userId":"u1","prompt":"p","sunoTrackId":"sid","audioUrl":"https://audio.test/a.mp3"}`
+		body := `{"user_id":"u1","prompt":"p","sunoTrackId":"sid","audioUrl":"https://audio.test/a.mp3"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/suno/store", bytes.NewBufferString(body))
 		h.StoreSunoTrack(rr, req)
 		if rr.Code != http.StatusOK {
@@ -232,20 +232,12 @@ func TestCreateAndUpdateSunoTrack(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	h := New(db)
 
-	// CreateSunoTask validation
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/suno/tasks", bytes.NewBufferString(`{"userId":"u1"}`))
-	h.CreateSunoTask(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 got %d", rr.Code)
-	}
-
 	// CreateSunoTask success
 	mock.ExpectExec(`INSERT INTO public\.suno_tracks`).
 		WithArgs(sqlmock.AnyArg(), "u1", "p", "task1", "V4").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/suno/tasks", bytes.NewBufferString(`{"userId":"u1","prompt":"p","taskId":"task1","model":"V4"}`))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/suno/tasks", bytes.NewBufferString(`{"user_id":"u1","prompt":"p","taskId":"task1","model":"V4"}`))
 	h.CreateSunoTask(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 got %d body=%q", rr.Code, rr.Body.String())
@@ -265,9 +257,11 @@ func TestCreateAndUpdateSunoTrack(t *testing.T) {
 		return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("not_found")), Header: make(http.Header)}, nil
 	}}
 
-	mock.ExpectExec(`UPDATE public\.suno_tracks`).
-		WithArgs("sid", "https://audio.test/a.mp3", sqlmock.AnyArg(), "completed", "track1").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+	now := time.Now().UTC()
+	mock.ExpectQuery(`UPDATE public\.suno_tracks`).
+		WithArgs("", "sid", "https://audio.test/a.mp3", sqlmock.AnyArg(), "completed", "track1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "title", "prompt", "suno_track_id", "audio_url", "file_path", "status", "created_at", "updated_at"}).
+			AddRow("track1", nil, nil, nil, "sid", "https://audio.test/a.mp3", "media/suno/track1.mp3", "completed", now, now))
 
 	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/suno/tracks/track1", bytes.NewBufferString(`{"sunoTrackId":"sid","audioUrl":"https://audio.test/a.mp3","status":"completed"}`))

@@ -29,7 +29,7 @@ func TestStoreSunoTrack_DownstreamNon2xx(t *testing.T) {
 	h := New(db)
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/suno/store", bytes.NewBufferString(`{"userId":"u1","audioUrl":"https://audio.test/a.mp3"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/suno/store", bytes.NewBufferString(`{"user_id":"u1","audioUrl":"https://audio.test/a.mp3"}`))
 	h.StoreSunoTrack(rr, req)
 	if rr.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 got %d body=%q", rr.Code, rr.Body.String())
@@ -59,7 +59,7 @@ func TestStoreSunoTrack_DBInsertError(t *testing.T) {
 		WillReturnError(sql.ErrConnDone)
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/suno/store", bytes.NewBufferString(`{"userId":"u1","prompt":"p","sunoTrackId":"sid","audioUrl":"https://audio.test/a.mp3"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/suno/store", bytes.NewBufferString(`{"user_id":"u1","prompt":"p","sunoTrackId":"sid","audioUrl":"https://audio.test/a.mp3"}`))
 	h.StoreSunoTrack(rr, req)
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 got %d body=%q", rr.Code, rr.Body.String())
@@ -147,7 +147,7 @@ func TestUpdateSunoTrack_DownloadNon2xx_AndDBError(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectExec(`UPDATE public\.suno_tracks`).
+		mock.ExpectQuery(`UPDATE public\.suno_tracks`).
 			WillReturnError(sql.ErrConnDone)
 
 		rr := httptest.NewRecorder()
