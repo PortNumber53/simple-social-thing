@@ -1,4 +1,4 @@
-package main
+package backend
 
 import (
 	"bytes"
@@ -17,19 +17,44 @@ import (
 	"github.com/PortNumber53/simple-social-thing/backend/internal/handlers"
 	"github.com/cucumber/godog"
 	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
 
+func init() {
+	// Load .env.test for BDD tests if it exists
+	_ = godotenv.Load(".env.test")
+}
+
 type bddTestContext struct {
-	db             *sql.DB
-	server         *httptest.Server
-	router         *mux.Router
-	handler        *handlers.Handler
-	lastResponse   *http.Response
-	lastBody       []byte
-	testData       map[string]interface{}
-	wsConnections  map[string]interface{}
-	internalSecret string
+	db                *sql.DB
+	server            *httptest.Server
+	router            *mux.Router
+	handler           *handlers.Handler
+	lastResponse      *http.Response
+	lastBody          []byte
+	testData          map[string]interface{}
+	wsConnections     map[string]interface{}
+	internalSecret    string
+	origTransport     http.RoundTripper
+	mockHTTPEnabled   bool
+}
+
+// mockRoundTripper intercepts HTTP requests and returns mock responses
+type mockRoundTripper struct {
+	serverURL string
+}
+
+func (m *mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	// For any external URL, return fake audio content
+	if req.URL.Host != "" && !strings.Contains(req.URL.Host, "127.0.0.1") && !strings.Contains(req.URL.Host, "localhost") {
+		return &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"audio/mpeg"}},
+			Body:       io.NopCloser(bytes.NewReader([]byte("fake mp3 audio content"))),
+		}, nil
+	}
+	return http.DefaultTransport.RoundTrip(req)
 }
 
 func (ctx *bddTestContext) reset() {
@@ -40,22 +65,36 @@ func (ctx *bddTestContext) reset() {
 	ctx.lastBody = nil
 	ctx.testData = make(map[string]interface{})
 	ctx.wsConnections = make(map[string]interface{})
+	// Restore original HTTP transport if it was mocked
+	if ctx.mockHTTPEnabled && ctx.origTransport != nil {
+		http.DefaultClient.Transport = ctx.origTransport
+		ctx.mockHTTPEnabled = false
+	}
+}
+
+func (ctx *bddTestContext) externalHTTPCallsAreMocked() error {
+	if !ctx.mockHTTPEnabled {
+		ctx.origTransport = http.DefaultClient.Transport
+		http.DefaultClient.Transport = &mockRoundTripper{}
+		ctx.mockHTTPEnabled = true
+	}
+	return nil
 }
 
 func (ctx *bddTestContext) theDatabaseIsClean() error {
 	tables := []string{
-		"public.\"Notifications\"",
-		"public.\"SocialLibraries\"",
-		"public.\"SocialImportUsage\"",
-		"public.\"SocialImportStates\"",
-		"public.\"PublishJobs\"",
-		"public.\"Posts\"",
-		"public.\"SunoTracks\"",
-		"public.\"UserSettings\"",
-		"public.\"TeamMembers\"",
-		"public.\"Teams\"",
-		"public.\"SocialConnections\"",
-		"public.\"Users\"",
+		"public.notifications",
+		"public.social_libraries",
+		"public.social_import_usage",
+		"public.social_import_states",
+		"public.publish_jobs",
+		"public.posts",
+		"public.suno_tracks",
+		"public.user_settings",
+		"public.team_members",
+		"public.teams",
+		"public.social_connections",
+		"public.users",
 	}
 
 	for _, table := range tables {
@@ -80,6 +119,13 @@ func (ctx *bddTestContext) theAPIServerIsRunning() error {
 
 func buildTestRouter(h *handlers.Handler) *mux.Router {
 	r := mux.NewRouter()
+
+	// Mock endpoint for serving fake audio files in tests
+	r.HandleFunc("/mock-audio/{filename}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/mpeg")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("fake mp3 audio content"))
+	}).Methods("GET")
 
 	r.HandleFunc("/health", h.Health).Methods("GET")
 	r.HandleFunc("/api/events/ws", h.EventsWebSocket)
@@ -121,6 +167,8 @@ func buildTestRouter(h *handlers.Handler) *mux.Router {
 	r.HandleFunc("/api/suno/store", h.StoreSunoTrack).Methods("POST")
 	r.HandleFunc("/api/suno/music", h.SunoMusicCallback).Methods("POST")
 	r.HandleFunc("/api/suno/music/", h.SunoMusicCallback).Methods("POST")
+	r.HandleFunc("/callback/suno/music", h.SunoMusicCallback).Methods("POST")
+	r.HandleFunc("/callback/suno/music/", h.SunoMusicCallback).Methods("POST")
 	r.HandleFunc("/api/user-settings/{userId}", h.GetUserSettings).Methods("GET")
 	r.HandleFunc("/api/user-settings/{userId}/{key}", h.GetUserSetting).Methods("GET")
 	r.HandleFunc("/api/user-settings/{userId}/{key}", h.UpsertUserSetting).Methods("PUT")
@@ -228,19 +276,19 @@ func (ctx *bddTestContext) theResponseShouldBeAJSONArrayWithItems(count int) err
 }
 
 func (ctx *bddTestContext) aUserExistsWithIdAndEmail(id, email string) error {
-	query := `INSERT INTO public."Users" (id, email, name, created_at) VALUES ($1, $2, $3, NOW())`
+	query := `INSERT INTO public.users (id, email, name, created_at) VALUES ($1, $2, $3, NOW())`
 	_, err := ctx.db.Exec(query, id, email, "Test User")
 	return err
 }
 
 func (ctx *bddTestContext) aTeamExistsWithIdAndOwnerId(teamId, ownerId string) error {
-	query := `INSERT INTO public."Teams" (id, owner_id, created_at) VALUES ($1, $2, NOW())`
+	query := `INSERT INTO public.teams (id, owner_id, created_at) VALUES ($1, $2, NOW())`
 	_, err := ctx.db.Exec(query, teamId, ownerId)
 	return err
 }
 
 func (ctx *bddTestContext) theUserHasAConnectionWithProviderId(userId, provider, providerId string) error {
-	query := `INSERT INTO public."SocialConnections" (id, user_id, provider, provider_id, created_at)
+	query := `INSERT INTO public.social_connections (id, user_id, provider, provider_id, created_at)
 	          VALUES ($1, $2, $3, $4, NOW())`
 	id := fmt.Sprintf("%s_%s_%s", userId, provider, providerId)
 	_, err := ctx.db.Exec(query, id, userId, provider, providerId)
@@ -248,7 +296,7 @@ func (ctx *bddTestContext) theUserHasAConnectionWithProviderId(userId, provider,
 }
 
 func (ctx *bddTestContext) theUserIsAMemberOfTeam(userId, teamId string) error {
-	query := `INSERT INTO public."TeamMembers" (id, team_id, user_id, created_at) VALUES ($1, $2, $3, NOW())`
+	query := `INSERT INTO public.team_members (id, team_id, user_id, created_at) VALUES ($1, $2, $3, NOW())`
 	id := fmt.Sprintf("%s_%s", teamId, userId)
 	_, err := ctx.db.Exec(query, id, teamId, userId)
 	return err
@@ -257,7 +305,7 @@ func (ctx *bddTestContext) theUserIsAMemberOfTeam(userId, teamId string) error {
 func (ctx *bddTestContext) theUserHasPostsInTeam(userId string, count int, teamId string) error {
 	for i := 0; i < count; i++ {
 		postId := fmt.Sprintf("post_%s_%d", userId, i)
-		query := `INSERT INTO public."Posts" (id, team_id, user_id, content, status, created_at, updated_at)
+		query := `INSERT INTO public.posts (id, team_id, user_id, content, status, created_at, updated_at)
 		          VALUES ($1, $2, $3, $4, 'draft', NOW(), NOW())`
 		_, err := ctx.db.Exec(query, postId, teamId, userId, fmt.Sprintf("Post %d", i))
 		if err != nil {
@@ -268,7 +316,7 @@ func (ctx *bddTestContext) theUserHasPostsInTeam(userId string, count int, teamI
 }
 
 func (ctx *bddTestContext) theUserHasAPostWithIdInTeam(userId, postId, teamId string) error {
-	query := `INSERT INTO public."Posts" (id, team_id, user_id, content, status, created_at, updated_at)
+	query := `INSERT INTO public.posts (id, team_id, user_id, content, status, created_at, updated_at)
 	          VALUES ($1, $2, $3, 'Test content', 'draft', NOW(), NOW())`
 	_, err := ctx.db.Exec(query, postId, teamId, userId)
 	if err != nil {
@@ -279,7 +327,7 @@ func (ctx *bddTestContext) theUserHasAPostWithIdInTeam(userId, postId, teamId st
 }
 
 func (ctx *bddTestContext) theUserHasAScheduledPostWithIdInTeam(userId, postId, teamId string) error {
-	query := `INSERT INTO public."Posts" (id, team_id, user_id, content, status, scheduled_for, created_at, updated_at)
+	query := `INSERT INTO public.posts (id, team_id, user_id, content, status, scheduled_for, created_at, updated_at)
 	          VALUES ($1, $2, $3, 'Scheduled content', 'scheduled', NOW() + INTERVAL '1 hour', NOW(), NOW())`
 	_, err := ctx.db.Exec(query, postId, teamId, userId)
 	return err
@@ -287,7 +335,7 @@ func (ctx *bddTestContext) theUserHasAScheduledPostWithIdInTeam(userId, postId, 
 
 func (ctx *bddTestContext) thePostShouldNotExist(postId string) error {
 	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM public."Posts" WHERE id = $1)`
+	query := `SELECT EXISTS(SELECT 1 FROM public.posts WHERE id = $1)`
 	err := ctx.db.QueryRow(query, postId).Scan(&exists)
 	if err != nil {
 		return err
@@ -313,7 +361,7 @@ func (ctx *bddTestContext) theResponseShouldContainAField(field string) error {
 
 func (ctx *bddTestContext) theUserShouldHaveEmail(userId, email string) error {
 	var actualEmail string
-	query := `SELECT email FROM public."Users" WHERE id = $1`
+	query := `SELECT email FROM public.users WHERE id = $1`
 	err := ctx.db.QueryRow(query, userId).Scan(&actualEmail)
 	if err != nil {
 		return err
@@ -340,7 +388,7 @@ func (ctx *bddTestContext) theResponseShouldContainAConnectionWithProvider(provi
 }
 
 func (ctx *bddTestContext) aPublishJobExistsWithIdForUser(jobId, userId string) error {
-	query := `INSERT INTO public."PublishJobs" (id, user_id, status, request_json, created_at, updated_at)
+	query := `INSERT INTO public.publish_jobs (id, user_id, status, request_json, created_at, updated_at)
 	          VALUES ($1, $2, 'pending', '{}'::jsonb, NOW(), NOW())`
 	_, err := ctx.db.Exec(query, jobId, userId)
 	return err
@@ -377,7 +425,7 @@ func (ctx *bddTestContext) theResultsForShouldContainError(provider, errorMsg st
 func (ctx *bddTestContext) theUserHasNotifications(userId string, count int) error {
 	for i := 0; i < count; i++ {
 		notifId := fmt.Sprintf("notif_%s_%d", userId, i)
-		query := `INSERT INTO public."Notifications" (id, user_id, type, message, is_read, created_at)
+		query := `INSERT INTO public.notifications (id, user_id, type, message, is_read, created_at)
 		          VALUES ($1, $2, 'info', $3, false, NOW())`
 		_, err := ctx.db.Exec(query, notifId, userId, fmt.Sprintf("Notification %d", i))
 		if err != nil {
@@ -388,7 +436,7 @@ func (ctx *bddTestContext) theUserHasNotifications(userId string, count int) err
 }
 
 func (ctx *bddTestContext) theUserHasANotificationWithId(userId, notifId string) error {
-	query := `INSERT INTO public."Notifications" (id, user_id, type, message, is_read, created_at)
+	query := `INSERT INTO public.notifications (id, user_id, type, message, is_read, created_at)
 	          VALUES ($1, $2, 'info', 'Test notification', false, NOW())`
 	_, err := ctx.db.Exec(query, notifId, userId)
 	return err
@@ -396,7 +444,7 @@ func (ctx *bddTestContext) theUserHasANotificationWithId(userId, notifId string)
 
 func (ctx *bddTestContext) theNotificationShouldBeMarkedAsRead(notifId string) error {
 	var isRead bool
-	query := `SELECT is_read FROM public."Notifications" WHERE id = $1`
+	query := `SELECT is_read FROM public.notifications WHERE id = $1`
 	err := ctx.db.QueryRow(query, notifId).Scan(&isRead)
 	if err != nil {
 		return err
@@ -414,7 +462,7 @@ func (ctx *bddTestContext) theUserHasSettingsConfigured(userId string) error {
 		"language": "en",
 	}
 	for key, val := range settings {
-		query := `INSERT INTO public."UserSettings" (user_id, key, value, created_at, updated_at)
+		query := `INSERT INTO public.user_settings (user_id, key, value, created_at, updated_at)
 		          VALUES ($1, $2, $3::jsonb, NOW(), NOW())
 		          ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`
 		_, err := ctx.db.Exec(query, userId, key, fmt.Sprintf(`"%s"`, val))
@@ -426,7 +474,7 @@ func (ctx *bddTestContext) theUserHasSettingsConfigured(userId string) error {
 }
 
 func (ctx *bddTestContext) theUserHasASettingWithValue(userId, key, value string) error {
-	query := `INSERT INTO public."UserSettings" (user_id, key, value, created_at, updated_at)
+	query := `INSERT INTO public.user_settings (user_id, key, value, created_at, updated_at)
 	          VALUES ($1, $2, $3::jsonb, NOW(), NOW())
 	          ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`
 	_, err := ctx.db.Exec(query, userId, key, fmt.Sprintf(`"%s"`, value))
@@ -436,7 +484,7 @@ func (ctx *bddTestContext) theUserHasASettingWithValue(userId, key, value string
 func (ctx *bddTestContext) theUserHasSunoTracks(userId string, count int) error {
 	for i := 0; i < count; i++ {
 		trackId := fmt.Sprintf("track_%s_%d", userId, i)
-		query := `INSERT INTO public."SunoTracks" (id, user_id, title, audio_url, created_at)
+		query := `INSERT INTO public.suno_tracks (id, user_id, title, audio_url, created_at)
 		          VALUES ($1, $2, $3, 'https://example.com/track.mp3', NOW())`
 		_, err := ctx.db.Exec(query, trackId, userId, fmt.Sprintf("Track %d", i))
 		if err != nil {
@@ -447,7 +495,7 @@ func (ctx *bddTestContext) theUserHasSunoTracks(userId string, count int) error 
 }
 
 func (ctx *bddTestContext) theUserHasASunoTrackWithId(userId, trackId string) error {
-	query := `INSERT INTO public."SunoTracks" (id, user_id, title, audio_url, created_at)
+	query := `INSERT INTO public.suno_tracks (id, user_id, title, audio_url, created_at)
 	          VALUES ($1, $2, 'Test Track', 'https://example.com/track.mp3', NOW())`
 	_, err := ctx.db.Exec(query, trackId, userId)
 	return err
@@ -501,7 +549,7 @@ func (ctx *bddTestContext) theUserHasUploadedFiles(userId string) error {
 }
 
 func (ctx *bddTestContext) theUserHasSocialLibraryItems(userId string) error {
-	query := `INSERT INTO public."SocialLibraries" (id, user_id, network, content_type, external_id, media_url, raw_payload, created_at)
+	query := `INSERT INTO public.social_libraries (id, user_id, network, content_type, external_id, media_url, raw_payload, created_at)
 	          VALUES ($1, $2, 'facebook', 'post', 'ext123', 'https://example.com/media.jpg', '{}'::jsonb, NOW())`
 	_, err := ctx.db.Exec(query, "lib_"+userId+"_1", userId)
 	return err
@@ -519,16 +567,18 @@ func (ctx *bddTestContext) iSendAPOSTRequestToWithAFileUpload(path string, table
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	for _, row := range table.Rows[1:] {
+	// Table rows are key-value pairs (no header row)
+	for _, row := range table.Rows {
 		key := row.Cells[0].Value
 		value := row.Cells[1].Value
 
 		if key == "filename" {
-			part, err := writer.CreateFormFile("file", value)
+			part, err := writer.CreateFormFile("files", value)
 			if err != nil {
 				return err
 			}
-			_, err = part.Write([]byte("fake file content"))
+			// Write fake JPEG header + content to pass content-type detection
+			_, err = part.Write([]byte("\xff\xd8\xff\xe0fake jpeg content"))
 			if err != nil {
 				return err
 			}
@@ -586,6 +636,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	})
 
 	ctx.Step(`^the database is clean$`, testCtx.theDatabaseIsClean)
+	ctx.Step(`^external HTTP calls are mocked$`, testCtx.externalHTTPCallsAreMocked)
 	ctx.Step(`^the API server is running$`, testCtx.theAPIServerIsRunning)
 	ctx.Step(`^I send a GET request to "([^"]*)"$`, testCtx.iSendAGETRequestTo)
 	ctx.Step(`^I send a POST request to "([^"]*)" with JSON:$`, testCtx.iSendAPOSTRequestToWithJSON)

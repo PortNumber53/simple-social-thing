@@ -5,6 +5,7 @@ Feature: Suno AI Music Integration
 
   Background:
     Given the database is clean
+    And external HTTP calls are mocked
     And the API server is running
     And a user exists with id "user123" and email "test@example.com"
 

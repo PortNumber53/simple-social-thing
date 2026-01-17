@@ -19,15 +19,15 @@ Feature: Media Uploads
       | contentType | image/jpeg       |
       | size        | 1024             |
     Then the response status code should be 200
-    And the response should contain a "url" field
-    And the response should contain a "filename" field
+    And the response should contain JSON with "ok" set to true
+    And the response should contain a "items" field
 
   Scenario: Delete user uploads
     Given the user "user123" has uploaded files
     When I send a POST request to "/api/uploads/delete/user/user123" with JSON:
       """
       {
-        "files": ["file1.jpg", "file2.png"]
+        "ids": ["file1.jpg", "file2.png"]
       }
       """
     Then the response status code should be 200
