@@ -36,7 +36,7 @@ func TestListPostsForUser_NoStatus(t *testing.T) {
 	}).
 		AddRow("p1", "", "u1", sql.NullString{Valid: true, String: "hi"}, "draft", pq.StringArray{"instagram"}, pq.StringArray{}, sql.NullTime{}, sql.NullTime{}, sql.NullString{}, sql.NullString{}, sql.NullString{}, sql.NullTime{}, now, now)
 
-	mock.ExpectQuery(`FROM public\."Posts"\s+WHERE "userId" = \$1`).
+	mock.ExpectQuery(`FROM public\.posts\s+WHERE user_id = \$1`).
 		WithArgs("u1", 200).
 		WillReturnRows(rows)
 
@@ -75,7 +75,7 @@ func TestListPostsForUser_WithStatus(t *testing.T) {
 	}).
 		AddRow("p2", "", "u1", sql.NullString{Valid: false}, "scheduled", pq.StringArray{"facebook"}, pq.StringArray{}, sql.NullTime{}, sql.NullTime{}, sql.NullString{}, sql.NullString{}, sql.NullString{}, sql.NullTime{}, now, now)
 
-	mock.ExpectQuery(`FROM public\."Posts"\s+WHERE "userId" = \$1 AND status = \$2`).
+	mock.ExpectQuery(`FROM public\.posts\s+WHERE user_id = \$1 AND status = \$2`).
 		WithArgs("u1", "scheduled", 200).
 		WillReturnRows(rows)
 
@@ -153,7 +153,7 @@ func TestCreatePostForUser_Success(t *testing.T) {
 	status := "draft"
 	now := time.Now().UTC()
 
-	mock.ExpectQuery(`INSERT INTO public\."Posts"`).
+	mock.ExpectQuery(`INSERT INTO public\.posts`).
 		WithArgs(id, "u1", &content, status, sqlmock.AnyArg(), sqlmock.AnyArg(), (*time.Time)(nil), (*time.Time)(nil)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "teamId", "userId", "content", "status", "providers", "media",
@@ -185,7 +185,7 @@ func TestUpdatePostForUser_NotFoundAndSuccess(t *testing.T) {
 		}
 		h := New(db)
 
-		mock.ExpectQuery(`UPDATE public\."Posts"`).
+		mock.ExpectQuery(`UPDATE public\.posts`).
 			WillReturnError(sql.ErrNoRows)
 
 		rr := httptest.NewRecorder()
@@ -212,7 +212,7 @@ func TestUpdatePostForUser_NotFoundAndSuccess(t *testing.T) {
 		when := time.Now().UTC().Add(1 * time.Hour)
 		now := time.Now().UTC()
 
-		mock.ExpectQuery(`UPDATE public\."Posts"`).
+		mock.ExpectQuery(`UPDATE public\.posts`).
 			WithArgs("p1", "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 			WillReturnRows(sqlmock.NewRows([]string{
 				"id", "teamId", "userId", "content", "status", "providers", "media",
@@ -270,7 +270,7 @@ func TestUpdatePostForUser_MethodAndBodyValidation(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectQuery(`UPDATE public\."Posts"`).
+		mock.ExpectQuery(`UPDATE public\.posts`).
 			WillReturnError(sql.ErrConnDone)
 
 		rr := httptest.NewRecorder()
@@ -293,7 +293,7 @@ func TestDeletePostForUser_NotFoundAndSuccess(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectExec(`DELETE FROM public\."Posts"`).
+		mock.ExpectExec(`DELETE FROM public\.posts`).
 			WithArgs("p1", "u1").
 			WillReturnResult(sqlmock.NewResult(0, 0))
 
@@ -314,7 +314,7 @@ func TestDeletePostForUser_NotFoundAndSuccess(t *testing.T) {
 		defer func() { _ = db.Close() }()
 		h := New(db)
 
-		mock.ExpectExec(`DELETE FROM public\."Posts"`).
+		mock.ExpectExec(`DELETE FROM public\.posts`).
 			WithArgs("p1", "u1").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 

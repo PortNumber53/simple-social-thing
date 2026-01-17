@@ -23,11 +23,11 @@ func TestProcessDueScheduledPostsOnce_EnqueuesJob(t *testing.T) {
 	rows := sqlmock.NewRows([]string{"id", "userId", "scheduledFor"}).
 		AddRow("p1", "u1", when)
 
-	mock.ExpectQuery(`FROM public\."Posts"\s+WHERE status = 'scheduled'`).
+	mock.ExpectQuery(`FROM public\.posts\s+WHERE status = 'scheduled'`).
 		WithArgs(25).
 		WillReturnRows(rows)
 
-	mock.ExpectExec(`UPDATE public\."Posts"\s+SET "lastPublishJobId"`).
+	mock.ExpectExec(`UPDATE public\.posts\s+SET last_publish_job_id`).
 		WithArgs("p1", "u1", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -66,11 +66,11 @@ func TestProcessDueScheduledPostsOnce_EmptyContent_MarksFailed_NoJobInsert(t *te
 	rows := sqlmock.NewRows([]string{"id", "userId", "scheduledFor"}).
 		AddRow("p1", "u1", when)
 
-	mock.ExpectQuery(`FROM public\."Posts"\s+WHERE status = 'scheduled'`).
+	mock.ExpectQuery(`FROM public\.posts\s+WHERE status = 'scheduled'`).
 		WithArgs(25).
 		WillReturnRows(rows)
 
-	mock.ExpectExec(`UPDATE public\."Posts"\s+SET "lastPublishJobId"`).
+	mock.ExpectExec(`UPDATE public\.posts\s+SET last_publish_job_id`).
 		WithArgs("p1", "u1", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -80,7 +80,7 @@ func TestProcessDueScheduledPostsOnce_EmptyContent_MarksFailed_NoJobInsert(t *te
 		WithArgs("p1", "u1", sqlmock.AnyArg()).
 		WillReturnRows(details)
 
-	mock.ExpectExec(`UPDATE public\."Posts"\s+SET "lastPublishStatus"='failed'`).
+	mock.ExpectExec(`UPDATE public\.posts\s+SET last_publish_status='failed'`).
 		WithArgs("p1", "u1", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 

@@ -96,7 +96,7 @@ func TestGetUser_NotFound(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	h := New(db)
-	mock.ExpectQuery(`SELECT id, email, name, image_url, created_at FROM public\.users`).
+	mock.ExpectQuery(`SELECT id, email, name, image_url, created_at, profile FROM public\.users`).
 		WithArgs("missing").
 		WillReturnError(sql.ErrNoRows)
 

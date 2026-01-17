@@ -21,7 +21,7 @@ func TestPublishScheduledPostNowOnce_EnqueuesJob(t *testing.T) {
 	now := time.Now().UTC()
 
 	// Claim + return content/providers/media/scheduledFor
-	mock.ExpectQuery(`UPDATE public\."Posts"`).
+	mock.ExpectQuery(`UPDATE public\.posts`).
 		WithArgs("p1", "u1", sqlmock.AnyArg()).
 		WillReturnRows(
 			sqlmock.NewRows([]string{"content", "providers", "media", "scheduledFor"}).
