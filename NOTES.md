@@ -25,3 +25,10 @@ Oracle - Ubuntu - ARM64 machines - ssh port 22, user grimlock
 144.24.200.77 marselle-prod
 
 Arch Linux `web1` server - AMD64 - ssh port 22987, user grimlock
+
+
+## Firewall
+
+sudo firewall-cmd --add-port=18911/tcp
+
+sudo firewall-cmd --runtime-to-permanent
