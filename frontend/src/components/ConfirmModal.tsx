@@ -104,9 +104,9 @@ export function ConfirmModal({
             <h2 id="modal-title" className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-2">
               {title}
             </h2>
-            <p id="modal-description" className="text-sm text-slate-600 dark:text-slate-400">
+            <div id="modal-description" className="text-sm text-slate-600 dark:text-slate-400">
               {description}
-            </p>
+            </div>
           </div>
 
           {/* Actions */}

@@ -3,14 +3,17 @@ import { render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
 import { IntegrationsProvider } from './contexts/IntegrationsContext';
+import { ThemeProvider } from './contexts/ThemeContext';
 
 function renderApp() {
   return render(
-    <AuthProvider>
-      <IntegrationsProvider>
-        <App />
-      </IntegrationsProvider>
-    </AuthProvider>,
+    <ThemeProvider>
+      <AuthProvider>
+        <IntegrationsProvider>
+          <App />
+        </IntegrationsProvider>
+      </AuthProvider>
+    </ThemeProvider>,
   );
 }
 

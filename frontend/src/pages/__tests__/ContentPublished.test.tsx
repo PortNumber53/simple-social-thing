@@ -89,9 +89,11 @@ describe('ContentPublished', () => {
 
     render(
       <MemoryRouter>
-        <AuthProvider>
-          <ContentPublished />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <ContentPublished />
+          </AuthProvider>
+        </ThemeProvider>
       </MemoryRouter>,
     );
 
@@ -102,8 +104,10 @@ describe('ContentPublished', () => {
     const cb = screen.getByRole('checkbox', { name: /^select/i });
     await u.click(cb);
 
-    // Remove selected from library
+    // Remove selected from library - opens confirmation modal
     await u.click(screen.getByRole('button', { name: /Remove from library/i }));
+    // Click confirm button in modal
+    await u.click(screen.getByRole('button', { name: /^Remove$/i }));
     await waitFor(() => {
       expect((globalThis.fetch as any).mock.calls.some((c: any[]) => String(c[0]).includes('/api/library/delete'))).toBe(true);
     });

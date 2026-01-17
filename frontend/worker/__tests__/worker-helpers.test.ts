@@ -1,3 +1,6 @@
+/**
+ * @vitest-environment node
+ */
 import { describe, expect, it } from 'vitest';
 import { buildCorsHeaders, buildSidCookie, getBackendOrigin, getCookie } from '../index';
 
@@ -20,7 +23,10 @@ describe('worker helper functions', () => {
   });
 
   it('buildCorsHeaders allows credentials for explicit Origin', () => {
-    const req = new Request('https://example.com/api/x', { headers: { Origin: 'https://client.example.com' } });
+    // Use Headers object to bypass forbidden header restrictions in some DOM environments
+    const reqHeaders = new Headers();
+    reqHeaders.set('Origin', 'https://client.example.com');
+    const req = new Request('https://example.com/api/x', { headers: reqHeaders });
     const headers = buildCorsHeaders(req);
     expect(headers.get('Access-Control-Allow-Origin')).toBe('https://client.example.com');
     expect(headers.get('Access-Control-Allow-Credentials')).toBe('true');

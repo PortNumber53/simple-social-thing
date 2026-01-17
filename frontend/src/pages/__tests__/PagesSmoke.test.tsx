@@ -96,7 +96,7 @@ describe('Pages smoke', () => {
     localStorage.setItem('user', JSON.stringify({ id: 'u1', email: 'e', name: 'User' }));
 
     renderWithProviders(<Dashboard />, { route: '/dashboard' });
-    expect(screen.getByRole('heading', { name: /Delivery dashboard/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Welcome back/i })).toBeInTheDocument();
 
     renderWithProviders(<Integrations />, { route: '/integrations' });
     expect(screen.getByRole('heading', { name: /Integrations/i })).toBeInTheDocument();

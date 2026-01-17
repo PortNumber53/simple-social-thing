@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../../contexts/AuthContext';
@@ -35,7 +35,8 @@ describe('ContentVideos', () => {
 
     await u.click(publish);
     expect(screen.getByText(/Uploading video/i)).toBeInTheDocument();
-    await new Promise((r) => setTimeout(r, 950));
-    expect(screen.getByText(/Video queued/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/Video queued/i)).toBeInTheDocument();
+    }, { timeout: 2000 });
   });
 });
