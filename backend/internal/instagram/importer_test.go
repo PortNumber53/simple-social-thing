@@ -109,7 +109,7 @@ func TestSyncUserWithClient_Success_Upserts(t *testing.T) {
 
 	execRe := `INSERT INTO public\.social_libraries`
 	mock.ExpectExec(execRe).
-		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), "p1", "u1", "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "m1").
+		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), "p1", "u1", "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "m1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	fetched, upserted, err := syncUserWithClient(context.Background(), db, "u1", log.New(io.Discard, "", 0), client)
@@ -227,10 +227,10 @@ func TestImporter_importForUser_Upserts(t *testing.T) {
 	// Expect 2 upserts
 	execRe := `INSERT INTO public\.social_libraries`
 	mock.ExpectExec(execRe).
-		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), "p1", "u1", "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "m1").
+		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), "p1", "u1", "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "m1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(execRe).
-		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), "p2", "u2", "t2", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "m2").
+		WithArgs(sqlmock.AnyArg(), "u1", sqlmock.AnyArg(), sqlmock.AnyArg(), "p2", "u2", "t2", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "m2").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	tok := oauthRecord{AccessToken: "t", IGBusinessID: "ig"}

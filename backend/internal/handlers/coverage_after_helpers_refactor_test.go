@@ -80,7 +80,7 @@ func TestCreateSunoTask_InvalidJSONAndDBError(t *testing.T) {
 			WillReturnError(sql.ErrConnDone)
 
 		rr := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/suno/tasks", bytes.NewBufferString(`{"userId":"u1","prompt":"p","taskId":"task1","model":"V4"}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/suno/tasks", bytes.NewBufferString(`{"user_id":"u1","prompt":"p","taskId":"task1","model":"V4"}`))
 		h.CreateSunoTask(rr, req)
 		if rr.Code != http.StatusInternalServerError {
 			t.Fatalf("expected 500 got %d body=%q", rr.Code, rr.Body.String())
