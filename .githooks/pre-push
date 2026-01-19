@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+
+fail() {
+  echo "[pre-push] $1" >&2
+  exit 1
+}
+
+run() {
+  echo "[pre-push] $*"
+  "$@"
+}
+
+# Backend tests
+if [ -d "$ROOT_DIR/backend" ]; then
+  if command -v go >/dev/null 2>&1; then
+    (cd "$ROOT_DIR/backend" && run go test ./...)
+  else
+    fail "go not found"
+  fi
+fi
+
+# Frontend tests
+if [ -d "$ROOT_DIR/frontend" ]; then
+  if command -v npm >/dev/null 2>&1; then
+    (cd "$ROOT_DIR/frontend" && run npm run -s test)
+  else
+    fail "npm not found"
+  fi
+fi
