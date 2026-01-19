@@ -81,7 +81,7 @@ export const Pricing: React.FC = () => {
                   </li>
                 ))}
               </ul>
-              <div className="mt-6">
+              <div className="mt-auto pt-6">
                 <a
                   href={t.name === 'Team' ? '/contact' : '/'}
                   className={`btn ${t.highlight ? 'btn-primary' : 'btn-secondary'} w-full`}

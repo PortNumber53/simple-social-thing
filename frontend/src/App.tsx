@@ -19,6 +19,7 @@ import { Profile } from './pages/Profile';
 import { Settings } from './pages/Settings';
 import { Billing } from './pages/Billing';
 import { AdminBilling } from './pages/AdminBilling';
+import { AdminCustomPlanRequests } from './pages/AdminCustomPlanRequests';
 import { AdminUsers } from './pages/AdminUsers';
 import { AdminAnalytics } from './pages/AdminAnalytics';
 import { AdminSettings } from './pages/AdminSettings';
@@ -133,6 +134,16 @@ function App() {
             <ProtectedRoute fallback={<Navigate to="/login" replace />}>
               <ErrorBoundary>
                 <AdminBilling />
+              </ErrorBoundary>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/custom-plan-requests"
+          element={
+            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
+              <ErrorBoundary>
+                <AdminCustomPlanRequests />
               </ErrorBoundary>
             </ProtectedRoute>
           }

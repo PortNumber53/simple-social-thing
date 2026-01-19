@@ -11,10 +11,11 @@ interface BillingPlan {
   currency: string;
   interval: string;
   stripePriceId?: string;
-  features?: Record<string, any>;
+  isCustomPrice: boolean;
   limits?: {
     social_accounts: number;
     posts_per_month: number;
+    storage_gb: number;
     analytics: string;
   };
   isActive: boolean;
@@ -49,10 +50,11 @@ export const AdminBilling: React.FC = () => {
     currency: 'usd',
     interval: 'month',
     stripePriceId: '',
-    features: [] as string[],
+    isCustomPrice: false,
     limits: {
       social_accounts: 0,
       posts_per_month: 0,
+      storage_gb: 0,
       analytics: 'basic' as string,
     },
     isActive: true,
@@ -80,6 +82,7 @@ export const AdminBilling: React.FC = () => {
   };
 
   const resetForm = () => {
+    setMessage(null);
     setFormData({
       id: '',
       name: '',
@@ -88,16 +91,40 @@ export const AdminBilling: React.FC = () => {
       currency: 'usd',
       interval: 'month',
       stripePriceId: '',
-      features: [],
+      isCustomPrice: false,
       limits: {
         social_accounts: 0,
         posts_per_month: 0,
+        storage_gb: 0,
         analytics: 'basic',
       },
       isActive: true,
     });
     setEditingPlan(null);
     setShowCreateForm(false);
+  };
+
+  const openCreateForm = () => {
+    setMessage(null);
+    setFormData({
+      id: '',
+      name: '',
+      description: '',
+      priceCents: 0,
+      currency: 'usd',
+      interval: 'month',
+      stripePriceId: '',
+      isCustomPrice: false,
+      limits: {
+        social_accounts: 0,
+        posts_per_month: 0,
+        storage_gb: 0,
+        analytics: 'basic',
+      },
+      isActive: true,
+    });
+    setEditingPlan(null);
+    setShowCreateForm(true);
   };
 
   const handleCreatePlan = async (e: React.FormEvent) => {
@@ -109,7 +136,6 @@ export const AdminBilling: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
-          features: { features: formData.features },
         }),
       });
 
@@ -136,7 +162,6 @@ export const AdminBilling: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
-          features: { features: formData.features },
         }),
       });
 
@@ -183,11 +208,13 @@ export const AdminBilling: React.FC = () => {
       currency: plan.currency,
       interval: plan.interval,
       stripePriceId: plan.stripePriceId || '',
-      features: plan.features?.features || [],
-      limits: plan.limits || {
+      isCustomPrice: !!plan.isCustomPrice,
+      limits: {
         social_accounts: 0,
         posts_per_month: 0,
+        storage_gb: 0,
         analytics: 'basic',
+        ...(plan.limits || {}),
       },
       isActive: plan.isActive,
     });
@@ -340,7 +367,13 @@ export const AdminBilling: React.FC = () => {
                 {isPruning ? 'Pruning...' : '🗑️ Prune Plans'}
               </button>
               <button
-                onClick={() => setShowCreateForm(!showCreateForm)}
+                onClick={() => {
+                  if (showCreateForm) {
+                    resetForm();
+                  } else {
+                    openCreateForm();
+                  }
+                }}
                 className="btn btn-primary"
               >
                 {showCreateForm ? 'Cancel' : 'Create Plan'}
@@ -476,23 +509,20 @@ export const AdminBilling: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Features
-                </label>
-                <textarea
-                  value={formData.features.join('\n')}
-                  onChange={(e) => setFormData({
-                    ...formData,
-                    features: e.target.value.split('\n').filter(f => f.trim())
-                  })}
-                  className="input"
-                  rows={4}
-                  placeholder="Enter each feature on a new line..."
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="isCustomPrice"
+                  checked={formData.isCustomPrice}
+                  onChange={(e) => setFormData({ ...formData, isCustomPrice: e.target.checked })}
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-slate-300 rounded"
                 />
+                <label htmlFor="isCustomPrice" className="ml-2 block text-sm text-slate-700 dark:text-slate-300">
+                  Custom pricing per user
+                </label>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <div>
                   <label htmlFor="socialAccounts" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     Social Accounts Limit
@@ -522,6 +552,24 @@ export const AdminBilling: React.FC = () => {
                     onChange={(e) => setFormData({
                       ...formData,
                       limits: { ...formData.limits, posts_per_month: parseInt(e.target.value) || 0 }
+                    })}
+                    className="input"
+                    placeholder="-1 for unlimited"
+                    min="-1"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="storageGb" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Storage (GB)
+                  </label>
+                  <input
+                    type="number"
+                    id="storageGb"
+                    value={formData.limits.storage_gb ?? 0}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      limits: { ...formData.limits, storage_gb: parseInt(e.target.value) || 0 }
                     })}
                     className="input"
                     placeholder="-1 for unlimited"
