@@ -6,46 +6,96 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 // PlanLimits defines the limits for each plan
 type PlanLimits struct {
-	SocialAccounts   int `json:"social_accounts"`
-	PostsPerMonth    int `json:"posts_per_month"` // -1 = unlimited
-	Analytics        string `json:"analytics"`    // "basic", "advanced", "enterprise"
+	SocialAccounts int    `json:"social_accounts"`
+	PostsPerMonth  int    `json:"posts_per_month"` // -1 = unlimited
+	Analytics      string `json:"analytics"`       // "basic", "advanced", "enterprise"
 }
 
 // SubscriptionEnforcer middleware that enforces subscription limits
 type SubscriptionEnforcer struct {
 	DB     *sql.DB
 	Limits map[string]PlanLimits
+	mu     sync.RWMutex
 }
 
 // NewSubscriptionEnforcer creates a new subscription enforcer middleware
 func NewSubscriptionEnforcer(db *sql.DB) *SubscriptionEnforcer {
-	// Default limits - these could be loaded from database
-	limits := map[string]PlanLimits{
-		"free": {
-			SocialAccounts: 5,
-			PostsPerMonth:  100,
-			Analytics:      "basic",
-		},
-		"pro": {
-			SocialAccounts: 25,
-			PostsPerMonth:  -1, // unlimited
-			Analytics:      "advanced",
-		},
-		"enterprise": {
-			SocialAccounts: -1, // unlimited
-			PostsPerMonth:  -1, // unlimited
-			Analytics:      "enterprise",
-		},
-	}
-
 	return &SubscriptionEnforcer{
 		DB:     db,
-		Limits: limits,
+		Limits: map[string]PlanLimits{},
 	}
+}
+
+func defaultPlanLimits(planID string) PlanLimits {
+	// Conservative defaults; specific plans should be driven by billing_plans.limits.
+	switch planID {
+	case "enterprise":
+		return PlanLimits{SocialAccounts: -1, PostsPerMonth: -1, Analytics: "enterprise"}
+	case "pro":
+		return PlanLimits{SocialAccounts: 25, PostsPerMonth: -1, Analytics: "advanced"}
+	default:
+		return PlanLimits{SocialAccounts: 5, PostsPerMonth: 100, Analytics: "basic"}
+	}
+}
+
+func (se *SubscriptionEnforcer) getPlanLimits(planID string) PlanLimits {
+	planID = strings.TrimSpace(strings.ToLower(planID))
+	if planID == "" {
+		planID = "free"
+	}
+
+	se.mu.RLock()
+	if v, ok := se.Limits[planID]; ok {
+		se.mu.RUnlock()
+		return v
+	}
+	se.mu.RUnlock()
+
+	// Load from DB.
+	var limitsJSON sql.NullString
+	err := se.DB.QueryRow(`
+		SELECT limits
+		FROM public.billing_plans
+		WHERE id = $1
+	`, planID).Scan(&limitsJSON)
+	if err != nil || !limitsJSON.Valid || strings.TrimSpace(limitsJSON.String) == "" {
+		v := defaultPlanLimits(planID)
+		se.mu.Lock()
+		se.Limits[planID] = v
+		se.mu.Unlock()
+		return v
+	}
+
+	var decoded PlanLimits
+	if err := json.Unmarshal([]byte(limitsJSON.String), &decoded); err != nil {
+		v := defaultPlanLimits(planID)
+		se.mu.Lock()
+		se.Limits[planID] = v
+		se.mu.Unlock()
+		return v
+	}
+
+	// Fill empty values with defaults so we don't accidentally enforce 0.
+	def := defaultPlanLimits(planID)
+	if decoded.SocialAccounts == 0 {
+		decoded.SocialAccounts = def.SocialAccounts
+	}
+	if decoded.PostsPerMonth == 0 {
+		decoded.PostsPerMonth = def.PostsPerMonth
+	}
+	if strings.TrimSpace(decoded.Analytics) == "" {
+		decoded.Analytics = def.Analytics
+	}
+
+	se.mu.Lock()
+	se.Limits[planID] = decoded
+	se.mu.Unlock()
+	return decoded
 }
 
 // Middleware returns an HTTP middleware that enforces subscription limits
@@ -72,14 +122,15 @@ func (se *SubscriptionEnforcer) Middleware(next http.Handler) http.Handler {
 		}
 
 		// Check limits based on the request
-		if !se.checkLimits(r, planID) {
+		limits := se.getPlanLimits(planID)
+		if !se.checkLimits(r, planID, limits) {
 			se.respondLimitExceeded(w, planID)
 			return
 		}
 
 		// Add plan info to request context
 		ctx := context.WithValue(r.Context(), "user_plan", planID)
-		ctx = context.WithValue(ctx, "plan_limits", se.Limits[planID])
+		ctx = context.WithValue(ctx, "plan_limits", limits)
 		r = r.WithContext(ctx)
 
 		next.ServeHTTP(w, r)
@@ -134,8 +185,7 @@ func (se *SubscriptionEnforcer) getUserPlan(userID string) (string, error) {
 }
 
 // checkLimits checks if the request is within the plan limits
-func (se *SubscriptionEnforcer) checkLimits(r *http.Request, planID string) bool {
-	limits := se.Limits[planID]
+func (se *SubscriptionEnforcer) checkLimits(r *http.Request, planID string, limits PlanLimits) bool {
 
 	// Example: Check social account limits for social connection endpoints
 	if strings.Contains(r.URL.Path, "/social-connections") && r.Method == http.MethodPost {
@@ -161,16 +211,16 @@ func (se *SubscriptionEnforcer) checkLimits(r *http.Request, planID string) bool
 
 // respondLimitExceeded sends a limit exceeded response
 func (se *SubscriptionEnforcer) respondLimitExceeded(w http.ResponseWriter, planID string) {
-	limits := se.Limits[planID]
+	limits := se.getPlanLimits(planID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusPaymentRequired) // 402 Payment Required
 
 	response := map[string]interface{}{
-		"error": "subscription_limit_exceeded",
-		"message": "Your current plan has reached its limits",
-		"plan": planID,
-		"limits": limits,
+		"error":       "subscription_limit_exceeded",
+		"message":     "Your current plan has reached its limits",
+		"plan":        planID,
+		"limits":      limits,
 		"upgrade_url": "/account/billing",
 	}
 

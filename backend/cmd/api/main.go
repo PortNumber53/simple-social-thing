@@ -134,11 +134,11 @@ func run(d deps) error {
 	// Start background workers
 	h.StartProductArchivalWorker()
 
-	// Ensure default billing plans exist and are synced
-	if count, err := h.EnsureDefaultPlans(rootCtx); err != nil {
-		log.Printf("[Startup] Failed to ensure default plans: %v", err)
+	// Ensure all billing plans exist and are synced
+	if count, err := h.EnsureAllPlans(rootCtx); err != nil {
+		log.Printf("[Startup] Failed to ensure plans: %v", err)
 	} else {
-		log.Printf("[Startup] Ensured default plans (%d synced)", count)
+		log.Printf("[Startup] Ensured plans (%d synced)", count)
 	}
 
 	// Setup router
@@ -367,6 +367,7 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	// Billing endpoints
 	r.HandleFunc("/api/billing/sync/legacy-plans", h.SyncLegacyPlans).Methods("POST")
 	r.HandleFunc("/api/billing/plans", h.GetBillingPlans).Methods("GET")
+	r.HandleFunc("/api/billing/plans", h.CreateBillingPlan).Methods("POST")
 	r.HandleFunc("/api/billing/plans/{id}", h.UpdateBillingPlan).Methods("PUT")
 	r.HandleFunc("/api/billing/plans/{id}", h.DeleteBillingPlan).Methods("DELETE")
 	r.HandleFunc("/api/billing/plans/{id}/migrate", h.MigrateBillingPlanPrice).Methods("POST")
@@ -375,6 +376,11 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	r.HandleFunc("/api/billing/products/archive", h.ArchiveOldProducts).Methods("POST")
 	r.HandleFunc("/api/billing/subscriptions/migrate", h.MigrateSubscriptionsAfterGracePeriod).Methods("POST")
 	r.HandleFunc("/api/billing/product-versions/{versionGroup}", h.GetProductVersions).Methods("GET")
+	r.HandleFunc("/api/billing/custom-plan-requests/user/{userId}", h.CreateCustomPlanRequest).Methods("POST")
+	r.HandleFunc("/api/billing/custom-plan-requests/admin/user/{userId}", h.GetCustomPlanRequests).Methods("GET")
+	r.HandleFunc("/api/billing/custom-plan-requests/{requestId}/admin/user/{userId}", h.UpdateCustomPlanRequest).Methods("PUT")
+	r.HandleFunc("/api/billing/custom-plan-requests/{requestId}/approve/admin/user/{userId}", h.ApproveCustomPlanRequest).Methods("POST")
+	r.HandleFunc("/api/billing/subscription/fix-amount/admin/user/{userId}/target/{targetUserId}", h.FixSubscriptionAmount).Methods("POST")
 	r.HandleFunc("/api/billing/subscription/user/{userId}", h.GetUserSubscription).Methods("GET")
 	r.HandleFunc("/api/billing/subscription/user/{userId}", h.CreateSubscription).Methods("POST")
 	r.HandleFunc("/api/billing/subscription/cancel/user/{userId}", h.CancelSubscription).Methods("POST")

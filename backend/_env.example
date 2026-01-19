@@ -1,6 +1,8 @@
 # Database Configuration
 DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 
+PUBLIC_ORIGIN=http://localhost:18911
+
 # Server Configuration
 PORT=18002
 ENVIRONMENT=dev
