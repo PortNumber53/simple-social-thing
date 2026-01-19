@@ -394,10 +394,44 @@ export const Billing: React.FC = () => {
 
   const currentPlan = plans.find((p) => p.id === subscriptionPlanId) || null;
   const isCurrentPlanCustom = !!currentPlan?.isCustomPrice || subscriptionPlanId.startsWith('custom_');
+
   const hasStripeSubscription = !!subscription?.stripeSubscriptionId;
   const isCanceled = (subscription?.status || '').toLowerCase() === 'canceled';
 
   const selectablePlans = plans.filter((p) => !p.isCustomPrice);
+
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
+          <div className="animate-pulse">
+            <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-48 mb-6"></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="card">
+                  <div className="h-6 bg-slate-200 dark:bg-slate-700 rounded w-32 mb-4"></div>
+                  <div className="space-y-2">
+                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-full"></div>
+                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (error) {
+    return (
+      <Layout>
+        <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
+          <AlertBanner variant="error" className="mb-6 animate-slide-down">{error}</AlertBanner>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
