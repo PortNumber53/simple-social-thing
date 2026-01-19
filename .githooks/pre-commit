@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+
+fail() {
+  echo "[pre-commit] $1" >&2
+  exit 1
+}
+
+run() {
+  echo "[pre-commit] $*"
+  "$@"
+}
+
+# Backend formatting + basic hygiene
+if [ -d "$ROOT_DIR/backend" ]; then
+  if command -v go >/dev/null 2>&1; then
+    # Format all tracked Go files (recursive)
+    GOFILES="$(cd "$ROOT_DIR" && git ls-files '*.go')"
+    if [ -n "$GOFILES" ]; then
+      # shellcheck disable=SC2086
+      run gofmt -w $GOFILES
+    fi
+    # Keep module files tidy if go tooling is present.
+    (cd "$ROOT_DIR/backend" && run go mod tidy)
+  else
+    fail "go not found"
+  fi
+fi
+
+# Frontend lint (also acts as formatter via --fix)
+if [ -d "$ROOT_DIR/frontend" ]; then
+  if command -v npm >/dev/null 2>&1; then
+    (cd "$ROOT_DIR/frontend" && run npm run -s lint -- --fix)
+  else
+    fail "npm not found"
+  fi
+fi
+
+# Ensure we don't commit changes created by formatting/linting without review.
+# This forces the developer to review and re-stage.
+if ! git diff --quiet; then
+  echo "[pre-commit] Working tree changed after formatting/lint. Review changes and re-stage." >&2
+  git --no-pager diff --stat
+  exit 1
+fi
