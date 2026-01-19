@@ -29,6 +29,7 @@ type BillingPlan struct {
 	Features             map[string]interface{} `json:"features,omitempty"`
 	Limits               map[string]interface{} `json:"limits,omitempty"`
 	IsActive             bool                   `json:"isActive"`
+	IsCustomPrice        bool                   `json:"isCustomPrice"`
 	GracePeriodMonths    int                    `json:"gracePeriodMonths,omitempty"`
 	ProductVersionGroup  *string                `json:"productVersionGroup,omitempty"`
 	MigratedFromPlanID   *string                `json:"migratedFromPlanId,omitempty"`
@@ -92,6 +93,39 @@ type StripeProduct struct {
 	UpdatedAt       time.Time              `json:"updatedAt"`
 }
 
+type CustomPlanRequest struct {
+	ID                      string    `json:"id"`
+	UserID                  string    `json:"userId"`
+	RequestedSocialAccounts int       `json:"requestedSocialAccounts"`
+	RequestedPostsPerMonth  int       `json:"requestedPostsPerMonth"`
+	RequestedStorageGB      int       `json:"requestedStorageGb"`
+	Notes                   *string   `json:"notes,omitempty"`
+	Status                  string    `json:"status"`
+	CreatedAt               time.Time `json:"createdAt"`
+	UpdatedAt               time.Time `json:"updatedAt"`
+}
+
+func (h *Handler) isAdminUser(userID string) bool {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false
+	}
+	var ok bool
+	err := h.db.QueryRow(`
+		SELECT (
+			COALESCE(profile->>'role', '') = 'admin'
+			OR COALESCE(profile->>'adminLevel', '') = 'superuser'
+			OR COALESCE((profile->'permissions'->>'billing')::boolean, false) = true
+		)
+		FROM public.users
+		WHERE id = $1
+	`, userID).Scan(&ok)
+	if err != nil {
+		return false
+	}
+	return ok
+}
+
 // Stripe client instance
 var stripeClient *client.API
 
@@ -117,7 +151,7 @@ func (h *Handler) GetBillingPlans(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.Query(`
-		SELECT id, name, description, price_cents, currency, interval, stripe_price_id, features, limits, is_active
+		SELECT id, name, description, price_cents, currency, interval, stripe_price_id, features, limits, is_active, is_custom_price
 		FROM public.billing_plans
 		WHERE is_active = true
 		ORDER BY price_cents ASC
@@ -135,7 +169,7 @@ func (h *Handler) GetBillingPlans(w http.ResponseWriter, r *http.Request) {
 		var desc sql.NullString
 		var stripePriceID sql.NullString
 		var features, limits sql.NullString
-		err := rows.Scan(&p.ID, &p.Name, &desc, &p.PriceCents, &p.Currency, &p.Interval, &stripePriceID, &features, &limits, &p.IsActive)
+		err := rows.Scan(&p.ID, &p.Name, &desc, &p.PriceCents, &p.Currency, &p.Interval, &stripePriceID, &features, &limits, &p.IsActive, &p.IsCustomPrice)
 		if err != nil {
 			log.Printf("[Billing][Plans] scan error: %v", err)
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -173,6 +207,875 @@ func (h *Handler) GetBillingPlans(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, plans)
 }
 
+// CreateBillingPlan creates a billing plan in the database.
+func (h *Handler) CreateBillingPlan(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	var req BillingPlan
+	if err := decodeJSON(r, &req); err != nil {
+		log.Printf("[Billing][CreatePlan] decode error: %v", err)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	req.ID = strings.TrimSpace(req.ID)
+	if req.ID == "" {
+		writeError(w, http.StatusBadRequest, "plan id is required")
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "plan name is required")
+		return
+	}
+	if req.PriceCents < 0 {
+		writeError(w, http.StatusBadRequest, "price must be non-negative")
+		return
+	}
+	if strings.TrimSpace(req.Currency) == "" {
+		req.Currency = "usd"
+	}
+	if strings.TrimSpace(req.Interval) == "" {
+		req.Interval = "month"
+	}
+
+	featuresJSON := "{}"
+	if req.Features != nil {
+		if jsonBytes, err := json.Marshal(req.Features); err == nil {
+			featuresJSON = string(jsonBytes)
+		}
+	}
+
+	limitsJSON := "{}"
+	if req.Limits != nil {
+		if jsonBytes, err := json.Marshal(req.Limits); err == nil {
+			limitsJSON = string(jsonBytes)
+		}
+	}
+
+	isActive := true
+	if !req.IsActive {
+		isActive = false
+	}
+
+	// Persist the plan first.
+	_, err := h.db.Exec(`
+		INSERT INTO public.billing_plans (
+			id, name, description, price_cents, currency, interval,
+			stripe_price_id, stripe_product_id,
+			features, limits, is_active, is_custom_price,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+		ON CONFLICT (id) DO UPDATE SET
+			name = EXCLUDED.name,
+			description = EXCLUDED.description,
+			price_cents = EXCLUDED.price_cents,
+			currency = EXCLUDED.currency,
+			interval = EXCLUDED.interval,
+			stripe_price_id = EXCLUDED.stripe_price_id,
+			stripe_product_id = EXCLUDED.stripe_product_id,
+			features = EXCLUDED.features,
+			limits = EXCLUDED.limits,
+			is_active = EXCLUDED.is_active,
+			is_custom_price = EXCLUDED.is_custom_price,
+			updated_at = NOW()
+	`, req.ID, req.Name, req.Description, req.PriceCents, req.Currency, req.Interval, req.StripePriceID, nil, featuresJSON, limitsJSON, isActive, req.IsCustomPrice)
+	if err != nil {
+		log.Printf("[Billing][CreatePlan] insert error id=%s: %v", req.ID, err)
+		writeError(w, http.StatusInternalServerError, "failed to create plan")
+		return
+	}
+
+	// If this plan has a fixed price, create Stripe Product + Price immediately.
+	// For custom priced plans, Stripe prices are created per-user at subscription time.
+	stripeSynced := false
+	var stripeErrStr string
+	var createdStripeProductID, createdStripePriceID *string
+	if !req.IsCustomPrice {
+		initStripe()
+		if stripeClient != nil {
+			productParams := &stripe.ProductParams{
+				Name: stripe.String(req.Name),
+				Type: stripe.String(string(stripe.ProductTypeService)),
+				Metadata: map[string]string{
+					"internal": "simple-truvis-co",
+					"plan_id":  req.ID,
+				},
+			}
+			if req.Description != nil && *req.Description != "" {
+				productParams.Description = stripe.String(*req.Description)
+			}
+			// Store limits JSON in product metadata.
+			if limitsJSON != "{}" {
+				productParams.Metadata["limits"] = limitsJSON
+			}
+
+			product, err := stripeClient.Products.New(productParams)
+			if err != nil {
+				stripeErrStr = err.Error()
+				log.Printf("[Billing][CreatePlan] Stripe product create failed id=%s: %v", req.ID, err)
+			} else {
+				createdStripeProductID = &product.ID
+
+				priceParams := &stripe.PriceParams{
+					Product:    stripe.String(product.ID),
+					UnitAmount: stripe.Int64(int64(req.PriceCents)),
+					Currency:   stripe.String(req.Currency),
+					Nickname:   stripe.String(req.Name),
+					Recurring: &stripe.PriceRecurringParams{
+						Interval: stripe.String(req.Interval),
+					},
+				}
+				price, err := stripeClient.Prices.New(priceParams)
+				if err != nil {
+					stripeErrStr = err.Error()
+					log.Printf("[Billing][CreatePlan] Stripe price create failed id=%s: %v", req.ID, err)
+				} else {
+					createdStripePriceID = &price.ID
+					stripeSynced = true
+					// Persist Stripe IDs back into billing_plans.
+					if _, err := h.db.Exec(`
+						UPDATE public.billing_plans
+						SET stripe_price_id = $1, stripe_product_id = $2, updated_at = NOW()
+						WHERE id = $3
+					`, price.ID, product.ID, req.ID); err != nil {
+						stripeSynced = false
+						stripeErrStr = err.Error()
+						log.Printf("[Billing][CreatePlan] failed to persist Stripe IDs for id=%s: %v", req.ID, err)
+					}
+				}
+			}
+		}
+	}
+
+	log.Printf("[Billing][CreatePlan] created/updated plan id=%s", req.ID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Plan created successfully",
+		"plan": map[string]interface{}{
+			"id":              req.ID,
+			"name":            req.Name,
+			"description":     req.Description,
+			"priceCents":      req.PriceCents,
+			"currency":        req.Currency,
+			"interval":        req.Interval,
+			"limits":          req.Limits,
+			"isActive":        isActive,
+			"isCustomPrice":   req.IsCustomPrice,
+			"stripeProductId": createdStripeProductID,
+			"stripePriceId":   createdStripePriceID,
+			"stripeSynced":    stripeSynced,
+		},
+		"stripeError": stripeErrStr,
+	})
+}
+
+// CreateCustomPlanRequest stores a user's request for a custom plan so admins can review it.
+func (h *Handler) CreateCustomPlanRequest(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	userID := pathVar(r, "userId")
+	if strings.TrimSpace(userID) == "" {
+		writeError(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+
+	var req struct {
+		RequestedSocialAccounts int     `json:"requestedSocialAccounts"`
+		RequestedPostsPerMonth  int     `json:"requestedPostsPerMonth"`
+		RequestedStorageGB      int     `json:"requestedStorageGb"`
+		Notes                   *string `json:"notes"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if req.RequestedSocialAccounts < 0 || req.RequestedPostsPerMonth < 0 || req.RequestedStorageGB < 0 {
+		writeError(w, http.StatusBadRequest, "requested values must be non-negative")
+		return
+	}
+
+	requestID := fmt.Sprintf("cpr_%d", time.Now().UTC().UnixNano())
+	_, err := h.db.Exec(`
+		INSERT INTO public.custom_plan_requests (
+			id, user_id, requested_social_accounts, requested_posts_per_month, requested_storage_gb,
+			notes, status, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, 'pending', NOW(), NOW())
+	`, requestID, userID, req.RequestedSocialAccounts, req.RequestedPostsPerMonth, req.RequestedStorageGB, req.Notes)
+	if err != nil {
+		log.Printf("[Billing][CustomPlanRequest] insert error userId=%s err=%v", userID, err)
+		writeError(w, http.StatusInternalServerError, "failed to create request")
+		return
+	}
+
+	// Notify admins.
+	adminRows, err := h.db.Query(`
+		SELECT id
+		FROM public.users
+		WHERE (profile ILIKE '%"role"%"admin"%' OR profile ILIKE '%"adminLevel"%"superuser"%')
+	`)
+	if err == nil {
+		defer adminRows.Close()
+		for adminRows.Next() {
+			var adminID string
+			if err := adminRows.Scan(&adminID); err != nil {
+				continue
+			}
+			body := fmt.Sprintf(
+				"User %s requested a custom plan. Social accounts: %d. Posts/month: %d. Storage (GB): %d.",
+				userID,
+				req.RequestedSocialAccounts,
+				req.RequestedPostsPerMonth,
+				req.RequestedStorageGB,
+			)
+			urlStr := "/admin/billing"
+			h.createNotificationOnce(adminID, "billing.custom_plan_request", "Custom plan request", &body, &urlStr)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"requestId": requestID,
+		"status":    "pending",
+	})
+}
+
+// GetCustomPlanRequests returns all custom plan requests (admin endpoint).
+func (h *Handler) GetCustomPlanRequests(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	adminUserID := strings.TrimSpace(pathVar(r, "userId"))
+	if adminUserID == "" {
+		writeError(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+	if !h.isAdminUser(adminUserID) {
+		writeError(w, http.StatusForbidden, "admin access required")
+		return
+	}
+
+	statusFilter := strings.TrimSpace(r.URL.Query().Get("status"))
+
+	query := `
+		SELECT id, user_id, requested_social_accounts, requested_posts_per_month, requested_storage_gb,
+		       notes, status, created_at, updated_at
+		FROM public.custom_plan_requests
+	`
+	args := []interface{}{}
+	if statusFilter != "" {
+		query += " WHERE status = $1"
+		args = append(args, statusFilter)
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := h.db.Query(query, args...)
+	if err != nil {
+		log.Printf("[Billing][CustomPlanRequests] query error: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to load requests")
+		return
+	}
+	defer rows.Close()
+
+	requests := []CustomPlanRequest{}
+	for rows.Next() {
+		var c CustomPlanRequest
+		var notes sql.NullString
+		if err := rows.Scan(
+			&c.ID,
+			&c.UserID,
+			&c.RequestedSocialAccounts,
+			&c.RequestedPostsPerMonth,
+			&c.RequestedStorageGB,
+			&notes,
+			&c.Status,
+			&c.CreatedAt,
+			&c.UpdatedAt,
+		); err != nil {
+			log.Printf("[Billing][CustomPlanRequests] scan error: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to load requests")
+			return
+		}
+		if notes.Valid {
+			c.Notes = &notes.String
+		}
+		requests = append(requests, c)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":  true,
+		"requests": requests,
+	})
+}
+
+// UpdateCustomPlanRequest updates status/notes for a custom plan request (admin endpoint).
+func (h *Handler) UpdateCustomPlanRequest(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPut) {
+		return
+	}
+
+	adminUserID := strings.TrimSpace(pathVar(r, "userId"))
+	if adminUserID == "" {
+		writeError(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+	if !h.isAdminUser(adminUserID) {
+		writeError(w, http.StatusForbidden, "admin access required")
+		return
+	}
+
+	requestID := strings.TrimSpace(pathVar(r, "requestId"))
+	if requestID == "" {
+		writeError(w, http.StatusBadRequest, "requestId is required")
+		return
+	}
+
+	var req struct {
+		Status string  `json:"status"`
+		Notes  *string `json:"notes"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	status := strings.TrimSpace(req.Status)
+	if status == "" {
+		writeError(w, http.StatusBadRequest, "status is required")
+		return
+	}
+
+	allowed := map[string]bool{
+		"pending":   true,
+		"reviewing": true,
+		"approved":  true,
+		"rejected":  true,
+	}
+	if !allowed[strings.ToLower(status)] {
+		writeError(w, http.StatusBadRequest, "invalid status")
+		return
+	}
+
+	_, err := h.db.Exec(`
+		UPDATE public.custom_plan_requests
+		SET status = $2,
+		    notes = COALESCE($3, notes),
+		    updated_at = NOW()
+		WHERE id = $1
+	`, requestID, strings.ToLower(status), req.Notes)
+	if err != nil {
+		log.Printf("[Billing][CustomPlanRequests] update error requestId=%s err=%v", requestID, err)
+		writeError(w, http.StatusInternalServerError, "failed to update request")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+	})
+}
+
+// ApproveCustomPlanRequest approves a request and assigns a per-user plan custom_<userId> (admin endpoint).
+func (h *Handler) ApproveCustomPlanRequest(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	adminUserID := strings.TrimSpace(pathVar(r, "userId"))
+	if adminUserID == "" {
+		writeError(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+	if !h.isAdminUser(adminUserID) {
+		writeError(w, http.StatusForbidden, "admin access required")
+		return
+	}
+
+	requestID := strings.TrimSpace(pathVar(r, "requestId"))
+	if requestID == "" {
+		writeError(w, http.StatusBadRequest, "requestId is required")
+		return
+	}
+
+	var req struct {
+		PriceCents int                    `json:"priceCents"`
+		Currency   string                 `json:"currency"`
+		Interval   string                 `json:"interval"`
+		Limits     map[string]interface{} `json:"limits"`
+		Notes      *string                `json:"notes"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if req.PriceCents < 0 {
+		writeError(w, http.StatusBadRequest, "priceCents must be non-negative")
+		return
+	}
+	currency := strings.TrimSpace(strings.ToLower(req.Currency))
+	if currency == "" {
+		currency = "usd"
+	}
+	interval := strings.TrimSpace(strings.ToLower(req.Interval))
+	if interval == "" {
+		interval = "month"
+	}
+	if interval != "month" && interval != "year" {
+		writeError(w, http.StatusBadRequest, "interval must be month or year")
+		return
+	}
+
+	// Load request to get target user.
+	var targetUserID string
+	err := h.db.QueryRow(`
+		SELECT user_id
+		FROM public.custom_plan_requests
+		WHERE id = $1
+	`, requestID).Scan(&targetUserID)
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, "request not found")
+		return
+	}
+	if err != nil {
+		log.Printf("[Billing][CustomPlanRequests] load error requestId=%s err=%v", requestID, err)
+		writeError(w, http.StatusInternalServerError, "failed to load request")
+		return
+	}
+
+	planID := fmt.Sprintf("custom_%s", targetUserID)
+	planName := "Custom Plan"
+	planDesc := fmt.Sprintf("Custom plan for user %s", targetUserID)
+	limitsJSON, _ := json.Marshal(req.Limits)
+
+	// Upsert plan.
+	_, err = h.db.Exec(`
+		INSERT INTO public.billing_plans (
+			id, name, description, price_cents, currency, interval, stripe_price_id, features, limits, is_active, is_custom_price,
+			created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, NULL, NULL, $7::jsonb, true, true,
+			NOW(), NOW()
+		)
+		ON CONFLICT (id) DO UPDATE SET
+			name = EXCLUDED.name,
+			description = EXCLUDED.description,
+			price_cents = EXCLUDED.price_cents,
+			currency = EXCLUDED.currency,
+			interval = EXCLUDED.interval,
+			limits = EXCLUDED.limits,
+			is_active = true,
+			is_custom_price = true,
+			updated_at = NOW()
+	`, planID, planName, planDesc, req.PriceCents, currency, interval, string(limitsJSON))
+	if err != nil {
+		log.Printf("[Billing][CustomPlanRequests] plan upsert error requestId=%s planId=%s err=%v", requestID, planID, err)
+		writeError(w, http.StatusInternalServerError, "failed to create plan")
+		return
+	}
+
+	// If the user already has a Stripe subscription, update its price so Stripe reflects the approved amount.
+	// Stripe prices are immutable, so this creates a new Price under the plan's Product and swaps the subscription item.
+	stripeUpdated := false
+	stripePriceID := ""
+	stripeUpdateError := ""
+	initStripe()
+	if stripeClient != nil {
+		var stripeProductID sql.NullString
+		var stripeSubID sql.NullString
+		err := h.db.QueryRow(`
+			SELECT bp.stripe_product_id, s.stripe_subscription_id
+			FROM public.billing_plans bp
+			LEFT JOIN public.subscriptions s ON s.user_id = $1
+			WHERE bp.id = $2
+		`, targetUserID, planID).Scan(&stripeProductID, &stripeSubID)
+		if err == nil {
+			productID := ""
+			if stripeProductID.Valid {
+				productID = strings.TrimSpace(stripeProductID.String)
+			}
+			if productID == "" {
+				productParams := &stripe.ProductParams{
+					Name: stripe.String(planName),
+					Type: stripe.String(string(stripe.ProductTypeService)),
+					Metadata: map[string]string{
+						"internal": "simple-truvis-co",
+						"plan_id":  planID,
+					},
+				}
+				product, pErr := stripeClient.Products.New(productParams)
+				if pErr != nil {
+					stripeUpdateError = "stripe product create failed: " + pErr.Error()
+				} else if product != nil {
+					productID = product.ID
+					_, _ = h.db.Exec(`
+						UPDATE public.billing_plans
+						SET stripe_product_id = $1, updated_at = NOW()
+						WHERE id = $2
+					`, productID, planID)
+				}
+			}
+
+			if productID != "" {
+				priceParams := &stripe.PriceParams{
+					Product:    stripe.String(productID),
+					UnitAmount: stripe.Int64(int64(req.PriceCents)),
+					Currency:   stripe.String(currency),
+					Nickname:   stripe.String(planName),
+					Recurring: &stripe.PriceRecurringParams{
+						Interval: stripe.String(interval),
+					},
+				}
+				price, prErr := stripeClient.Prices.New(priceParams)
+				if prErr != nil {
+					stripeUpdateError = "stripe price create failed: " + prErr.Error()
+				} else if price != nil {
+					stripePriceID = price.ID
+					_, _ = h.db.Exec(`
+						UPDATE public.billing_plans
+						SET stripe_price_id = $1, stripe_product_id = $2, updated_at = NOW()
+						WHERE id = $3
+					`, price.ID, productID, planID)
+
+					if stripeSubID.Valid && strings.TrimSpace(stripeSubID.String) != "" {
+						stripeSub, sErr := stripeClient.Subscriptions.Get(stripeSubID.String, &stripe.SubscriptionParams{
+							Expand: []*string{stripe.String("items")},
+						})
+						if sErr != nil {
+							stripeUpdateError = "stripe subscription load failed: " + sErr.Error()
+						} else if stripeSub != nil && stripeSub.Status != stripe.SubscriptionStatusCanceled {
+							itemID := ""
+							if stripeSub.Items != nil && len(stripeSub.Items.Data) > 0 {
+								itemID = stripeSub.Items.Data[0].ID
+							}
+							if strings.TrimSpace(itemID) == "" {
+								stripeUpdateError = "stripe subscription has no items"
+							} else {
+								updateParams := &stripe.SubscriptionParams{
+									Items: []*stripe.SubscriptionItemsParams{
+										{
+											ID:    stripe.String(itemID),
+											Price: stripe.String(price.ID),
+										},
+									},
+									ProrationBehavior: stripe.String("none"),
+								}
+								updated, uErr := stripeClient.Subscriptions.Update(stripeSubID.String, updateParams)
+								if uErr != nil {
+									stripeUpdateError = "stripe subscription update failed: " + uErr.Error()
+								} else if updated != nil {
+									stripeUpdated = true
+									var canceledAt *time.Time
+									if updated.CanceledAt != 0 {
+										t := time.Unix(updated.CanceledAt, 0)
+										canceledAt = &t
+									}
+									var cps *time.Time
+									var cpe *time.Time
+									if updated.CurrentPeriodStart != 0 {
+										t := time.Unix(updated.CurrentPeriodStart, 0)
+										cps = &t
+									}
+									if updated.CurrentPeriodEnd != 0 {
+										t := time.Unix(updated.CurrentPeriodEnd, 0)
+										cpe = &t
+									}
+									if string(updated.Status) != string(stripe.SubscriptionStatusCanceled) {
+										canceledAt = nil
+									}
+									_, _ = h.db.Exec(`
+										UPDATE public.subscriptions
+										SET status = $2,
+											current_period_start = COALESCE($3, current_period_start),
+											current_period_end = COALESCE($4, current_period_end),
+											cancel_at_period_end = $5,
+											canceled_at = $6,
+											updated_at = NOW()
+										WHERE user_id = $1
+									`, targetUserID, string(updated.Status), cps, cpe, updated.CancelAtPeriodEnd, canceledAt)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Upsert subscription to point at the new plan.
+	subscriptionID := fmt.Sprintf("sub_custom_%s", targetUserID)
+	_, err = h.db.Exec(`
+		INSERT INTO public.subscriptions (
+			id, user_id, plan_id, stripe_subscription_id, stripe_customer_id, status,
+			current_period_start, current_period_end, cancel_at_period_end, canceled_at,
+			trial_start, trial_end, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, NULL, NULL, 'active',
+			NOW(), NOW() + interval '30 days', false, NULL,
+			NULL, NULL, NOW(), NOW()
+		)
+		ON CONFLICT (user_id) DO UPDATE SET
+			plan_id = EXCLUDED.plan_id,
+			status = 'active',
+			cancel_at_period_end = false,
+			canceled_at = NULL,
+			updated_at = NOW()
+	`, subscriptionID, targetUserID, planID)
+	if err != nil {
+		log.Printf("[Billing][CustomPlanRequests] subscription upsert error requestId=%s userId=%s err=%v", requestID, targetUserID, err)
+		writeError(w, http.StatusInternalServerError, "failed to assign plan")
+		return
+	}
+
+	// Mark request approved.
+	_, err = h.db.Exec(`
+		UPDATE public.custom_plan_requests
+		SET status = 'approved',
+		    notes = COALESCE($2, notes),
+		    updated_at = NOW()
+		WHERE id = $1
+	`, requestID, req.Notes)
+	if err != nil {
+		log.Printf("[Billing][CustomPlanRequests] approve update error requestId=%s err=%v", requestID, err)
+		writeError(w, http.StatusInternalServerError, "failed to mark request approved")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":                   true,
+		"requestId":                 requestID,
+		"userId":                    targetUserID,
+		"assignedPlanId":            planID,
+		"stripePriceId":             stripePriceID,
+		"updatedStripeSubscription": stripeUpdated,
+		"stripeUpdateError":         stripeUpdateError,
+	})
+}
+
+// FixSubscriptionAmount allows an admin to correct a user's custom plan price and optionally update Stripe.
+func (h *Handler) FixSubscriptionAmount(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	adminUserID := strings.TrimSpace(pathVar(r, "userId"))
+	if !h.isAdminUser(adminUserID) {
+		writeError(w, http.StatusForbidden, "admin access required")
+		return
+	}
+
+	targetUserID := strings.TrimSpace(pathVar(r, "targetUserId"))
+	if targetUserID == "" {
+		writeError(w, http.StatusBadRequest, "targetUserId is required")
+		return
+	}
+
+	var req struct {
+		PriceCents int     `json:"priceCents"`
+		Currency   string  `json:"currency"`
+		Interval   string  `json:"interval"`
+		ApplyToSub bool    `json:"applyToSubscription"`
+		Proration  *string `json:"prorationBehavior,omitempty"` // e.g. "none", "create_prorations", "always_invoice"
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.PriceCents < 0 {
+		writeError(w, http.StatusBadRequest, "priceCents must be non-negative")
+		return
+	}
+	if strings.TrimSpace(req.Currency) == "" {
+		req.Currency = "usd"
+	}
+	if strings.TrimSpace(req.Interval) == "" {
+		req.Interval = "month"
+	}
+	interval := strings.TrimSpace(strings.ToLower(req.Interval))
+	if interval == "" {
+		interval = "month"
+	}
+
+	planID := fmt.Sprintf("custom_%s", targetUserID)
+
+	// Load current plan + subscription (if any)
+	var planName string
+	var stripeProductID sql.NullString
+	var stripeSubID sql.NullString
+	err := h.db.QueryRow(`
+		SELECT bp.name, bp.stripe_product_id,
+		       s.stripe_subscription_id
+		FROM public.billing_plans bp
+		LEFT JOIN public.subscriptions s ON s.user_id = $1
+		WHERE bp.id = $2
+	`, targetUserID, planID).Scan(&planName, &stripeProductID, &stripeSubID)
+	if err != nil {
+		log.Printf("[Billing][FixSubscriptionAmount] plan lookup error adminUserId=%s targetUserId=%s planId=%s: %v", adminUserID, targetUserID, planID, err)
+		writeError(w, http.StatusNotFound, "custom plan not found")
+		return
+	}
+
+	initStripe()
+	if stripeClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "Stripe not configured")
+		return
+	}
+
+	// Ensure Stripe product exists (create if missing)
+	productID := ""
+	if stripeProductID.Valid {
+		productID = strings.TrimSpace(stripeProductID.String)
+	}
+	if productID == "" {
+		productParams := &stripe.ProductParams{
+			Name: stripe.String(planName),
+			Type: stripe.String(string(stripe.ProductTypeService)),
+			Metadata: map[string]string{
+				"internal": "simple-truvis-co",
+				"plan_id":  planID,
+			},
+		}
+		product, err := stripeClient.Products.New(productParams)
+		if err != nil {
+			log.Printf("[Billing][FixSubscriptionAmount] Stripe product create failed planId=%s: %v", planID, err)
+			writeError(w, http.StatusInternalServerError, "Failed to configure plan")
+			return
+		}
+		productID = product.ID
+		if _, err := h.db.Exec(`
+			UPDATE public.billing_plans
+			SET stripe_product_id = $1, updated_at = NOW()
+			WHERE id = $2
+		`, productID, planID); err != nil {
+			log.Printf("[Billing][FixSubscriptionAmount] failed to persist Stripe product id planId=%s: %v", planID, err)
+			writeError(w, http.StatusInternalServerError, "Failed to configure plan")
+			return
+		}
+	}
+
+	// Create a new Stripe price for the updated amount.
+	priceParams := &stripe.PriceParams{
+		Product:    stripe.String(productID),
+		UnitAmount: stripe.Int64(int64(req.PriceCents)),
+		Currency:   stripe.String(strings.ToLower(req.Currency)),
+		Nickname:   stripe.String(planName),
+		Recurring: &stripe.PriceRecurringParams{
+			Interval: stripe.String(interval),
+		},
+	}
+	price, err := stripeClient.Prices.New(priceParams)
+	if err != nil {
+		log.Printf("[Billing][FixSubscriptionAmount] Stripe price create failed planId=%s: %v", planID, err)
+		writeError(w, http.StatusInternalServerError, "Failed to configure plan")
+		return
+	}
+
+	// Persist updated amount + new stripe_price_id.
+	if _, err := h.db.Exec(`
+		UPDATE public.billing_plans
+		SET price_cents = $1,
+			currency = $2,
+			interval = $3,
+			stripe_price_id = $4,
+			updated_at = NOW()
+		WHERE id = $5
+	`, req.PriceCents, strings.ToLower(req.Currency), interval, price.ID, planID); err != nil {
+		log.Printf("[Billing][FixSubscriptionAmount] plan update error planId=%s: %v", planID, err)
+		writeError(w, http.StatusInternalServerError, "Failed to update plan")
+		return
+	}
+
+	updatedStripeSubscription := false
+	if req.ApplyToSub && stripeSubID.Valid && strings.TrimSpace(stripeSubID.String) != "" {
+		stripeSub, err := stripeClient.Subscriptions.Get(stripeSubID.String, &stripe.SubscriptionParams{
+			Expand: []*string{stripe.String("items")},
+		})
+		if err != nil {
+			log.Printf("[Billing][FixSubscriptionAmount] Stripe get subscription failed targetUserId=%s stripeSubId=%s: %v", targetUserID, stripeSubID.String, err)
+			writeError(w, http.StatusInternalServerError, "Failed to load subscription")
+			return
+		}
+		if stripeSub != nil && stripeSub.Status != stripe.SubscriptionStatusCanceled {
+			itemID := ""
+			if stripeSub.Items != nil && len(stripeSub.Items.Data) > 0 {
+				itemID = stripeSub.Items.Data[0].ID
+			}
+			if strings.TrimSpace(itemID) == "" {
+				writeError(w, http.StatusInternalServerError, "Stripe subscription has no items")
+				return
+			}
+
+			params := &stripe.SubscriptionParams{
+				Items: []*stripe.SubscriptionItemsParams{
+					{
+						ID:    stripe.String(itemID),
+						Price: stripe.String(price.ID),
+					},
+				},
+			}
+			proration := "none"
+			if req.Proration != nil && strings.TrimSpace(*req.Proration) != "" {
+				proration = strings.TrimSpace(*req.Proration)
+			}
+			params.ProrationBehavior = stripe.String(proration)
+
+			updated, err := stripeClient.Subscriptions.Update(stripeSubID.String, params)
+			if err != nil {
+				log.Printf("[Billing][FixSubscriptionAmount] Stripe subscription update failed targetUserId=%s stripeSubId=%s: %v", targetUserID, stripeSubID.String, err)
+				writeError(w, http.StatusInternalServerError, "Failed to update subscription")
+				return
+			}
+			updatedStripeSubscription = true
+
+			// Sync DB subscription status/period fields from Stripe.
+			var canceledAt *time.Time
+			if updated.CanceledAt != 0 {
+				t := time.Unix(updated.CanceledAt, 0)
+				canceledAt = &t
+			}
+			var cps *time.Time
+			var cpe *time.Time
+			if updated.CurrentPeriodStart != 0 {
+				t := time.Unix(updated.CurrentPeriodStart, 0)
+				cps = &t
+			}
+			if updated.CurrentPeriodEnd != 0 {
+				t := time.Unix(updated.CurrentPeriodEnd, 0)
+				cpe = &t
+			}
+			if string(updated.Status) != string(stripe.SubscriptionStatusCanceled) {
+				canceledAt = nil
+			}
+
+			if _, err := h.db.Exec(`
+				UPDATE public.subscriptions
+				SET status = $2,
+					current_period_start = COALESCE($3, current_period_start),
+					current_period_end = COALESCE($4, current_period_end),
+					cancel_at_period_end = $5,
+					canceled_at = $6,
+					updated_at = NOW()
+				WHERE user_id = $1
+			`, targetUserID, string(updated.Status), cps, cpe, updated.CancelAtPeriodEnd, canceledAt); err != nil {
+				log.Printf("[Billing][FixSubscriptionAmount] DB subscription sync failed targetUserId=%s: %v", targetUserID, err)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":                   true,
+		"targetUserId":              targetUserID,
+		"planId":                    planID,
+		"stripeProductId":           productID,
+		"stripePriceId":             price.ID,
+		"updatedStripeSubscription": updatedStripeSubscription,
+	})
+}
+
 // GetUserSubscription returns the current user's subscription
 func (h *Handler) GetUserSubscription(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
@@ -190,7 +1093,7 @@ func (h *Handler) GetUserSubscription(w http.ResponseWriter, r *http.Request) {
 	var periodStart, periodEnd, canceledAt, trialStart, trialEnd sql.NullTime
 
 	err := h.db.QueryRow(`
-		SELECT id, user_id, plan_id, stripe_subscription_id, stripe_customer_id, status,
+		SELECT id, user_id, COALESCE(NULLIF(plan_id, ''), 'free') as plan_id, stripe_subscription_id, stripe_customer_id, status,
 		       current_period_start, current_period_end, cancel_at_period_end, canceled_at,
 		       trial_start, trial_end, created_at, updated_at
 		FROM public.subscriptions
@@ -297,11 +1200,13 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 	// Handle paid plans with Stripe
 	// First, get the plan details
 	var plan BillingPlan
+	var isCustomPrice bool
+	var stripeProductID sql.NullString
 	err := h.db.QueryRow(`
-		SELECT id, name, price_cents, currency, stripe_price_id
+		SELECT id, name, price_cents, currency, interval, stripe_price_id, is_custom_price, stripe_product_id
 		FROM public.billing_plans
 		WHERE id = $1 AND is_active = true
-	`, req.PlanID).Scan(&plan.ID, &plan.Name, &plan.PriceCents, &plan.Currency, &plan.StripePriceID)
+	`, req.PlanID).Scan(&plan.ID, &plan.Name, &plan.PriceCents, &plan.Currency, &plan.Interval, &plan.StripePriceID, &isCustomPrice, &stripeProductID)
 
 	if err != nil {
 		log.Printf("[Billing][CreateSubscription] plan lookup error userId=%s planId=%s: %v", userID, req.PlanID, err)
@@ -310,31 +1215,110 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if plan.StripePriceID == nil || *plan.StripePriceID == "" {
-		writeError(w, http.StatusBadRequest, "Plan not configured for payment")
-		return
+		// For custom priced plans, we may not have created a Stripe product/price yet.
+		// Create them lazily so the user can complete checkout.
+		if !isCustomPrice {
+			writeError(w, http.StatusBadRequest, "Plan not configured for payment")
+			return
+		}
+		initStripe()
+		if stripeClient == nil {
+			writeError(w, http.StatusServiceUnavailable, "Stripe not configured")
+			return
+		}
+
+		productID := ""
+		if stripeProductID.Valid {
+			productID = stripeProductID.String
+		}
+		if strings.TrimSpace(productID) == "" {
+			productParams := &stripe.ProductParams{
+				Name: stripe.String(plan.Name),
+				Type: stripe.String(string(stripe.ProductTypeService)),
+				Metadata: map[string]string{
+					"internal": "simple-truvis-co",
+					"plan_id":  plan.ID,
+				},
+			}
+			product, err := stripeClient.Products.New(productParams)
+			if err != nil {
+				log.Printf("[Billing][CreateSubscription] Stripe product create failed planId=%s: %v", plan.ID, err)
+				writeError(w, http.StatusInternalServerError, "Failed to configure plan")
+				return
+			}
+			productID = product.ID
+		}
+
+		interval := strings.TrimSpace(strings.ToLower(plan.Interval))
+		if interval == "" {
+			interval = "month"
+		}
+		priceParams := &stripe.PriceParams{
+			Product:    stripe.String(productID),
+			UnitAmount: stripe.Int64(int64(plan.PriceCents)),
+			Currency:   stripe.String(plan.Currency),
+			Nickname:   stripe.String(plan.Name),
+			Recurring: &stripe.PriceRecurringParams{
+				Interval: stripe.String(interval),
+			},
+		}
+		price, err := stripeClient.Prices.New(priceParams)
+		if err != nil {
+			log.Printf("[Billing][CreateSubscription] Stripe price create failed planId=%s: %v", plan.ID, err)
+			writeError(w, http.StatusInternalServerError, "Failed to configure plan")
+			return
+		}
+
+		// Persist Stripe IDs back into billing_plans.
+		if _, err := h.db.Exec(`
+			UPDATE public.billing_plans
+			SET stripe_price_id = $1, stripe_product_id = $2, updated_at = NOW()
+			WHERE id = $3
+		`, price.ID, productID, plan.ID); err != nil {
+			log.Printf("[Billing][CreateSubscription] failed to persist Stripe IDs planId=%s: %v", plan.ID, err)
+			writeError(w, http.StatusInternalServerError, "Failed to configure plan")
+			return
+		}
+		plan.StripePriceID = &price.ID
 	}
 
-	// Check if user already has a subscription
+	// Check if user already has a subscription row.
+	// If it exists but has no Stripe subscription yet, we allow this call to "finalize" payment.
 	var existingSubID string
-	err = h.db.QueryRow(`SELECT id FROM public.subscriptions WHERE user_id = $1`, userID).Scan(&existingSubID)
+	var existingStripeSubID sql.NullString
+	var existingStripeCustomerID sql.NullString
+	err = h.db.QueryRow(`
+		SELECT id, stripe_subscription_id, stripe_customer_id
+		FROM public.subscriptions
+		WHERE user_id = $1
+	`, userID).Scan(&existingSubID, &existingStripeSubID, &existingStripeCustomerID)
 	if err != nil && err != sql.ErrNoRows {
 		log.Printf("[Billing][CreateSubscription] subscription check error userId=%s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
 	if err == nil {
-		// User already has a subscription, update it
-		writeError(w, http.StatusBadRequest, "User already has an active subscription")
-		return
+		if existingStripeSubID.Valid && strings.TrimSpace(existingStripeSubID.String) != "" {
+			// If the Stripe subscription is canceled, allow re-subscribing.
+			stripeSub, getErr := stripeClient.Subscriptions.Get(existingStripeSubID.String, nil)
+			if getErr != nil {
+				log.Printf("[Billing][CreateSubscription] Stripe get error userId=%s stripeSubId=%s: %v", userID, existingStripeSubID.String, getErr)
+				writeError(w, http.StatusBadRequest, "User already has an active subscription")
+				return
+			}
+			if stripeSub != nil && stripeSub.Status != stripe.SubscriptionStatusCanceled {
+				writeError(w, http.StatusBadRequest, "User already has an active subscription")
+				return
+			}
+		}
 	}
 
 	// Create Stripe customer and subscription
 	// Get or create Stripe customer
 	var customerID string
-	err = h.db.QueryRow(`SELECT stripe_customer_id FROM public.subscriptions WHERE user_id = $1 AND stripe_customer_id IS NOT NULL`, userID).Scan(&customerID)
-	if err == sql.ErrNoRows {
-		// Create new customer
+	if existingStripeCustomerID.Valid && strings.TrimSpace(existingStripeCustomerID.String) != "" {
+		customerID = existingStripeCustomerID.String
+	} else {
 		customerParams := &stripe.CustomerParams{
 			Email: stripe.String(fmt.Sprintf("user-%s@example.com", userID)), // TODO: Get real email from user
 		}
@@ -393,14 +1377,32 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Save subscription to database
-	subID := fmt.Sprintf("sub_%s", subscription.ID)
-	_, err = h.db.Exec(`
-		INSERT INTO public.subscriptions (
-			id, user_id, plan_id, stripe_subscription_id, stripe_customer_id, status,
-			current_period_start, current_period_end, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-	`, subID, userID, req.PlanID, subscription.ID, customerID, subscription.Status,
-		time.Unix(subscription.CurrentPeriodStart, 0), time.Unix(subscription.CurrentPeriodEnd, 0))
+	periodStart := time.Unix(subscription.CurrentPeriodStart, 0)
+	periodEnd := time.Unix(subscription.CurrentPeriodEnd, 0)
+	if strings.TrimSpace(existingSubID) != "" {
+		_, err = h.db.Exec(`
+			UPDATE public.subscriptions
+			SET plan_id = $2,
+				stripe_subscription_id = $3,
+				stripe_customer_id = $4,
+				status = $5,
+				current_period_start = $6,
+				current_period_end = $7,
+				cancel_at_period_end = false,
+				canceled_at = NULL,
+				updated_at = NOW()
+			WHERE id = $1
+		`, existingSubID, req.PlanID, subscription.ID, customerID, subscription.Status, periodStart, periodEnd)
+	} else {
+		subID := fmt.Sprintf("sub_%s", subscription.ID)
+		existingSubID = subID
+		_, err = h.db.Exec(`
+			INSERT INTO public.subscriptions (
+				id, user_id, plan_id, stripe_subscription_id, stripe_customer_id, status,
+				current_period_start, current_period_end, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+		`, subID, userID, req.PlanID, subscription.ID, customerID, subscription.Status, periodStart, periodEnd)
+	}
 
 	if err != nil {
 		log.Printf("[Billing][CreateSubscription] database save error userId=%s: %v", userID, err)
@@ -410,7 +1412,7 @@ func (h *Handler) CreateSubscription(w http.ResponseWriter, r *http.Request) {
 
 	// Return subscription data with client secret for payment confirmation
 	response := map[string]interface{}{
-		"subscriptionId":       subID,
+		"subscriptionId":       existingSubID,
 		"stripeSubscriptionId": subscription.ID,
 		"clientSecret":         subscription.LatestInvoice.PaymentIntent.ClientSecret,
 		"status":               subscription.Status,
@@ -466,44 +1468,87 @@ func (h *Handler) CancelSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cancel in Stripe
-	if req.CancelAtPeriodEnd {
-		// For canceling at period end, we need to update the subscription instead of canceling
-		updateParams := &stripe.SubscriptionParams{
-			CancelAtPeriodEnd: stripe.Bool(true),
-		}
-		_, err = stripeClient.Subscriptions.Update(stripeSubID, updateParams)
-	} else {
-		params := &stripe.SubscriptionCancelParams{}
-		_, err = stripeClient.Subscriptions.Cancel(stripeSubID, params)
-	}
+	stripeSub, err := stripeClient.Subscriptions.Get(stripeSubID, nil)
 	if err != nil {
-		log.Printf("[Billing][CancelSubscription] Stripe cancel error userId=%s: %v", userID, err)
-		writeError(w, http.StatusInternalServerError, "Failed to cancel subscription")
+		log.Printf("[Billing][CancelSubscription] Stripe get error userId=%s: %v", userID, err)
+		writeError(w, http.StatusInternalServerError, "Failed to load subscription")
 		return
 	}
 
-	// Update database
-	updateQuery := `
-		UPDATE public.subscriptions
-		SET cancel_at_period_end = $2, updated_at = NOW()
-	`
-	args := []interface{}{req.CancelAtPeriodEnd}
-
-	if req.CancelAtPeriodEnd {
-		updateQuery += ", canceled_at = NOW()"
-		args = append(args, userID)
+	// Stripe does not allow updating an already-canceled subscription.
+	stripeIsCanceled := stripeSub != nil && stripeSub.Status == stripe.SubscriptionStatusCanceled
+	if stripeIsCanceled {
+		if !req.CancelAtPeriodEnd {
+			writeError(w, http.StatusBadRequest, "Subscription is already canceled. Please subscribe again.")
+			return
+		}
+		// If the user is requesting cancellation and Stripe already canceled it, treat this as a no-op.
 	} else {
-		args = append(args, userID)
+		updateParams := &stripe.SubscriptionParams{
+			CancelAtPeriodEnd: stripe.Bool(req.CancelAtPeriodEnd),
+		}
+		stripeSub, err = stripeClient.Subscriptions.Update(stripeSubID, updateParams)
+		if err != nil {
+			log.Printf("[Billing][CancelSubscription] Stripe update error userId=%s: %v", userID, err)
+			writeError(w, http.StatusInternalServerError, "Failed to update subscription: "+err.Error())
+			return
+		}
 	}
 
-	_, err = h.db.Exec(updateQuery+" WHERE user_id = $1", args...)
+	// Use Stripe as the source of truth for persisted state.
+	// Note: Stripe may keep current_period_end even for canceled subscriptions.
+	var canceledAt *time.Time
+	if stripeSub != nil && stripeSub.CanceledAt != 0 {
+		t := time.Unix(stripeSub.CanceledAt, 0)
+		canceledAt = &t
+	}
+
+	stripeStatus := ""
+	stripeCancelAtPeriodEnd := false
+	var currentPeriodStart *time.Time
+	var currentPeriodEnd *time.Time
+	if stripeSub != nil {
+		stripeStatus = string(stripeSub.Status)
+		stripeCancelAtPeriodEnd = stripeSub.CancelAtPeriodEnd
+		if stripeSub.CurrentPeriodStart != 0 {
+			t := time.Unix(stripeSub.CurrentPeriodStart, 0)
+			currentPeriodStart = &t
+		}
+		if stripeSub.CurrentPeriodEnd != 0 {
+			t := time.Unix(stripeSub.CurrentPeriodEnd, 0)
+			currentPeriodEnd = &t
+		}
+	}
+
+	// If the subscription isn't actually canceled, we do NOT set canceled_at (even if cancel_at_period_end=true).
+	if stripeStatus != string(stripe.SubscriptionStatusCanceled) {
+		canceledAt = nil
+	}
+
+	_, err = h.db.Exec(`
+		UPDATE public.subscriptions
+		SET status = $2,
+			current_period_start = COALESCE($3, current_period_start),
+			current_period_end = COALESCE($4, current_period_end),
+			cancel_at_period_end = $5,
+			canceled_at = $6,
+			updated_at = NOW()
+		WHERE user_id = $1
+	`, userID, stripeStatus, currentPeriodStart, currentPeriodEnd, stripeCancelAtPeriodEnd, canceledAt)
 	if err != nil {
 		log.Printf("[Billing][CancelSubscription] database update error userId=%s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "success"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":               "success",
+		"stripeStatus":         stripeStatus,
+		"cancelAtPeriodEnd":    stripeCancelAtPeriodEnd,
+		"currentPeriodStart":   currentPeriodStart,
+		"currentPeriodEnd":     currentPeriodEnd,
+		"stripeSubscriptionId": stripeSubID,
+	})
 }
 
 // GetUserInvoices returns billing history for a user
@@ -574,6 +1619,69 @@ func (h *Handler) GetUserInvoices(w http.ResponseWriter, r *http.Request) {
 		}
 		inv.UserID = userID
 
+		invoices = append(invoices, inv)
+	}
+
+	if len(invoices) > 0 {
+		writeJSON(w, http.StatusOK, invoices)
+		return
+	}
+
+	// Fallback: if we don't have invoice rows yet (e.g. webhook not running in dev), fetch from Stripe.
+	initStripe()
+	if stripeClient == nil {
+		writeJSON(w, http.StatusOK, invoices)
+		return
+	}
+
+	var stripeCustomerID sql.NullString
+	err = h.db.QueryRow(`
+		SELECT stripe_customer_id
+		FROM public.subscriptions
+		WHERE user_id = $1
+	`, userID).Scan(&stripeCustomerID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, invoices)
+		return
+	}
+	if !stripeCustomerID.Valid || strings.TrimSpace(stripeCustomerID.String) == "" {
+		writeJSON(w, http.StatusOK, invoices)
+		return
+	}
+
+	params := &stripe.InvoiceListParams{}
+	params.Customer = stripe.String(stripeCustomerID.String)
+	params.Limit = stripe.Int64(int64(limit))
+	iter := stripeClient.Invoices.List(params)
+	for iter.Next() {
+		si := iter.Invoice()
+		if si == nil {
+			continue
+		}
+		inv := Invoice{
+			ID:              si.ID,
+			UserID:          userID,
+			StripeInvoiceID: si.ID,
+			AmountDue:       int(si.AmountDue),
+			AmountPaid:      int(si.AmountPaid),
+			Currency:        string(si.Currency),
+			Status:          string(si.Status),
+			CreatedAt:       time.Unix(si.Created, 0),
+		}
+		if si.InvoicePDF != "" {
+			inv.InvoicePDF = &si.InvoicePDF
+		}
+		if si.HostedInvoiceURL != "" {
+			inv.HostedInvoiceURL = &si.HostedInvoiceURL
+		}
+		if si.PeriodStart != 0 {
+			t := time.Unix(si.PeriodStart, 0)
+			inv.PeriodStart = &t
+		}
+		if si.PeriodEnd != 0 {
+			t := time.Unix(si.PeriodEnd, 0)
+			inv.PeriodEnd = &t
+		}
 		invoices = append(invoices, inv)
 	}
 
@@ -711,6 +1819,12 @@ func (h *Handler) processStripeEvent(event stripe.Event) {
 		h.handlePaymentFailure(event)
 	case "invoice.created":
 		h.handleInvoiceCreated(event)
+	case "invoice.updated":
+		h.handleInvoiceUpdated(event)
+	case "invoice.finalized":
+		h.handleInvoiceFinalized(event)
+	case "invoice.paid":
+		h.handleInvoicePaid(event)
 
 	// Customer events
 	case "customer.created":
@@ -731,19 +1845,96 @@ func (h *Handler) handleSubscriptionEvent(event stripe.Event) {
 		return
 	}
 
-	// Update subscription in database
-	_, err = h.db.Exec(`
-		UPDATE public.subscriptions
-		SET status = $2, current_period_start = $3, current_period_end = $4,
-		    cancel_at_period_end = $5, updated_at = NOW()
-		WHERE stripe_subscription_id = $1
-	`, subscription.ID, subscription.Status,
-		time.Unix(subscription.CurrentPeriodStart, 0),
-		time.Unix(subscription.CurrentPeriodEnd, 0),
-		subscription.CancelAtPeriodEnd)
+	stripeSubID := strings.TrimSpace(subscription.ID)
+	stripeCustomerID := ""
+	if subscription.Customer != nil {
+		stripeCustomerID = strings.TrimSpace(subscription.Customer.ID)
+	}
 
+	var userID string
+	err = h.db.QueryRow(`
+		SELECT user_id
+		FROM public.subscriptions
+		WHERE stripe_subscription_id = $1
+		LIMIT 1
+	`, stripeSubID).Scan(&userID)
+	if err == sql.ErrNoRows && stripeCustomerID != "" {
+		err = h.db.QueryRow(`
+			SELECT user_id
+			FROM public.subscriptions
+			WHERE stripe_customer_id = $1
+			LIMIT 1
+		`, stripeCustomerID).Scan(&userID)
+	}
 	if err != nil {
-		log.Printf("[Billing][SubscriptionEvent] update error: %v", err)
+		log.Printf("[Billing][SubscriptionEvent] user lookup error stripeSubId=%s stripeCustomerId=%s: %v", stripeSubID, stripeCustomerID, err)
+		return
+	}
+
+	planID := ""
+	if subscription.Items != nil && len(subscription.Items.Data) > 0 {
+		it := subscription.Items.Data[0]
+		if it != nil && it.Price != nil {
+			priceID := strings.TrimSpace(it.Price.ID)
+			productID := ""
+			if it.Price.Product != nil {
+				productID = strings.TrimSpace(it.Price.Product.ID)
+			}
+			var pid string
+			err = h.db.QueryRow(`
+				SELECT id
+				FROM public.billing_plans
+				WHERE stripe_price_id = $1 OR stripe_product_id = $2
+				LIMIT 1
+			`, priceID, productID).Scan(&pid)
+			if err == nil {
+				planID = pid
+			}
+		}
+	}
+	if planID == "" {
+		planID = "free"
+	}
+
+	periodStart := time.Unix(subscription.CurrentPeriodStart, 0)
+	periodEnd := time.Unix(subscription.CurrentPeriodEnd, 0)
+	var canceledAt *time.Time
+	if subscription.CanceledAt != 0 {
+		t := time.Unix(subscription.CanceledAt, 0)
+		canceledAt = &t
+	}
+	if string(subscription.Status) != string(stripe.SubscriptionStatusCanceled) {
+		canceledAt = nil
+	}
+
+	rowID := fmt.Sprintf("sub_%s", stripeSubID)
+	_, err = h.db.Exec(`
+		INSERT INTO public.subscriptions (
+			id, user_id, plan_id, stripe_subscription_id, stripe_customer_id,
+			status, current_period_start, current_period_end,
+			cancel_at_period_end, canceled_at,
+			created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5,
+			$6, $7, $8,
+			$9, $10,
+			NOW(), NOW()
+		)
+		ON CONFLICT (user_id) DO UPDATE SET
+			plan_id = EXCLUDED.plan_id,
+			stripe_subscription_id = EXCLUDED.stripe_subscription_id,
+			stripe_customer_id = EXCLUDED.stripe_customer_id,
+			status = EXCLUDED.status,
+			current_period_start = EXCLUDED.current_period_start,
+			current_period_end = EXCLUDED.current_period_end,
+			cancel_at_period_end = EXCLUDED.cancel_at_period_end,
+			canceled_at = EXCLUDED.canceled_at,
+			updated_at = NOW()
+	`, rowID, userID, planID, stripeSubID, nullIfEmpty(stripeCustomerID),
+		string(subscription.Status), periodStart, periodEnd,
+		subscription.CancelAtPeriodEnd, canceledAt)
+	if err != nil {
+		log.Printf("[Billing][SubscriptionEvent] upsert error stripeSubId=%s: %v", stripeSubID, err)
 	}
 }
 
@@ -755,13 +1946,22 @@ func (h *Handler) handleSubscriptionCancellation(event stripe.Event) {
 		return
 	}
 
-	// Mark subscription as canceled
+	stripeSubID := strings.TrimSpace(subscription.ID)
+	var canceledAt *time.Time
+	if subscription.CanceledAt != 0 {
+		t := time.Unix(subscription.CanceledAt, 0)
+		canceledAt = &t
+	}
+	if canceledAt == nil {
+		now := time.Now()
+		canceledAt = &now
+	}
+
 	_, err = h.db.Exec(`
 		UPDATE public.subscriptions
-		SET status = 'canceled', canceled_at = NOW(), updated_at = NOW()
+		SET status = 'canceled', cancel_at_period_end = false, canceled_at = $2, updated_at = NOW()
 		WHERE stripe_subscription_id = $1
-	`, subscription.ID)
-
+	`, stripeSubID, canceledAt)
 	if err != nil {
 		log.Printf("[Billing][CancellationEvent] update error: %v", err)
 	}
@@ -787,21 +1987,52 @@ func (h *Handler) handlePaymentSuccess(event stripe.Event) {
 		return
 	}
 
-	// Save invoice
-	invoiceID := fmt.Sprintf("inv_%s", invoice.ID)
-	_, err = h.db.Exec(`
-		INSERT INTO public.invoices (
-			id, user_id, stripe_invoice_id, amount_due, amount_paid, currency, status,
-			invoice_pdf, hosted_invoice_url, period_start, period_end, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
-		ON CONFLICT (stripe_invoice_id) DO NOTHING
-	`, invoiceID, userID, invoice.ID, invoice.AmountDue, invoice.AmountPaid,
-		invoice.Currency, invoice.Status, invoice.InvoicePDF, invoice.HostedInvoiceURL,
-		inlineNullTime(invoice.PeriodStart), inlineNullTime(invoice.PeriodEnd))
+	h.upsertInvoiceFromStripe(userID, &invoice)
+}
 
+func (h *Handler) handleInvoiceUpdated(event stripe.Event) {
+	var invoice stripe.Invoice
+	err := json.Unmarshal(event.Data.Raw, &invoice)
 	if err != nil {
-		log.Printf("[Billing][PaymentSuccess] invoice save error: %v", err)
+		log.Printf("[Billing][InvoiceUpdated] unmarshal error: %v", err)
+		return
 	}
+	userID, err := h.userIDForStripeCustomer(invoice.Customer)
+	if err != nil {
+		log.Printf("[Billing][InvoiceUpdated] user lookup error: %v", err)
+		return
+	}
+	h.upsertInvoiceFromStripe(userID, &invoice)
+}
+
+func (h *Handler) handleInvoiceFinalized(event stripe.Event) {
+	var invoice stripe.Invoice
+	err := json.Unmarshal(event.Data.Raw, &invoice)
+	if err != nil {
+		log.Printf("[Billing][InvoiceFinalized] unmarshal error: %v", err)
+		return
+	}
+	userID, err := h.userIDForStripeCustomer(invoice.Customer)
+	if err != nil {
+		log.Printf("[Billing][InvoiceFinalized] user lookup error: %v", err)
+		return
+	}
+	h.upsertInvoiceFromStripe(userID, &invoice)
+}
+
+func (h *Handler) handleInvoicePaid(event stripe.Event) {
+	var invoice stripe.Invoice
+	err := json.Unmarshal(event.Data.Raw, &invoice)
+	if err != nil {
+		log.Printf("[Billing][InvoicePaid] unmarshal error: %v", err)
+		return
+	}
+	userID, err := h.userIDForStripeCustomer(invoice.Customer)
+	if err != nil {
+		log.Printf("[Billing][InvoicePaid] user lookup error: %v", err)
+		return
+	}
+	h.upsertInvoiceFromStripe(userID, &invoice)
 }
 
 func (h *Handler) handlePaymentFailure(event stripe.Event) {
@@ -878,6 +2109,88 @@ func inlineNullTime(t int64) *time.Time {
 	}
 	tm := time.Unix(t, 0)
 	return &tm
+}
+
+func nullIfEmpty(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func (h *Handler) userIDForStripeCustomer(cust *stripe.Customer) (string, error) {
+	if cust == nil {
+		return "", fmt.Errorf("missing customer")
+	}
+	custID := strings.TrimSpace(cust.ID)
+	if custID == "" {
+		return "", fmt.Errorf("missing customer id")
+	}
+	var userID string
+	err := h.db.QueryRow(`
+		SELECT user_id
+		FROM public.subscriptions
+		WHERE stripe_customer_id = $1
+		LIMIT 1
+	`, custID).Scan(&userID)
+	if err != nil {
+		return "", err
+	}
+	return userID, nil
+}
+
+func (h *Handler) upsertInvoiceFromStripe(userID string, invoice *stripe.Invoice) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" || invoice == nil {
+		return
+	}
+
+	subscriptionID := ""
+	if invoice.Subscription != nil {
+		subscriptionID = strings.TrimSpace(invoice.Subscription.ID)
+	}
+	var localSubID sql.NullString
+	if subscriptionID != "" {
+		_ = h.db.QueryRow(`
+			SELECT id
+			FROM public.subscriptions
+			WHERE stripe_subscription_id = $1
+			LIMIT 1
+		`, subscriptionID).Scan(&localSubID)
+	}
+
+	invRowID := fmt.Sprintf("inv_%s", invoice.ID)
+	_, err := h.db.Exec(`
+		INSERT INTO public.invoices (
+			id, user_id, subscription_id, stripe_invoice_id,
+			amount_due, amount_paid, currency, status,
+			invoice_pdf, hosted_invoice_url,
+			period_start, period_end,
+			created_at
+		) VALUES (
+			$1, $2, $3, $4,
+			$5, $6, $7, $8,
+			$9, $10,
+			$11, $12,
+			NOW()
+		)
+		ON CONFLICT (stripe_invoice_id) DO UPDATE SET
+			amount_due = EXCLUDED.amount_due,
+			amount_paid = EXCLUDED.amount_paid,
+			currency = EXCLUDED.currency,
+			status = EXCLUDED.status,
+			invoice_pdf = EXCLUDED.invoice_pdf,
+			hosted_invoice_url = EXCLUDED.hosted_invoice_url,
+			period_start = EXCLUDED.period_start,
+			period_end = EXCLUDED.period_end
+	`, invRowID, userID, inlineNullStringPtr(localSubID), invoice.ID,
+		invoice.AmountDue, invoice.AmountPaid, invoice.Currency, invoice.Status,
+		nullIfEmpty(invoice.InvoicePDF), nullIfEmpty(invoice.HostedInvoiceURL),
+		inlineNullTime(invoice.PeriodStart), inlineNullTime(invoice.PeriodEnd))
+	if err != nil {
+		log.Printf("[Billing][InvoiceUpsert] upsert error userId=%s stripeInvoiceId=%s: %v", userID, invoice.ID, err)
+	}
 }
 
 // Product event handlers
@@ -1255,13 +2568,13 @@ func (h *Handler) UpdateBillingPlan(w http.ResponseWriter, r *http.Request) {
 
 	// Get current plan to check if it has Stripe integration
 	var currentPlan BillingPlan
-	var desc, stripePriceID sql.NullString
+	var desc, stripePriceID, stripeProductID sql.NullString
 	var features, limits sql.NullString
 	err := h.db.QueryRow(`
-		SELECT id, name, description, price_cents, currency, interval, stripe_price_id, features, limits, is_active
+		SELECT id, name, description, price_cents, currency, interval, stripe_price_id, stripe_product_id, features, limits, is_active, is_custom_price
 		FROM public.billing_plans
 		WHERE id = $1
-	`, planID).Scan(&currentPlan.ID, &currentPlan.Name, &desc, &currentPlan.PriceCents, &currentPlan.Currency, &currentPlan.Interval, &stripePriceID, &features, &limits, &currentPlan.IsActive)
+	`, planID).Scan(&currentPlan.ID, &currentPlan.Name, &desc, &currentPlan.PriceCents, &currentPlan.Currency, &currentPlan.Interval, &stripePriceID, &stripeProductID, &features, &limits, &currentPlan.IsActive, &currentPlan.IsCustomPrice)
 
 	if err != nil {
 		log.Printf("[Billing][UpdatePlan] plan not found: %v", err)
@@ -1313,10 +2626,10 @@ func (h *Handler) UpdateBillingPlan(w http.ResponseWriter, r *http.Request) {
 	_, err = h.db.Exec(`
 		UPDATE public.billing_plans
 		SET name = $1, description = $2, price_cents = $3, currency = $4, interval = $5,
-		    features = $6, limits = $7, updated_at = NOW()
-		WHERE id = $8
+		    features = $6, limits = $7, is_custom_price = $8, updated_at = NOW()
+		WHERE id = $9
 	`, updatedPlan.Name, description, updatedPlan.PriceCents, updatedPlan.Currency, updatedPlan.Interval,
-		featuresJSON, limitsJSON, planID)
+		featuresJSON, limitsJSON, updatedPlan.IsCustomPrice, planID)
 
 	if err != nil {
 		log.Printf("[Billing][UpdatePlan] database update error: %v", err)
@@ -1324,24 +2637,49 @@ func (h *Handler) UpdateBillingPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Update Stripe if it has stripe_price_id
+	// 2. Update Stripe if it has Stripe IDs
 	var stripeError error
-	if stripePriceID.Valid && stripePriceID.String != "" {
+	if (stripePriceID.Valid && stripePriceID.String != "") || (stripeProductID.Valid && stripeProductID.String != "") {
 		initStripe()
 		if stripeClient != nil {
-			// Update price in Stripe - only update nickname (name)
-			// Note: Stripe doesn't allow updating unit_amount or currency on existing prices
-			params := &stripe.PriceParams{
-				Nickname: stripe.String(updatedPlan.Name),
+			// Update product metadata (where we store features/limits).
+			// Stripe prices can't store arbitrary JSON; product metadata is the intended place.
+			if stripeProductID.Valid && stripeProductID.String != "" {
+				productParams := &stripe.ProductParams{}
+				productParams.Metadata = map[string]string{}
+				if updatedPlan.Limits != nil {
+					if jsonBytes, err := json.Marshal(updatedPlan.Limits); err == nil {
+						productParams.Metadata["limits"] = string(jsonBytes)
+					}
+				}
+				// Keep Stripe product name/description aligned for admin readability.
+				productParams.Name = stripe.String(updatedPlan.Name)
+				if description != nil && *description != "" {
+					productParams.Description = stripe.String(*description)
+				}
+
+				_, err := stripeClient.Products.Update(stripeProductID.String, productParams)
+				if err != nil {
+					stripeError = err
+					log.Printf("[Billing][UpdatePlan] failed to update Stripe product %s: %v", stripeProductID.String, err)
+				} else {
+					log.Printf("[Billing][UpdatePlan] successfully updated Stripe product %s", stripeProductID.String)
+				}
 			}
 
-			_, err := stripeClient.Prices.Update(stripePriceID.String, params)
-			if err != nil {
-				stripeError = err
-				log.Printf("[Billing][UpdatePlan] failed to update Stripe price %s: %v", stripePriceID.String, err)
-				// Continue anyway since database is updated
-			} else {
-				log.Printf("[Billing][UpdatePlan] successfully updated Stripe price %s", stripePriceID.String)
+			// Update price nickname in Stripe (nice-to-have for admin clarity).
+			// Note: Stripe doesn't allow updating unit_amount or currency on existing prices.
+			if stripePriceID.Valid && stripePriceID.String != "" {
+				params := &stripe.PriceParams{
+					Nickname: stripe.String(updatedPlan.Name),
+				}
+				_, err := stripeClient.Prices.Update(stripePriceID.String, params)
+				if err != nil {
+					stripeError = err
+					log.Printf("[Billing][UpdatePlan] failed to update Stripe price %s: %v", stripePriceID.String, err)
+				} else {
+					log.Printf("[Billing][UpdatePlan] successfully updated Stripe price %s", stripePriceID.String)
+				}
 			}
 		} else {
 			stripeError = fmt.Errorf("Stripe client not initialized")
@@ -1354,14 +2692,15 @@ func (h *Handler) UpdateBillingPlan(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"message": "Plan updated successfully",
 		"plan": map[string]interface{}{
-			"id":           planID,
-			"name":         updatedPlan.Name,
-			"priceCents":   updatedPlan.PriceCents,
-			"currency":     updatedPlan.Currency,
-			"interval":     updatedPlan.Interval,
-			"features":     updatedPlan.Features,
-			"limits":       updatedPlan.Limits,
-			"stripeSynced": stripeError == nil,
+			"id":            planID,
+			"name":          updatedPlan.Name,
+			"priceCents":    updatedPlan.PriceCents,
+			"currency":      updatedPlan.Currency,
+			"interval":      updatedPlan.Interval,
+			"features":      updatedPlan.Features,
+			"limits":        updatedPlan.Limits,
+			"isCustomPrice": updatedPlan.IsCustomPrice,
+			"stripeSynced":  stripeError == nil,
 		},
 	}
 
@@ -2131,7 +3470,7 @@ func (h *Handler) EnsureDefaultPlans(ctx context.Context) (int, error) {
 
 	// Find all default plans to ensure they are synced with the correct namespaced Stripe products
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT id, name, description, price_cents, currency, interval, features, limits
+		SELECT id, name, description, price_cents, currency, interval, features, limits, is_custom_price
 		FROM public.billing_plans
 		WHERE id IN ('free', 'pro', 'enterprise')
 	`)
@@ -2141,21 +3480,22 @@ func (h *Handler) EnsureDefaultPlans(ctx context.Context) (int, error) {
 	defer rows.Close()
 
 	type LegacyPlan struct {
-		ID          string
-		Name        string
-		Description *string
-		PriceCents  int
-		Currency    string
-		Interval    string
-		Features    []byte
-		Limits      []byte
+		ID            string
+		Name          string
+		Description   *string
+		PriceCents    int
+		Currency      string
+		Interval      string
+		Features      []byte
+		Limits        []byte
+		IsCustomPrice bool
 	}
 
 	var legacyPlans []LegacyPlan
 	for rows.Next() {
 		var plan LegacyPlan
 		var desc sql.NullString
-		err := rows.Scan(&plan.ID, &plan.Name, &desc, &plan.PriceCents, &plan.Currency, &plan.Interval, &plan.Features, &plan.Limits)
+		err := rows.Scan(&plan.ID, &plan.Name, &desc, &plan.PriceCents, &plan.Currency, &plan.Interval, &plan.Features, &plan.Limits, &plan.IsCustomPrice)
 		if err != nil {
 			continue
 		}
@@ -2171,10 +3511,10 @@ func (h *Handler) EnsureDefaultPlans(ctx context.Context) (int, error) {
 	for _, plan := range legacyPlans {
 		log.Printf("[Billing][EnsureDefaultPlans] Creating Stripe plan for default plan: %s", plan.ID)
 
-		// 1. Check if product already exists in Stripe by name (to avoid duplicates)
-		// We filter by 'internal' metadata to ensure we only touch products belonging to this project
+		// 1. Check if product already exists in Stripe by plan_id (to avoid duplicates)
+		// We filter by 'internal' metadata to ensure we only touch products belonging to this project.
 		searchParams := &stripe.ProductSearchParams{}
-		searchParams.Query = fmt.Sprintf("active:'true' AND name:'%s' AND metadata['internal']:'simple-truvis-co'", plan.Name)
+		searchParams.Query = fmt.Sprintf("active:'true' AND metadata['internal']:'simple-truvis-co' AND metadata['plan_id']:'%s'", plan.ID)
 		products := stripeClient.Products.Search(searchParams)
 
 		var product *stripe.Product
@@ -2197,10 +3537,7 @@ func (h *Handler) EnsureDefaultPlans(ctx context.Context) (int, error) {
 			// Add metadata
 			productParams.Metadata = make(map[string]string)
 			productParams.Metadata["internal"] = "simple-truvis-co"
-
-			if len(plan.Features) > 0 {
-				productParams.Metadata["features"] = string(plan.Features)
-			}
+			productParams.Metadata["plan_id"] = plan.ID
 			if len(plan.Limits) > 0 {
 				productParams.Metadata["limits"] = string(plan.Limits)
 			}
@@ -2231,6 +3568,25 @@ func (h *Handler) EnsureDefaultPlans(ctx context.Context) (int, error) {
 		if err != nil {
 			log.Printf("[Billing][EnsureDefaultPlans] failed to save stripe_product for %s: %v", plan.ID, err)
 			errors = append(errors, fmt.Sprintf("Failed to save stripe_product for %s: %v", plan.ID, err))
+			continue
+		}
+
+		// For custom priced plans, do not create a Stripe price up-front.
+		if plan.IsCustomPrice {
+			log.Printf("[Billing][EnsureDefaultPlans] Plan %s is custom-priced; skipping Stripe price creation", plan.ID)
+			// Still persist the Stripe product ID for the plan so subscriptions can create per-user prices later.
+			_, err = h.db.Exec(`
+				UPDATE public.billing_plans
+				SET stripe_product_id = $1, is_active = true, updated_at = NOW()
+				WHERE id = $2
+			`, product.ID, plan.ID)
+			if err != nil {
+				log.Printf("[Billing][EnsureDefaultPlans] failed to update plan %s with stripe_product_id: %v", plan.ID, err)
+				errors = append(errors, fmt.Sprintf("Failed to update plan %s: %v", plan.ID, err))
+			} else {
+				syncedCount++
+				log.Printf("[Billing][EnsureDefaultPlans] Successfully synced custom-priced plan %s -> %s", plan.ID, product.ID)
+			}
 			continue
 		}
 
@@ -2289,6 +3645,198 @@ func (h *Handler) EnsureDefaultPlans(ctx context.Context) (int, error) {
 
 	if len(errors) > 0 {
 		return syncedCount, fmt.Errorf("encountered errors: %s", strings.Join(errors, "; "))
+	}
+	return syncedCount, nil
+}
+
+// EnsureAllPlans ensures all active (non-archived) billing plans are represented in Stripe.
+// - For fixed-price plans: ensure Stripe Product + an active Stripe Price exist.
+// - For custom-priced plans: ensure Stripe Product exists; do not create a Price up-front.
+// It also persists stripe_product_id / stripe_price_id back into billing_plans.
+func (h *Handler) EnsureAllPlans(ctx context.Context) (int, error) {
+	initStripe()
+	if stripeClient == nil {
+		return 0, fmt.Errorf("Stripe not configured")
+	}
+
+	// Query all active plans. We may not have is_archived in older schemas; treat missing column errors as fatal.
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT id, name, description, price_cents, currency, interval, limits, is_custom_price
+		FROM public.billing_plans
+		WHERE is_active = true AND (is_archived = false OR is_archived IS NULL)
+		ORDER BY price_cents ASC
+	`)
+	if err != nil {
+		// Fallback for older DBs without is_archived.
+		rows, err = h.db.QueryContext(ctx, `
+			SELECT id, name, description, price_cents, currency, interval, limits, is_custom_price
+			FROM public.billing_plans
+			WHERE is_active = true
+			ORDER BY price_cents ASC
+		`)
+		if err != nil {
+			return 0, fmt.Errorf("failed to query plans: %v", err)
+		}
+	}
+	defer rows.Close()
+
+	type PlanRow struct {
+		ID            string
+		Name          string
+		Description   *string
+		PriceCents    int
+		Currency      string
+		Interval      string
+		Limits        []byte
+		IsCustomPrice bool
+	}
+
+	var plans []PlanRow
+	for rows.Next() {
+		var p PlanRow
+		var desc sql.NullString
+		var limits sql.NullString
+		if err := rows.Scan(&p.ID, &p.Name, &desc, &p.PriceCents, &p.Currency, &p.Interval, &limits, &p.IsCustomPrice); err != nil {
+			continue
+		}
+		if desc.Valid {
+			p.Description = &desc.String
+		}
+		if limits.Valid {
+			p.Limits = []byte(limits.String)
+		} else {
+			p.Limits = []byte("{}")
+		}
+		plans = append(plans, p)
+	}
+
+	var syncedCount int
+	var errs []string
+
+	for _, plan := range plans {
+		// 1) Find Stripe product by metadata.plan_id.
+		searchParams := &stripe.ProductSearchParams{}
+		searchParams.Query = fmt.Sprintf("active:'true' AND metadata['internal']:'simple-truvis-co' AND metadata['plan_id']:'%s'", plan.ID)
+		products := stripeClient.Products.Search(searchParams)
+
+		var product *stripe.Product
+		if products.Next() {
+			product = products.Product()
+		}
+
+		// 2) Create product if missing.
+		if product == nil {
+			productParams := &stripe.ProductParams{
+				Name: stripe.String(plan.Name),
+				Type: stripe.String(string(stripe.ProductTypeService)),
+				Metadata: map[string]string{
+					"internal": "simple-truvis-co",
+					"plan_id":  plan.ID,
+				},
+			}
+			if plan.Description != nil && *plan.Description != "" {
+				productParams.Description = stripe.String(*plan.Description)
+			}
+			if len(plan.Limits) > 0 {
+				productParams.Metadata["limits"] = string(plan.Limits)
+			}
+			created, err := stripeClient.Products.New(productParams)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("plan %s: create product failed: %v", plan.ID, err))
+				continue
+			}
+			product = created
+		} else {
+			// 3) Keep product metadata up to date.
+			productParams := &stripe.ProductParams{}
+			productParams.Name = stripe.String(plan.Name)
+			if plan.Description != nil && *plan.Description != "" {
+				productParams.Description = stripe.String(*plan.Description)
+			}
+			productParams.Metadata = map[string]string{
+				"internal": "simple-truvis-co",
+				"plan_id":  plan.ID,
+			}
+			if len(plan.Limits) > 0 {
+				productParams.Metadata["limits"] = string(plan.Limits)
+			}
+			// Ignore errors here so we can still attempt to reconcile prices.
+			_, _ = stripeClient.Products.Update(product.ID, productParams)
+		}
+
+		// 4) Upsert local stripe_products row (FK constraint).
+		productID := fmt.Sprintf("prod_%s", product.ID)
+		metadataJSON, _ := json.Marshal(product.Metadata)
+		_, _ = h.db.Exec(`
+			INSERT INTO public.stripe_products (id, stripe_product_id, name, description, active, metadata, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+			ON CONFLICT (stripe_product_id) DO UPDATE SET
+				name = EXCLUDED.name,
+				description = EXCLUDED.description,
+				active = EXCLUDED.active,
+				metadata = EXCLUDED.metadata,
+				updated_at = NOW()
+		`, productID, product.ID, product.Name, product.Description, product.Active, string(metadataJSON))
+
+		// 5) For custom plans: product only.
+		if plan.IsCustomPrice {
+			if _, err := h.db.ExecContext(ctx, `
+				UPDATE public.billing_plans
+				SET stripe_product_id = $1, stripe_price_id = NULL, updated_at = NOW()
+				WHERE id = $2
+			`, product.ID, plan.ID); err != nil {
+				errs = append(errs, fmt.Sprintf("plan %s: persist stripe_product_id failed: %v", plan.ID, err))
+				continue
+			}
+			syncedCount++
+			continue
+		}
+
+		// 6) Ensure a price exists for this product matching (amount,currency,interval).
+		priceParamsList := &stripe.PriceListParams{}
+		priceParamsList.Product = stripe.String(product.ID)
+		priceParamsList.Active = stripe.Bool(true)
+		prices := stripeClient.Prices.List(priceParamsList)
+		var price *stripe.Price
+		for prices.Next() {
+			p := prices.Price()
+			if p.UnitAmount == int64(plan.PriceCents) && string(p.Currency) == plan.Currency && p.Recurring != nil && string(p.Recurring.Interval) == plan.Interval {
+				price = p
+				break
+			}
+		}
+		if price == nil {
+			priceParams := &stripe.PriceParams{
+				Product:    stripe.String(product.ID),
+				UnitAmount: stripe.Int64(int64(plan.PriceCents)),
+				Currency:   stripe.String(plan.Currency),
+				Nickname:   stripe.String(plan.Name),
+				Recurring: &stripe.PriceRecurringParams{
+					Interval: stripe.String(plan.Interval),
+				},
+			}
+			created, err := stripeClient.Prices.New(priceParams)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("plan %s: create price failed: %v", plan.ID, err))
+				continue
+			}
+			price = created
+		}
+
+		// 7) Persist Stripe IDs back to billing_plans.
+		if _, err := h.db.ExecContext(ctx, `
+			UPDATE public.billing_plans
+			SET stripe_product_id = $1, stripe_price_id = $2, updated_at = NOW()
+			WHERE id = $3
+		`, product.ID, price.ID, plan.ID); err != nil {
+			errs = append(errs, fmt.Sprintf("plan %s: persist stripe ids failed: %v", plan.ID, err))
+			continue
+		}
+		syncedCount++
+	}
+
+	if len(errs) > 0 {
+		return syncedCount, fmt.Errorf("encountered errors: %s", strings.Join(errs, "; "))
 	}
 	return syncedCount, nil
 }

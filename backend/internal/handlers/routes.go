@@ -8,6 +8,7 @@ import (
 func RegisterBillingRoutes(h *Handler, r *mux.Router) {
 	// Existing billing routes
 	r.HandleFunc("/api/billing/plans", h.GetBillingPlans).Methods("GET")
+	r.HandleFunc("/api/billing/plans", h.CreateBillingPlan).Methods("POST")
 	r.HandleFunc("/api/billing/plans/{id}", h.UpdateBillingPlan).Methods("PUT")
 	r.HandleFunc("/api/billing/subscription/user/{userId}", h.GetUserSubscription).Methods("GET")
 	r.HandleFunc("/api/billing/subscription/user/{userId}", h.CreateSubscription).Methods("POST")
