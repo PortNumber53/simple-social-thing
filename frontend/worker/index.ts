@@ -332,6 +332,44 @@ export default {
       });
     }
 
+    // Debug endpoint to see which user id (sid) the Worker thinks is logged in.
+    // Also fetches the corresponding backend user record (best-effort).
+    if (url.pathname === "/__debug/whoami") {
+      const backendOrigin = getBackendOrigin(env, request);
+      const headers = buildCorsHeaders(request);
+      headers.set('Content-Type', 'application/json');
+      headers.set('Cache-Control', 'no-store, max-age=0');
+      headers.set('Pragma', 'no-cache');
+      const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: false });
+
+      let backendUserStatus: number | null = null;
+      let backendUserBody: unknown = null;
+      if (sid) {
+        try {
+          const res = await fetch(`${backendOrigin}/api/users/${encodeURIComponent(sid)}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+          });
+          backendUserStatus = res.status;
+          backendUserBody = await res.json().catch(() => null);
+        } catch (e) {
+          backendUserStatus = -1;
+          backendUserBody = { error: e instanceof Error ? e.message : String(e) };
+        }
+      }
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          sid,
+          backendOrigin,
+          backendUserStatus,
+          backendUser: backendUserBody,
+        }),
+        { status: 200, headers }
+      );
+    }
+
     // Suno callbacks (from https://docs.sunoapi.org/) - allow both with and without trailing slash.
     if (url.pathname === "/callback/suno/music" || url.pathname === "/callback/suno/music/") {
       return handleSunoCallback(request, env);
@@ -349,6 +387,34 @@ export default {
 
     // Handle other API routes
     if (url.pathname.startsWith("/api/")) {
+      // Proxy custom plan requests approve (admin) to backend
+      if (url.pathname.startsWith("/api/billing/custom-plan-requests/") && url.pathname.endsWith("/approve") && request.method === "POST") {
+        const backendOrigin = getBackendOrigin(env, request);
+        const headers = buildCorsHeaders(request);
+        const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+        if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+        const parts = url.pathname.split('/').filter(Boolean);
+        const requestId = parts.length >= 4 ? parts[3] : '';
+        if (!requestId) return new Response(JSON.stringify({ ok: false, error: 'missing_request_id' }), { status: 400, headers });
+
+        try {
+          const res = await fetch(`${backendOrigin}/api/billing/custom-plan-requests/${encodeURIComponent(requestId)}/approve/admin/user/${encodeURIComponent(sid)}${url.search}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers,
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy custom plan requests approve", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers });
+        }
+      }
+
       // Facebook Webhook callback (Meta Webhooks product)
       if (url.pathname === "/api/webhook/facebook/callback") {
         return handleFacebookWebhook(request, env);
@@ -736,6 +802,212 @@ export default {
         } catch (err) {
           console.error("[Worker] Failed to proxy billing plans request", err);
           return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy billing plans create requests to backend
+      if (url.pathname === "/api/billing/plans" && request.method === "POST") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}/api/billing/plans`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy billing plans create request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy custom plan request create to backend
+      if (url.pathname.startsWith("/api/billing/custom-plan-requests/user/") && request.method === "POST") {
+        const backendOrigin = getBackendOrigin(env, request);
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers: buildCorsHeaders(request),
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy custom plan request create", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+        }
+      }
+
+      // Proxy custom plan requests admin list to backend
+      if (url.pathname === "/api/billing/custom-plan-requests" && request.method === "GET") {
+        const backendOrigin = getBackendOrigin(env, request);
+        const headers = buildCorsHeaders(request);
+        const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+        if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+        try {
+          const res = await fetch(`${backendOrigin}/api/billing/custom-plan-requests/admin/user/${encodeURIComponent(sid)}${url.search}`, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers,
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy custom plan requests admin list", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers });
+        }
+      }
+
+      // Proxy custom plan requests admin update to backend
+      if (url.pathname.startsWith("/api/billing/custom-plan-requests/") && request.method === "PUT") {
+        const backendOrigin = getBackendOrigin(env, request);
+        const headers = buildCorsHeaders(request);
+        const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+        if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+        const parts = url.pathname.split('/').filter(Boolean);
+        const requestId = parts.length >= 4 ? parts[3] : '';
+        if (!requestId) return new Response(JSON.stringify({ ok: false, error: 'missing_request_id' }), { status: 400, headers });
+
+        try {
+          const res = await fetch(`${backendOrigin}/api/billing/custom-plan-requests/${encodeURIComponent(requestId)}/admin/user/${encodeURIComponent(sid)}${url.search}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers,
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy custom plan requests admin update", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers });
+        }
+      }
+
+      // Proxy subscription get/create requests to backend (user-scoped)
+      if (url.pathname.startsWith("/api/billing/subscription/user/") && (request.method === "GET" || request.method === "POST")) {
+        const backendOrigin = getBackendOrigin(env, request);
+        const headers = buildCorsHeaders(request);
+        const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+        if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+        const parts = url.pathname.split('/').filter(Boolean);
+        const userId = parts.length >= 5 ? parts[4] : '';
+        if (!userId) return new Response(JSON.stringify({ ok: false, error: 'missing_user_id' }), { status: 400, headers });
+        if (userId !== sid) return new Response(JSON.stringify({ ok: false, error: 'forbidden' }), { status: 403, headers });
+
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: request.method,
+            headers: { "Content-Type": "application/json" },
+            body: request.method === 'POST' ? request.body : undefined,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers,
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy billing subscription request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers });
+        }
+      }
+
+      // Proxy subscription cancel requests to backend (user-scoped)
+      if (url.pathname.startsWith("/api/billing/subscription/cancel/user/") && request.method === "POST") {
+        const backendOrigin = getBackendOrigin(env, request);
+        const headers = buildCorsHeaders(request);
+        const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+        if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+        const parts = url.pathname.split('/').filter(Boolean);
+        const userId = parts.length >= 6 ? parts[5] : '';
+        if (!userId) return new Response(JSON.stringify({ ok: false, error: 'missing_user_id' }), { status: 400, headers });
+        if (userId !== sid) return new Response(JSON.stringify({ ok: false, error: 'forbidden' }), { status: 403, headers });
+
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers,
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy billing cancel subscription request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers });
+        }
+      }
+
+      // Proxy invoices requests to backend (user-scoped)
+      if (url.pathname.startsWith("/api/billing/invoices/user/") && request.method === "GET") {
+        const backendOrigin = getBackendOrigin(env, request);
+        const headers = buildCorsHeaders(request);
+        const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+        if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+        const parts = url.pathname.split('/').filter(Boolean);
+        const userId = parts.length >= 5 ? parts[4] : '';
+        if (!userId) return new Response(JSON.stringify({ ok: false, error: 'missing_user_id' }), { status: 400, headers });
+        if (userId !== sid) return new Response(JSON.stringify({ ok: false, error: 'forbidden' }), { status: 403, headers });
+
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers,
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy billing invoices request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers });
+        }
+      }
+
+      // Proxy admin fix subscription amount requests to backend (admin-scoped)
+      if (url.pathname.startsWith("/api/billing/subscription/fix-amount/admin/user/") && request.method === "POST") {
+        const backendOrigin = getBackendOrigin(env, request);
+        const headers = buildCorsHeaders(request);
+        const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+        if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
+
+        // Path shape: /api/billing/subscription/fix-amount/admin/user/{adminUserId}/target/{targetUserId}
+        const parts = url.pathname.split('/').filter(Boolean);
+        const adminUserId = parts.length >= 8 ? parts[7] : '';
+        if (!adminUserId) return new Response(JSON.stringify({ ok: false, error: 'missing_user_id' }), { status: 400, headers });
+        if (adminUserId !== sid) return new Response(JSON.stringify({ ok: false, error: 'forbidden' }), { status: 403, headers });
+
+        try {
+          const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          });
+          const data = await res.text();
+          return new Response(data, {
+            status: res.status,
+            headers,
+          });
+        } catch (err) {
+          console.error("[Worker] Failed to proxy admin fix subscription amount request", err);
+          return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers });
         }
       }
 
