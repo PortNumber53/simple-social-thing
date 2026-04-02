@@ -2,7 +2,8 @@
 # Copy to `frontend/.dev.vars` for wrangler dev, or merge into your existing `.dev.vars`.
 # These values are read by `frontend/worker/index.ts` and Vite (VITE_*).
 
-# --- Google OAuth (Worker-side) ---
+# --- Google OAuth (Worker-side, used by YouTube integration) ---
+# Google login OAuth is now handled by the Go backend (see backend/.env).
 GOOGLE_CLIENT_ID=your_google_client_id_here
 GOOGLE_CLIENT_SECRET=your_google_client_secret_here
 
@@ -30,7 +31,7 @@ PINTEREST_CLIENT_SECRET=your_pinterest_client_secret_here
 
 # --- Backend origin override (optional) ---
 # Used by worker to call Go backend directly in local dev.
-BACKEND_ORIGIN=http://localhost:18911
+BACKEND_URL=http://localhost:18911
 
 # --- Database / Hyperdrive local ---
 # Used when worker is configured with Hyperdrive in prod; for local dev set this to your Postgres URL.
@@ -41,8 +42,7 @@ CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://user:passw
 # --- Frontend build vars (Vite) ---
 VITE_WORKER_ORIGIN=http://localhost:18912
 VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
-# Some frontend helpers reference this; only needed if you do client-side OAuth flows.
-VITE_GOOGLE_CLIENT_SECRET=your_google_client_secret_here
+VITE_BACKEND_URL=http://localhost:18911
 VITE_DISABLE_CF_PLUGIN=1
 
 # --- Local dev switches ---

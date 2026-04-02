@@ -102,7 +102,10 @@ pipeline {
             withCredentials([
               string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
               string(credentialsId: 'prod-log-level-simple-social-thing', variable: 'LOG_LEVEL'),
-              string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'PUBLIC_ORIGIN')
+              string(credentialsId: 'prod-frontend-url-simple-social-thing', variable: 'FRONTEND_URL'),
+              string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'BACKEND_URL'),
+              string(credentialsId: 'prod-google-client-id-simple-social-thing', variable: 'GOOGLE_CLIENT_ID'),
+              string(credentialsId: 'prod-google-client-secret-simple-social-thing', variable: 'GOOGLE_CLIENT_SECRET')
             ]) {
               sshagent(credentials: [env.SSH_CREDENTIALS]) {
                 sh label: 'Deploy via script', script: '''
@@ -115,7 +118,11 @@ pipeline {
                   SERVICE_NAME="$SERVICE_NAME" \
                   DATABASE_URL="$DATABASE_URL" \
                   LOG_LEVEL="$LOG_LEVEL" \
-                  PUBLIC_ORIGIN="$PUBLIC_ORIGIN" \
+                  FRONTEND_URL="$FRONTEND_URL" \
+                  BACKEND_URL="$BACKEND_URL" \
+                  GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
+                  GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
+                  GOOGLE_CLIENT_CALLBACK_URL="/auth/google/callback" \
                   APP_PORT="18911" \
                   ENVIRONMENT_NAME="production" \
                   bash deploy/jenkins-deploy-amd64.sh
@@ -136,7 +143,10 @@ pipeline {
             withCredentials([
               string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
               string(credentialsId: 'prod-log-level-simple-social-thing', variable: 'LOG_LEVEL'),
-              string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'PUBLIC_ORIGIN')
+              string(credentialsId: 'prod-frontend-url-simple-social-thing', variable: 'FRONTEND_URL'),
+              string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'BACKEND_URL'),
+              string(credentialsId: 'prod-google-client-id-simple-social-thing', variable: 'GOOGLE_CLIENT_ID'),
+              string(credentialsId: 'prod-google-client-secret-simple-social-thing', variable: 'GOOGLE_CLIENT_SECRET')
             ]) {
         sshagent(credentials: [env.SSH_CREDENTIALS]) {
                 sh label: 'Deploy via script', script: '''
@@ -149,7 +159,11 @@ pipeline {
                   SERVICE_NAME="$SERVICE_NAME" \
                   DATABASE_URL="$DATABASE_URL" \
                   LOG_LEVEL="$LOG_LEVEL" \
-                  PUBLIC_ORIGIN="$PUBLIC_ORIGIN" \
+                  FRONTEND_URL="$FRONTEND_URL" \
+                  BACKEND_URL="$BACKEND_URL" \
+                  GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
+                  GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
+                  GOOGLE_CLIENT_CALLBACK_URL="/auth/google/callback" \
                   APP_PORT="18911" \
                   ENVIRONMENT_NAME="production" \
                   bash deploy/jenkins-deploy-amd64.sh
@@ -177,7 +191,7 @@ pipeline {
               string(credentialsId: 'prod-stripe-publishable-key-simple-social-thing', variable: 'STRIPE_PUBLISHABLE_KEY'),
               string(credentialsId: 'prod-stripe-webhook-secret-simple-social-thing', variable: 'STRIPE_WEBHOOK_SECRET'),
               string(credentialsId: 'prod-database-url-simple-social-thing', variable: 'DATABASE_URL'),
-              string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'BACKEND_ORIGIN'),
+              string(credentialsId: 'prod-backend-url-simple-social-thing', variable: 'BACKEND_URL'),
               string(credentialsId: 'prod-log-level-simple-social-thing', variable: 'LOG_LEVEL'),
             ]) {
               sh label: 'Deploy frontend via wrangler', script: 'bash deploy/jenkins-deploy-frontend.sh'

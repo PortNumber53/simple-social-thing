@@ -131,6 +131,17 @@ func run(d deps) error {
 	// Initialize handlers
 	h := handlers.New(db)
 
+	// Configure Google OAuth if credentials are available.
+	if clientID := d.getenv("GOOGLE_CLIENT_ID"); clientID != "" {
+		h.SetGoogleOAuth(&handlers.GoogleOAuthConfig{
+			ClientID:    clientID,
+			Secret:      d.getenv("GOOGLE_CLIENT_SECRET"),
+			CallbackURL: d.getenv("GOOGLE_CLIENT_CALLBACK_URL"),
+			BackendURL:  d.getenv("BACKEND_URL"),
+			FrontendURL: d.getenv("FRONTEND_URL"),
+		})
+	}
+
 	// Start background workers
 	h.StartProductArchivalWorker()
 
@@ -145,7 +156,7 @@ func run(d deps) error {
 	r := buildRouter(h)
 
 	// CORS middleware
-	handler := buildCORSHandler(r)
+	handler := buildCORSHandler(r, d.getenv)
 	// Request logging (publish debugging): logs only publish-related routes + propagates request id.
 	handler = publishRequestLogger(handler)
 
@@ -307,14 +318,20 @@ func startScheduledPostsWorker(ctx context.Context, h *handlers.Handler, getenv 
 	interval := parseIntervalFromEnv(getenv, "SCHEDULED_POSTS_INTERVAL_SECONDS", 60*time.Second)
 	origin := ""
 	if getenv != nil {
-		origin = getenv("PUBLIC_ORIGIN")
+		origin = getenv("FRONTEND_URL")
 	}
 	go h.StartScheduledPostsWorker(ctx, interval, origin)
 }
 
-func buildCORSHandler(r http.Handler) http.Handler {
+func buildCORSHandler(r http.Handler, getenv func(string) string) http.Handler {
+	origins := []string{"http://localhost:18910", "http://localhost:3000", "https://api-simple.dev.portnumber53.com"}
+	if getenv != nil {
+		if v := getenv("FRONTEND_URL"); v != "" {
+			origins = append(origins, strings.TrimRight(v, "/"))
+		}
+	}
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:18910", "http://localhost:3000", "https://api-simple.dev.portnumber53.com"},
+		AllowedOrigins:   origins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"*"},
 		AllowCredentials: true,
@@ -349,6 +366,9 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 
 	// Health check
 	r.HandleFunc("/health", h.Health).Methods("GET")
+
+	// Google OAuth callback (login flow handled by backend)
+	r.HandleFunc("/auth/google/callback", h.GoogleOAuthCallback).Methods("GET")
 
 	// Realtime events (WebSocket). This is intended to be proxied by the Worker which authenticates the browser session.
 	r.HandleFunc("/api/events/ws", h.EventsWebSocket)

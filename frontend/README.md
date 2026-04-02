@@ -55,8 +55,8 @@ This project includes Google OAuth authentication for user sign-in.
    - Click "Create Credentials" > "OAuth 2.0 Client IDs"
    - Choose "Web application"
    - Add authorized redirect URIs:
-     - For development: `http://localhost:18912/api/auth/google/callback`
-     - For production: `https://your-worker.your-subdomain.workers.dev/api/auth/google/callback`
+     - For development: `http://localhost:18911/auth/google/callback`
+     - For production: `https://your-backend-api-domain/auth/google/callback`
    - Note down your **Client ID** and **Client Secret**
 
 4. **Configure OAuth Consent Screen:**
@@ -74,53 +74,46 @@ VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
 VITE_GOOGLE_CLIENT_SECRET=your_google_client_secret_here
 ```
 
-**Note:** The worker also needs these credentials. Update `wrangler.jsonc`:
+**Note:** The backend also needs these credentials in `backend/.env`:
 
-```jsonc
-"vars": {
-  "GOOGLE_CLIENT_ID": "your_google_client_id_here",
-  "GOOGLE_CLIENT_SECRET": "your_google_client_secret_here"
-}
+```env
+GOOGLE_CLIENT_ID=your_google_client_id_here
+GOOGLE_CLIENT_SECRET=your_google_client_secret_here
+GOOGLE_CLIENT_CALLBACK_URL=/auth/google/callback
+BACKEND_URL=http://localhost:18911
+FRONTEND_URL=http://localhost:18910
 ```
 
-### 3. How It Works (Worker-Based Flow)
+### 3. How It Works (Backend-Based Flow)
 
 1. **Login Flow:**
    - User clicks "Sign in with Google" button
-   - Redirects to Google OAuth with worker as callback URL
-   - Google redirects to your worker's `/oauth/callback` endpoint
-   - Worker exchanges authorization code for user data
-   - Worker redirects back to frontend with user data in URL
+   - Redirects to Google OAuth with backend as callback URL
+   - Google redirects to backend's `/auth/google/callback` endpoint
+   - Backend exchanges authorization code for user data
+   - Backend upserts user, sets session cookie, and redirects to frontend with user data in URL
    - Frontend processes user data and logs user in
 
 2. **Security Benefits:**
-   - OAuth token exchange happens server-side in the worker
-   - Client secret stays secure in the worker environment
+   - OAuth token exchange happens server-side in the Go backend
+   - Client secret stays secure in the backend environment
    - No sensitive tokens exposed to the frontend
-   - Production-ready for Cloudflare deployment
 
 3. **Development vs Production:**
    - **Frontend:** Runs on `http://localhost:18910` (Vite dev server)
    - **Worker:** Runs on `http://localhost:18912` (Wrangler dev server)
-   - **OAuth Flow:** Frontend → Google OAuth → Worker (port 18912) → Frontend (port 18910)
+   - **Backend:** Runs on `http://localhost:18911` (Go API)
+   - **OAuth Flow:** Frontend → Google OAuth → Backend (port 18911) → Frontend (port 18910)
 
 ### 4. Deployment
 
-When deploying to Cloudflare:
+When deploying:
 
-1. **Deploy the worker:**
-   ```bash
-   wrangler deploy
-   ```
+1. **Update Google OAuth redirect URIs:**
+   - Add your production backend URL: `https://your-backend-api-domain/auth/google/callback`
 
-2. **Update Google OAuth redirect URIs:**
-   - Add your production worker URL: `https://your-worker.your-subdomain.workers.dev/api/auth/google/callback`
-
-3. **Set production environment variables:**
-   ```bash
-   wrangler secret put GOOGLE_CLIENT_ID
-   wrangler secret put GOOGLE_CLIENT_SECRET
-   ```
+2. **Set production environment variables** on the backend server (via config.ini or env):
+   - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CLIENT_CALLBACK_URL`, `BACKEND_URL`, `FRONTEND_URL`
 
 ### 5. Usage Examples
 

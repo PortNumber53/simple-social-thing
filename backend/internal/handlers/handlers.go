@@ -45,8 +45,9 @@ import (
 )
 
 type Handler struct {
-	db *sql.DB
-	rt *realtimeHub
+	db         *sql.DB
+	rt         *realtimeHub
+	googleOAuth *GoogleOAuthConfig
 }
 
 type userSetting struct {
@@ -56,6 +57,11 @@ type userSetting struct {
 
 func New(db *sql.DB) *Handler {
 	return &Handler{db: db, rt: newRealtimeHub()}
+}
+
+// SetGoogleOAuth configures the Google OAuth settings for login.
+func (h *Handler) SetGoogleOAuth(cfg *GoogleOAuthConfig) {
+	h.googleOAuth = cfg
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {

@@ -236,10 +236,10 @@ func (h *Handler) StartScheduledPostsWorker(ctx context.Context, interval time.D
 	}
 	if strings.TrimSpace(origin) == "" {
 		// Try to read from environment variable
-		origin = strings.TrimSpace(os.Getenv("PUBLIC_ORIGIN"))
+		origin = strings.TrimSpace(os.Getenv("FRONTEND_URL"))
 		if origin == "" {
 			origin = "http://localhost"
-			log.Printf("[ScheduledPosts] CRITICAL: PUBLIC_ORIGIN environment variable is not set and no origin was provided. Using localhost as fallback, but this will cause Instagram publishing to fail. Set PUBLIC_ORIGIN to your public https origin (e.g., https://app.example.com)")
+			log.Printf("[ScheduledPosts] CRITICAL: FRONTEND_URL environment variable is not set and no origin was provided. Using localhost as fallback, but this will cause Instagram publishing to fail. Set FRONTEND_URL to your public https origin (e.g., https://app.example.com)")
 		}
 	}
 	log.Printf("[ScheduledPosts] worker started interval=%s origin=%s", interval, origin)

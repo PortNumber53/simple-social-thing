@@ -15,7 +15,7 @@ ENVIRONMENT=dev
 # --- Local development helpers ---
 # If you run the Cloudflare Worker locally and want it to hit a non-default backend origin:
 # (otherwise worker uses same-origin or VITE_WORKER_ORIGIN)
-BACKEND_ORIGIN=http://localhost:18911
+BACKEND_URL=http://localhost:18911
 
 # --- TikTok integration ---
 # TikTok OAuth secrets are Worker-side (Wrangler secrets / `.dev.vars`).

@@ -16,10 +16,10 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
   const handleGoogleLogin = () => {
     setIsLoading(true);
 
-    // Generate Google OAuth URL that redirects to our current origin
-    // The Vite dev server will proxy /api requests to the worker
+    // Generate Google OAuth URL that redirects to the backend API
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    const redirectUri = `${window.location.origin}/api/auth/google/callback`;
+    const backendUrl = (import.meta.env.VITE_BACKEND_URL || window.location.origin).replace(/\/+$/, '');
+    const redirectUri = `${backendUrl}/auth/google/callback`;
     const scope = 'openid email profile';
     const state = Math.random().toString(36).substring(2, 15);
 

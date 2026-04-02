@@ -19,7 +19,7 @@ The WebSocket path is **browser-facing**, but the actual event source is the **G
 - The **Cloudflare Worker** receives `/api/events/ws` and:
   - Authenticates the browser using the `sid` cookie (HttpOnly).
   - Opens an **internal WS** connection to the backend:
-    - `GET {BACKEND_ORIGIN}/api/events/ws?userId=<sid>`
+    - `GET {BACKEND_URL}/api/events/ws?userId=<sid>`
   - Streams messages between the 2 sockets.
 
 ### Backend is the event producer
@@ -71,7 +71,7 @@ The backend sends JSON string messages:
 Must include:
 
 - **`DATABASE_URL=...`**
-- **`PUBLIC_ORIGIN=https://simple.dev.portnumber53.com`**
+- **`FRONTEND_URL=https://simple.dev.portnumber53.com`**
   - Used to build provider-facing media URLs (and shows up in publish worker logs).
 - **`INTERNAL_WS_SECRET=...`**
   - Used to authenticate Worker→Backend WS for non-loopback scenarios.
@@ -81,7 +81,7 @@ Must include:
 
 Must include:
 
-- **`BACKEND_ORIGIN=http://127.0.0.1:18911`**
+- **`BACKEND_URL=http://127.0.0.1:18911`**
   - Recommended for local dev to avoid routing backend calls through nginx.
 - **`INTERNAL_WS_SECRET=...`**
   - Must match `backend/.env`.
@@ -144,7 +144,7 @@ Note:
    - `[EventsWS] upstream_rejected status=...`
 
 2) Validate backend is reachable from the Worker:
-   - Ensure `BACKEND_ORIGIN` is correct (`http://127.0.0.1:18911` in dev).
+   - Ensure `BACKEND_URL` is correct (`http://127.0.0.1:18911` in dev).
 
 3) Validate backend auth logic using ping:
    - Hit (through Worker):
@@ -156,13 +156,13 @@ Note:
 
 5) If HTTP endpoints return 502 but `integrations/status` works:
    - Worker is up but **backend origin is wrong** (or routed through nginx incorrectly).
-   - Fix by setting `BACKEND_ORIGIN` in `frontend/.dev.vars`.
+   - Fix by setting `BACKEND_URL` in `frontend/.dev.vars`.
 
 ### Common root causes we’ve hit
 
 - **Wrong backend origin**:
   - Worker picking `https://api-simple...` and hitting nginx when it should call localhost.
-  - Fix: `BACKEND_ORIGIN=http://127.0.0.1:18911`.
+  - Fix: `BACKEND_URL=http://127.0.0.1:18911`.
 
 - **IPv6 localhost mismatch**:
   - `localhost` resolves to `::1` but wrangler/vite is on IPv4.
@@ -180,9 +180,9 @@ Note:
 
 ## “Known good” checklist
 
-- `BACKEND_ORIGIN=http://127.0.0.1:18911` in `frontend/.dev.vars`
+- `BACKEND_URL=http://127.0.0.1:18911` in `frontend/.dev.vars`
 - `INTERNAL_WS_SECRET` set in both backend and worker env (same value)
-- `PUBLIC_ORIGIN=https://simple.dev.portnumber53.com` in `backend/.env`
+- `FRONTEND_URL=https://simple.dev.portnumber53.com` in `backend/.env`
 - `https://simple.dev.portnumber53.com/api/user-settings` returns 200 (no 502)
 - Footer shows:
   - **WS connected**

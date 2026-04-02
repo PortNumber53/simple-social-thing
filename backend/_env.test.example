@@ -13,5 +13,5 @@ SOCIAL_IMPORT_WORKERS_ENABLED=false
 SCHEDULED_POSTS_INTERVAL_SECONDS=0
 
 # Test-specific settings
-PUBLIC_ORIGIN=http://localhost:18912
+FRONTEND_URL=http://localhost:18912
 MEDIA_URL_HMAC_SECRET=test-media-secret

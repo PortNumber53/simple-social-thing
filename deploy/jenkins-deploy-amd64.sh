@@ -11,7 +11,11 @@ set -euo pipefail
 #   APP_PORT (optional, defaults to 18911) - written into config.ini
 #   ENVIRONMENT_NAME (optional, defaults to production) - written into config.ini
 #   LOG_LEVEL (optional, defaults to empty) - written into config.ini; enables verbose logging when set to debug/trace
-#   PUBLIC_ORIGIN (optional) - written into config.ini; used for scheduled post video URLs
+#   FRONTEND_URL (optional) - written into config.ini; used for scheduled post video URLs
+#   BACKEND_URL (optional) - written into config.ini; backend's own public URL (used for OAuth callback)
+#   GOOGLE_CLIENT_ID (optional) - written into config.ini; Google OAuth client ID
+#   GOOGLE_CLIENT_SECRET (optional) - written into config.ini; Google OAuth client secret
+#   GOOGLE_CLIENT_CALLBACK_URL (optional, defaults to /auth/google/callback) - written into config.ini
 #
 # Assumes artifacts/simple-social-thing-linux-${GOARCH} exists in workspace.
 
@@ -27,7 +31,11 @@ DATABASE_URL="${DATABASE_URL:-}"
 APP_PORT="${APP_PORT:-18911}"
 ENVIRONMENT_NAME="${ENVIRONMENT_NAME:-production}"
 LOG_LEVEL="${LOG_LEVEL:-}"
-PUBLIC_ORIGIN="${PUBLIC_ORIGIN:-}"
+FRONTEND_URL="${FRONTEND_URL:-}"
+BACKEND_URL="${BACKEND_URL:-}"
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
+GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
+GOOGLE_CLIENT_CALLBACK_URL="${GOOGLE_CLIENT_CALLBACK_URL:-/auth/google/callback}"
 
 if [[ -z "${DATABASE_URL}" ]]; then
   echo "ERROR: DATABASE_URL is required (will be written into /etc/simple-social-thing/config.ini)"
@@ -108,7 +116,11 @@ DATABASE_URL=${DATABASE_URL}
 PORT=${APP_PORT}
 ENVIRONMENT=${ENVIRONMENT_NAME}
 LOG_LEVEL=${LOG_LEVEL}
-PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
+FRONTEND_URL=${FRONTEND_URL}
+BACKEND_URL=${BACKEND_URL}
+GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+GOOGLE_CLIENT_CALLBACK_URL=${GOOGLE_CLIENT_CALLBACK_URL}
 CFG
 sudo chown root:root /etc/simple-social-thing/config.ini
 sudo chmod 0640 /etc/simple-social-thing/config.ini

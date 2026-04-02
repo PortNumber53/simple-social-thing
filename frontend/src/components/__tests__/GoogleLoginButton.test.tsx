@@ -10,7 +10,7 @@ describe('GoogleLoginButton', () => {
     vi.restoreAllMocks();
     vi.stubGlobal('open', vi.fn());
     Object.defineProperty(window, 'location', {
-      value: { href: 'http://localhost:18910' },
+      value: { href: 'http://localhost:18910', origin: 'http://localhost:18910' },
       writable: true,
     });
   });

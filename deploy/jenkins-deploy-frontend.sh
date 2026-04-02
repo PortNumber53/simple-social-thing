@@ -40,6 +40,7 @@ npm ci --no-audit --no-fund
 # Build-time (Vite) vars
 export VITE_GOOGLE_CLIENT_ID="${VITE_GOOGLE_CLIENT_ID:-${GOOGLE_CLIENT_ID:-}}"
 export VITE_STRIPE_PUBLISHABLE_KEY="${VITE_STRIPE_PUBLISHABLE_KEY:-${STRIPE_PUBLISHABLE_KEY:-}}"
+export VITE_BACKEND_URL="${VITE_BACKEND_URL:-${BACKEND_URL:-}}"
 
 echo "=== Frontend: syncing Cloudflare Worker secrets ==="
 # Default to syncing secrets on deploy; set SYNC_SECRETS=false to skip.
@@ -55,7 +56,7 @@ require_env "TIKTOK_CLIENT_SECRET"
 require_env "PINTEREST_CLIENT_ID"
 require_env "PINTEREST_CLIENT_SECRET"
 require_env "FACEBOOK_WEBHOOK_TOKEN"
-require_env "BACKEND_ORIGIN"
+require_env "BACKEND_URL"
 
 if [[ "${SYNC_SECRETS}" == "true" ]]; then
   echo "Syncing secrets via wrangler secret bulk..."
@@ -76,7 +77,7 @@ keys = [
   "TIKTOK_CLIENT_SECRET",
   "PINTEREST_CLIENT_ID",
   "PINTEREST_CLIENT_SECRET",
-  "BACKEND_ORIGIN",
+  "BACKEND_URL",
   "FACEBOOK_WEBHOOK_TOKEN",
   "JWT_SECRET",
   "STRIPE_SECRET_KEY",

@@ -6,10 +6,11 @@ Full-stack app for connecting social accounts, importing a user’s social conte
 - **Frontend (Vite + React + TS)**: `frontend/` (dev server on **18910**)
 - **Cloudflare Worker (API gateway + OAuth + webhooks + assets)**: `frontend/worker/index.ts` (Wrangler dev on **18912**)
   - Serves SPA assets via `ASSETS` binding with SPA fallback.
-  - Handles OAuth flows and callback endpoints for providers (Google, Instagram, TikTok, YouTube, Pinterest, Threads).
+  - Handles OAuth flows and callback endpoints for social providers (Instagram, TikTok, YouTube, Pinterest, Threads).
   - Proxies/forwards app API calls to the Go backend (and provides structured error responses).
   - Provides realtime publish updates to the frontend via WebSocket endpoint.
 - **Backend (Go net/http + gorilla/mux + Postgres)**: `backend/` (API on **18911**)
+  - Handles Google OAuth login callback (`/auth/google/callback`).
   - Runs DB migrations on startup from `backend/db/migrations/`.
 - Stores user/provider tokens in `public.user_settings` (JSONB) and maintains `social_connections`.
   - Persists created/imported content into `SocialLibraries`.
@@ -51,7 +52,7 @@ npm run dev
 
 Notes:
 - Vite proxies `/api/*` to the Worker on 18912 (`frontend/vite.config.ts`).
-- In local dev, the Worker uses `BACKEND_ORIGIN` (from `frontend/.dev.vars`) to call the Go backend on 18911.
+- In local dev, the Worker uses `BACKEND_URL` (from `frontend/.dev.vars`) to call the Go backend on 18911.
 
 ### Database migrations
 - **Automatic**: the Go backend runs migrations on startup (`backend/cmd/api/main.go`).

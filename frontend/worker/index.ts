@@ -20,7 +20,7 @@ interface Env {
   PINTEREST_CLIENT_ID?: string;
   PINTEREST_CLIENT_SECRET?: string;
   THREADS_OAUTH_BASE?: string;
-  BACKEND_ORIGIN?: string;
+  BACKEND_URL?: string;
   DATABASE_URL?: string;
   // Hyperdrive binding is available on env.HYPERDRIVE in CF
   HYPERDRIVE?: { connectionString?: string };
@@ -170,43 +170,6 @@ function getSql(env: Env): SqlClient {
   }
 }
 
-async function sqlUpsertUser(sql: NonNullable<SqlClient>, user: { id: string; email: string; name: string; imageUrl?: string | null }): Promise<string> {
-  try {
-    // Try update by email first (handles existing rows created with a different id)
-    console.log('[sqlUpsertUser] Attempting UPDATE for email:', user.email);
-    const updated = await sql<{ id: string }[]>`
-      UPDATE public.users
-      SET name = ${user.name}, image_url = ${user.imageUrl ?? null}
-      WHERE email = ${user.email}
-      RETURNING id;
-    `;
-    console.log('[sqlUpsertUser] UPDATE result:', updated.length, 'rows');
-    if (updated.length > 0) {
-      console.log('[sqlUpsertUser] Found existing user, returning id:', updated[0].id);
-      return updated[0].id;
-    }
-
-    // If no row for that email, insert a new one using the Google id
-    console.log('[sqlUpsertUser] No existing user, attempting INSERT for id:', user.id);
-    const inserted = await sql<{ id: string }[]>`
-      INSERT INTO public.users (id, email, name, image_url)
-      VALUES (${user.id}, ${user.email}, ${user.name}, ${user.imageUrl ?? null})
-      ON CONFLICT (id) DO UPDATE SET
-        email=EXCLUDED.email,
-        name=EXCLUDED.name,
-        image_url=EXCLUDED.image_url
-      RETURNING id;
-    `;
-    console.log('[sqlUpsertUser] INSERT result:', inserted.length, 'rows');
-    const resultId = inserted[0]?.id ?? user.id;
-    console.log('[sqlUpsertUser] Returning id:', resultId);
-    return resultId;
-  } catch (e) {
-    console.error('[sqlUpsertUser] Error:', e);
-    throw e;
-  }
-}
-
 async function sqlUpsertSocial(sql: NonNullable<SqlClient>, conn: { userId: string; provider: string; providerId: string; email?: string | null; name?: string | null }) {
   const id = `${conn.provider}:${conn.providerId}`;
   await sql`
@@ -248,38 +211,6 @@ async function sqlDeleteSocialByProviderId(sql: NonNullable<SqlClient>, provider
 
 // --- Generic cookie helpers are in ./lib/http.ts (re-exported above) ---
 
-async function persistSocialConnection(
-  _env: Env,
-  _conn: { userId: string; provider: string; providerId: string; email?: string; name?: string }
-) {
-  // no-op: Hyperdrive SQL is authoritative
-  void _env;
-  void _conn;
-}
-
-async function persistUser(
-  _env: Env,
-  _user: { id: string; email: string; name: string; imageUrl?: string }
-) {
-  // no-op: Hyperdrive SQL is authoritative
-  void _env;
-  void _user;
-}
-
-interface GoogleTokenResponse {
-  access_token: string;
-  expires_in: number;
-  refresh_token?: string;
-  scope: string;
-  token_type: string;
-}
-
-interface GoogleUserInfo {
-  id: string;
-  email: string;
-  name: string;
-  picture?: string;
-}
 
 export default {
   async fetch(request: Request, env: Env) {
@@ -310,7 +241,7 @@ export default {
     // Debug endpoint to help diagnose backend connectivity / origin configuration.
     // Safe: does not expose secrets; only reports which backend origin is being used and whether /health is reachable.
     if (url.pathname === "/__debug/backend") {
-      const backendOrigin = getBackendOrigin(env, request);
+      const backendOrigin = getBackendUrl(env, request);
       const requestOrigin = url.origin;
       let healthStatus: number | null = null;
       let healthBody: string | null = null;
@@ -326,7 +257,7 @@ export default {
         ok: true,
         requestOrigin,
         backendOrigin,
-        envHasBackendOrigin: !!env.BACKEND_ORIGIN,
+        envHasBackendOrigin: !!env.BACKEND_URL,
         healthStatus,
         healthBody,
       });
@@ -335,7 +266,7 @@ export default {
     // Debug endpoint to see which user id (sid) the Worker thinks is logged in.
     // Also fetches the corresponding backend user record (best-effort).
     if (url.pathname === "/__debug/whoami") {
-      const backendOrigin = getBackendOrigin(env, request);
+      const backendOrigin = getBackendUrl(env, request);
       const headers = buildCorsHeaders(request);
       headers.set('Content-Type', 'application/json');
       headers.set('Cache-Control', 'no-store, max-age=0');
@@ -375,10 +306,7 @@ export default {
       return handleSunoCallback(request, env);
     }
 
-    // Handle OAuth callback first (more specific route)
-    if (url.pathname === "/api/auth/google/callback") {
-      return handleOAuthCallback(request, env);
-    }
+    // Google OAuth login callback is now handled by the Go backend at /auth/google/callback.
 
     // Proxy public media from backend (uploaded assets under /media/)
     if (url.pathname.startsWith("/media/")) {
@@ -389,7 +317,7 @@ export default {
     if (url.pathname.startsWith("/api/")) {
       // Proxy custom plan requests approve (admin) to backend
       if (url.pathname.startsWith("/api/billing/custom-plan-requests/") && url.pathname.endsWith("/approve") && request.method === "POST") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         const headers = buildCorsHeaders(request);
         const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
         if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
@@ -502,7 +430,7 @@ export default {
         }
         // Best-effort: clear stored OAuth token server-side (do not block the response)
         if (sid) {
-          const backendOrigin = getBackendOrigin(env, request);
+          const backendOrigin = getBackendUrl(env, request);
           try {
             await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/instagram_oauth`, {
               method: 'PUT',
@@ -526,7 +454,7 @@ export default {
           } catch { void 0; }
         }
         if (sid) {
-          const backendOrigin = getBackendOrigin(env, request);
+          const backendOrigin = getBackendUrl(env, request);
           try {
             await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/tiktok_oauth`, {
               method: 'PUT',
@@ -554,7 +482,7 @@ export default {
           } catch { void 0; }
         }
         if (sid) {
-          const backendOrigin = getBackendOrigin(env, request);
+          const backendOrigin = getBackendUrl(env, request);
           try {
             await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/facebook_oauth`, {
               method: 'PUT',
@@ -577,7 +505,7 @@ export default {
           try { await sqlDeleteSocial(sql, sid, 'youtube'); } catch { void 0; }
         }
         if (sid) {
-          const backendOrigin = getBackendOrigin(env, request);
+          const backendOrigin = getBackendUrl(env, request);
           try {
             await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/youtube_oauth`, {
               method: 'PUT',
@@ -608,7 +536,7 @@ export default {
           } catch { void 0; }
         }
         if (sid) {
-          const backendOrigin = getBackendOrigin(env, request);
+          const backendOrigin = getBackendUrl(env, request);
           try {
             await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/pinterest_oauth`, {
               method: 'PUT',
@@ -632,7 +560,7 @@ export default {
           try { await sqlDeleteSocial(sql, sid, 'threads'); } catch { void 0; }
         }
         if (sid) {
-          const backendOrigin = getBackendOrigin(env, request);
+          const backendOrigin = getBackendUrl(env, request);
           try {
             await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/threads_oauth`, {
               method: 'PUT',
@@ -788,7 +716,7 @@ export default {
 
       // Proxy billing plans requests to backend
       if (url.pathname === "/api/billing/plans" && request.method === "GET") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}/api/billing/plans`, {
             method: "GET",
@@ -807,7 +735,7 @@ export default {
 
       // Proxy billing plans create requests to backend
       if (url.pathname === "/api/billing/plans" && request.method === "POST") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}/api/billing/plans`, {
             method: "POST",
@@ -827,7 +755,7 @@ export default {
 
       // Proxy custom plan request create to backend
       if (url.pathname.startsWith("/api/billing/custom-plan-requests/user/") && request.method === "POST") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
             method: "POST",
@@ -847,7 +775,7 @@ export default {
 
       // Proxy custom plan requests admin list to backend
       if (url.pathname === "/api/billing/custom-plan-requests" && request.method === "GET") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         const headers = buildCorsHeaders(request);
         const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
         if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
@@ -869,7 +797,7 @@ export default {
 
       // Proxy custom plan requests admin update to backend
       if (url.pathname.startsWith("/api/billing/custom-plan-requests/") && request.method === "PUT") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         const headers = buildCorsHeaders(request);
         const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
         if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
@@ -897,7 +825,7 @@ export default {
 
       // Proxy subscription get/create requests to backend (user-scoped)
       if (url.pathname.startsWith("/api/billing/subscription/user/") && (request.method === "GET" || request.method === "POST")) {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         const headers = buildCorsHeaders(request);
         const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
         if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
@@ -926,7 +854,7 @@ export default {
 
       // Proxy subscription cancel requests to backend (user-scoped)
       if (url.pathname.startsWith("/api/billing/subscription/cancel/user/") && request.method === "POST") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         const headers = buildCorsHeaders(request);
         const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
         if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
@@ -955,7 +883,7 @@ export default {
 
       // Proxy invoices requests to backend (user-scoped)
       if (url.pathname.startsWith("/api/billing/invoices/user/") && request.method === "GET") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         const headers = buildCorsHeaders(request);
         const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
         if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
@@ -983,7 +911,7 @@ export default {
 
       // Proxy admin fix subscription amount requests to backend (admin-scoped)
       if (url.pathname.startsWith("/api/billing/subscription/fix-amount/admin/user/") && request.method === "POST") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         const headers = buildCorsHeaders(request);
         const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
         if (!sid) return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
@@ -1013,7 +941,7 @@ export default {
 
       // Proxy sync legacy plans requests to backend
       if (url.pathname === "/api/billing/sync/legacy-plans" && request.method === "POST") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
             method: "POST",
@@ -1033,7 +961,7 @@ export default {
 
       // Proxy billing plans update requests to backend
       if (url.pathname.startsWith("/api/billing/plans/") && request.method === "PUT") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
             method: "PUT",
@@ -1055,7 +983,7 @@ export default {
 
       // Proxy billing plans delete requests to backend
       if (url.pathname.startsWith("/api/billing/plans/") && request.method === "DELETE") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
             method: "DELETE",
@@ -1074,7 +1002,7 @@ export default {
 
       // Proxy billing plans migration requests to backend
       if (url.pathname.startsWith("/api/billing/plans/") && url.pathname.endsWith("/migrate") && request.method === "POST") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
             method: "POST",
@@ -1096,7 +1024,7 @@ export default {
 
       // Proxy migration status requests to backend
       if (url.pathname.startsWith("/api/billing/plans/") && url.pathname.endsWith("/migration-status") && request.method === "GET") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
             method: "GET",
@@ -1115,7 +1043,7 @@ export default {
 
       // Proxy subscription migration requests to backend
       if (url.pathname === "/api/billing/subscriptions/migrate" && request.method === "POST") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
             method: "POST",
@@ -1135,7 +1063,7 @@ export default {
 
       // Proxy product versions requests to backend
       if (url.pathname.startsWith("/api/billing/product-versions/") && request.method === "GET") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
             method: "GET",
@@ -1154,7 +1082,7 @@ export default {
 
       // Proxy archive product requests to backend
       if (url.pathname.startsWith("/api/billing/plans/") && url.pathname.endsWith("/archive") && request.method === "POST") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
             method: "POST",
@@ -1174,7 +1102,7 @@ export default {
 
       // Proxy manual product archival requests to backend
       if (url.pathname === "/api/billing/products/archive" && request.method === "POST") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         try {
           const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
             method: "POST",
@@ -1194,7 +1122,7 @@ export default {
 
       // Proxy user profile requests to backend
       if (url.pathname.startsWith("/api/users/") && request.method === "GET") {
-        const backendOrigin = getBackendOrigin(env, request);
+        const backendOrigin = getBackendUrl(env, request);
         const userId = url.pathname.split("/").pop();
         if (!userId) {
           return Response.json({ ok: false, error: "invalid_user_id" }, { status: 400, headers: buildCorsHeaders(request) });
@@ -1243,7 +1171,7 @@ export default {
 };
 
 async function handleSunoGenerate(request: Request, env: Env): Promise<Response> {
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
 	if (preflight) return preflight;
 	if (request.method !== 'POST') return new Response(null, { status: 405, headers });
@@ -1413,7 +1341,7 @@ async function handlePostsPublish(request: Request, env: Env): Promise<Response>
     return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
   }
 
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   // Support both JSON and multipart/form-data (for media uploads).
   const contentType = request.headers.get('Content-Type') || request.headers.get('content-type') || '';
   let bodyBuf: ArrayBuffer | null = null;
@@ -1562,7 +1490,7 @@ async function handlePublishJobWs(request: Request, env: Env): Promise<Response>
     return new Response('missing_jobId', { status: 400, headers });
   }
 
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
 
   const pair = new WebSocketPair();
   const client = pair[0];
@@ -1640,7 +1568,7 @@ async function handleRealtimeEventsWs(request: Request, env: Env): Promise<Respo
     return new Response('unauthenticated', { status: 401, headers });
   }
 
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const secret = (env.INTERNAL_WS_SECRET || '').trim();
 
   const backendUrl = `${backendOrigin}/api/events/ws?userId=${encodeURIComponent(sid)}`;
@@ -1772,7 +1700,7 @@ async function handleTikTokWebhook(request: Request, env: Env): Promise<Response
 }
 
 async function handleSunoCredits(request: Request, env: Env): Promise<Response> {
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
 	if (preflight) return preflight;
 	if (request.method !== 'GET') return new Response(null, { status: 405, headers });
@@ -1831,7 +1759,7 @@ async function handleSunoCredits(request: Request, env: Env): Promise<Response> 
 }
 
 async function handleUserSettingsBundle(request: Request, env: Env): Promise<Response> {
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
 	if (preflight) return preflight;
 	if (request.method !== 'GET') return new Response(null, { status: 405, headers });
@@ -1887,7 +1815,7 @@ async function handleUserSettingsBundle(request: Request, env: Env): Promise<Res
 }
 
 async function handleLibraryItems(request: Request, env: Env): Promise<Response> {
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
 	if (preflight) return preflight;
 	if (request.method !== 'GET') return new Response(null, { status: 405, headers });
@@ -1922,7 +1850,7 @@ async function handleLibraryItems(request: Request, env: Env): Promise<Response>
 }
 
 async function handleLibrarySync(request: Request, env: Env): Promise<Response> {
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	const cookie = request.headers.get('Cookie') || '';
 	let sid = getCookie(cookie, 'sid');
 	const requestUrl = request.url;
@@ -1973,7 +1901,7 @@ async function handleLibrarySync(request: Request, env: Env): Promise<Response> 
 }
 
 async function handleLibraryDelete(request: Request, env: Env): Promise<Response> {
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
 	if (preflight) return preflight;
 	if (request.method !== 'POST') return new Response(null, { status: 405, headers });
@@ -2020,7 +1948,7 @@ async function handleLibraryDelete(request: Request, env: Env): Promise<Response
 }
 
 async function handleLibraryImport(request: Request, env: Env): Promise<Response> {
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
 	if (preflight) return preflight;
 	if (request.method !== 'POST') return new Response(null, { status: 405, headers });
@@ -2085,7 +2013,7 @@ async function handleLibraryImport(request: Request, env: Env): Promise<Response
 }
 
 async function handleNotifications(request: Request, env: Env): Promise<Response> {
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
   if (preflight) return preflight;
   if (request.method !== 'GET') return new Response(null, { status: 405, headers });
@@ -2114,7 +2042,7 @@ async function handleNotifications(request: Request, env: Env): Promise<Response
 }
 
 async function handleNotificationsRead(request: Request, env: Env): Promise<Response> {
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
   if (preflight) return preflight;
   if (request.method !== 'POST') return new Response(null, { status: 405, headers });
@@ -2148,7 +2076,7 @@ async function handleNotificationsRead(request: Request, env: Env): Promise<Resp
 // ensureSid extracted to ./lib/sid.ts (use requireSid)
 
 async function handleLocalLibraryItems(request: Request, env: Env): Promise<Response> {
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const { headers, preflight } = withCors(request, { methods: 'GET,POST,OPTIONS' });
   if (preflight) return preflight;
   if (request.method !== 'GET' && request.method !== 'POST') return new Response(null, { status: 405, headers });
@@ -2200,7 +2128,7 @@ async function handleLocalLibraryItems(request: Request, env: Env): Promise<Resp
 }
 
 async function handleLocalLibraryItem(request: Request, env: Env): Promise<Response> {
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const { headers, preflight } = withCors(request, { methods: 'PUT,DELETE,OPTIONS' });
   if (preflight) return preflight;
   if (request.method !== 'PUT' && request.method !== 'DELETE') return new Response(null, { status: 405, headers });
@@ -2252,7 +2180,7 @@ async function handleLocalLibraryItem(request: Request, env: Env): Promise<Respo
 }
 
 async function handleLocalLibraryPublishNow(request: Request, env: Env): Promise<Response> {
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
   if (preflight) return preflight;
   if (request.method !== 'POST') return new Response(null, { status: 405, headers });
@@ -2302,7 +2230,7 @@ async function handleLocalLibraryPublishNow(request: Request, env: Env): Promise
 }
 
 async function handleLocalLibraryUploads(request: Request, env: Env): Promise<Response> {
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const url = new URL(request.url);
   const { headers, preflight } = withCors(request, { methods: 'GET,POST,OPTIONS' });
   if (preflight) return preflight;
@@ -2380,7 +2308,7 @@ async function handleLocalLibraryUploads(request: Request, env: Env): Promise<Re
 }
 
 async function handleLocalLibraryUploadsFolders(request: Request, env: Env): Promise<Response> {
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
   if (preflight) return preflight;
   if (request.method !== 'GET') return new Response(null, { status: 405, headers });
@@ -2407,7 +2335,7 @@ async function handleLocalLibraryUploadsFolders(request: Request, env: Env): Pro
 }
 
 async function handleLocalLibraryUploadsDelete(request: Request, env: Env): Promise<Response> {
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
   if (preflight) return preflight;
   if (request.method !== 'POST') return new Response(null, { status: 405, headers });
@@ -2436,7 +2364,7 @@ async function handleLocalLibraryUploadsDelete(request: Request, env: Env): Prom
 }
 
 async function handleLocalLibraryUploadsFile(request: Request, env: Env): Promise<Response> {
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const { headers, preflight } = withCors(request, { methods: 'GET,OPTIONS' });
   if (preflight) return preflight;
   if (request.method !== 'GET') return new Response(null, { status: 405, headers });
@@ -2467,7 +2395,7 @@ async function handleLocalLibraryUploadsFile(request: Request, env: Env): Promis
 }
 
 async function handleLocalLibraryVideoEditorExport(request: Request, env: Env): Promise<Response> {
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
   if (preflight) return preflight;
   if (request.method !== 'POST') return new Response(null, { status: 405, headers });
@@ -2493,7 +2421,7 @@ async function handleLocalLibraryVideoEditorExport(request: Request, env: Env): 
 }
 
 async function handleMediaProxy(request: Request, env: Env): Promise<Response> {
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const url = new URL(request.url);
   const target = `${backendOrigin}${url.pathname}${url.search || ''}`;
   try {
@@ -2514,7 +2442,7 @@ async function handleMediaProxy(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleSunoSync(request: Request, env: Env): Promise<Response> {
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	const cookie = request.headers.get('Cookie') || '';
 	let sid = getCookie(cookie, 'sid');
 	const requestUrl = request.url;
@@ -2628,7 +2556,7 @@ async function handleSunoCallback(request: Request, env: Env): Promise<Response>
 	// Suno callbacks are provider → our endpoint. Forward to Go backend so it can update DB / download audio.
 	// Docs: https://docs.sunoapi.org/suno-api/generate-music (Music Generation Callbacks).
 	if (request.method !== 'POST') return new Response(null, { status: 405 });
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	const body = await request.text().catch(() => '');
 	const contentType = request.headers.get('Content-Type') || 'application/json';
 	try {
@@ -2650,7 +2578,7 @@ async function handleSunoCallback(request: Request, env: Env): Promise<Response>
 }
 
 async function handleSunoStore(request: Request, env: Env): Promise<Response> {
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	return fetch(`${backendOrigin}/api/suno/store`, {
 		method: request.method,
 		headers: { 'Content-Type': 'application/json' },
@@ -2659,7 +2587,7 @@ async function handleSunoStore(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleSunoTracksList(request: Request, env: Env): Promise<Response> {
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	const cookie = request.headers.get('Cookie') || '';
 	let sid = getCookie(cookie, 'sid');
 	const requestUrl = request.url;
@@ -2707,7 +2635,7 @@ async function handleSunoTracksList(request: Request, env: Env): Promise<Respons
 }
 
 async function handleSunoApiKey(request: Request, env: Env): Promise<Response> {
-	const backendOrigin = getBackendOrigin(env, request);
+	const backendOrigin = getBackendUrl(env, request);
 	const cookie = request.headers.get('Cookie') || '';
 	let sid = getCookie(cookie, 'sid');
 	// Local dev helper: if no sid, issue one so the user can save their key
@@ -2799,13 +2727,13 @@ async function fetchUserSunoKey(backendOrigin: string, userId: string): Promise<
 	}
 }
 
-export function getBackendOrigin(env: Env, request: Request): string {
+export function getBackendUrl(env: Env, request: Request): string {
 	const normalize = (raw: string): string => {
 		let v = (raw || '').trim().replace(/\/+$/g, '');
 		if (!v) return v;
 		// If the scheme is missing, infer it.
 		if (!/^https?:\/\//i.test(v)) {
-			// Common accidental config: BACKEND_ORIGIN=api-simple.truvis.co (no scheme)
+			// Common accidental config: BACKEND_URL=api-simple.truvis.co (no scheme)
 			// For localhost, default to http; otherwise default to request scheme (usually https).
 			if (/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(v)) {
 				v = `http://${v}`;
@@ -2816,7 +2744,7 @@ export function getBackendOrigin(env: Env, request: Request): string {
 		}
 		return v;
 	};
-	if (env.BACKEND_ORIGIN && env.BACKEND_ORIGIN.trim() !== '') return normalize(env.BACKEND_ORIGIN);
+	if (env.BACKEND_URL && env.BACKEND_URL.trim() !== '') return normalize(env.BACKEND_URL);
 	const url = publicUrlForRequest(request);
 	const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
 	if (isLocal) {
@@ -3040,7 +2968,7 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
 
     // Persist OAuth token to our backend so the server can later import Instagram content into SocialLibraries.
     {
-      const backendOrigin = getBackendOrigin(env, request);
+      const backendOrigin = getBackendUrl(env, request);
       const obtainedAt = new Date().toISOString();
       const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
       try {
@@ -3089,225 +3017,6 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
   }
 }
 
-async function handleOAuthCallback(request: Request, env: Env): Promise<Response> {
-  const url = publicUrlForRequest(request);
-  const code = url.searchParams.get('code');
-  const error = url.searchParams.get('error');
-
-  // Determine client URL dynamically
-  // For local dev: worker is on :18912, frontend is on :18910
-  // For production: both are on the same domain
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost
-    ? `http://localhost:18910`
-    : url.origin.replace(/\/api.*$/, '');
-
-  // The redirect_uri must match what was sent to Google in the auth request
-  // Since the frontend sends the frontend URL to Google, use that for token exchange
-  const redirectUri = isLocalhost
-    ? `${clientUrl}/api/auth/google/callback`
-    : new URL('/api/auth/google/callback', url.origin).toString();
-
-  // Handle OAuth errors
-  if (error) {
-    return Response.json({
-      error: error,
-      error_description: url.searchParams.get('error_description')
-    }, { status: 400 });
-  }
-
-  // Validate required parameters
-  if (!code) {
-    return Response.json({
-      error: 'missing_code',
-      error_description: 'Authorization code is required'
-    }, { status: 400 });
-  }
-
-  try {
-    if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
-      return Response.json(
-        {
-          error: 'google_secrets_missing',
-          error_description: 'GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are not configured on the worker',
-        },
-        { status: 500 },
-      );
-    }
-
-    // For local development, return mock data if external APIs are not accessible
-    const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-    const useMock = isLocalhost && env.USE_MOCK_AUTH === 'true';
-
-    if (useMock) {
-      // Mock successful OAuth response for local development
-      const mockUserData = {
-        id: 'mock-google-id-123',
-        email: 'test@example.com',
-        name: 'Test User',
-        picture: 'https://via.placeholder.com/150',
-      };
-      await persistUser(env, {
-        id: mockUserData.id,
-        email: mockUserData.email,
-        name: mockUserData.name,
-        imageUrl: mockUserData.picture,
-      });
-      await persistSocialConnection(env, {
-        userId: mockUserData.id,
-        provider: 'google',
-        providerId: mockUserData.id,
-        email: mockUserData.email,
-        name: mockUserData.name,
-      });
-      const userDataParam = encodeURIComponent(JSON.stringify({
-        success: true,
-        user: {
-          id: mockUserData.id,
-          email: mockUserData.email,
-          name: mockUserData.name,
-          imageUrl: mockUserData.picture,
-          accessToken: 'mock-access-token',
-        },
-      }));
-
-      return Response.redirect(`${clientUrl}?oauth=${userDataParam}`, 302);
-    }
-
-    // Exchange authorization code for access token (production)
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json',
-      },
-      body: new URLSearchParams({
-        client_id: env.GOOGLE_CLIENT_ID,
-        client_secret: env.GOOGLE_CLIENT_SECRET,
-        code: code,
-        grant_type: 'authorization_code',
-        redirect_uri: redirectUri,
-      }),
-    });
-
-    if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      logLarge('[Google] token exchange failed', errorText);
-      return Response.json({
-        error: 'token_exchange_failed',
-        error_description: 'Failed to exchange authorization code for token',
-        status: tokenResponse.status,
-        // Helpful dev diagnostics (this is safe: does not include secrets)
-        debug: {
-          requestUrl: request.url,
-          browserFacingUrl: url.toString(),
-          host: request.headers.get('Host'),
-          xForwardedHost: request.headers.get('X-Forwarded-Host'),
-          xForwardedProto: request.headers.get('X-Forwarded-Proto'),
-          redirectUri,
-          tokenResponseBody: errorText.slice(0, 2000),
-        },
-      }, { status: 500 });
-    }
-
-    const tokenData: GoogleTokenResponse = await tokenResponse.json();
-
-    // Get user information using the access token
-    const userResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-      headers: {
-        'Authorization': `Bearer ${tokenData.access_token}`,
-        'Accept': 'application/json',
-      },
-    });
-
-    if (!userResponse.ok) {
-      console.error('User info fetch failed:', userResponse.statusText);
-      return Response.json({
-        error: 'user_info_failed',
-        error_description: 'Failed to fetch user information'
-      }, { status: 500 });
-    }
-
-    const userData: GoogleUserInfo = await userResponse.json();
-
-    // Create user data for frontend
-    const frontendUserData = {
-      id: userData.id,
-      email: userData.email,
-      name: userData.name,
-      imageUrl: userData.picture,
-      accessToken: tokenData.access_token,
-    };
-    console.log('Google picture:', userData.picture)
-
-    // Upsert user into Postgres via Hyperdrive if available
-    {
-      const sql = getSql(env);
-      if (sql) {
-        console.log('[OAuth] Database connection available, upserting user', frontendUserData.id);
-        let canonicalUserId = frontendUserData.id;
-        try {
-          canonicalUserId = await sqlUpsertUser(sql, {
-            id: frontendUserData.id,
-            email: frontendUserData.email,
-            name: frontendUserData.name,
-            imageUrl: frontendUserData.imageUrl || null,
-          });
-          console.log('[OAuth] User upserted successfully:', canonicalUserId);
-        } catch (e) {
-          console.error('[DB] sqlUpsertUser failed', e);
-        }
-        try {
-          // Also record Google connection (optional)
-          await sqlUpsertSocial(sql, {
-            userId: canonicalUserId,
-            provider: 'google',
-            providerId: userData.id,
-            email: frontendUserData.email,
-            name: frontendUserData.name,
-          });
-          console.log('[OAuth] Social connection recorded for user:', canonicalUserId);
-        } catch (e) {
-          console.error('[DB] sqlUpsertSocial (google) failed', e);
-        }
-      } else {
-        console.warn('[OAuth] Database connection unavailable - user not persisted to database. Check HYPERDRIVE or DATABASE_URL configuration.');
-      }
-    }
-
-    // Redirect back to frontend with user data in URL parameter and set session cookie (sid)
-    const userDataParam = encodeURIComponent(JSON.stringify({ success: true, user: frontendUserData }));
-    const headers = new Headers();
-    headers.set('Location', `${clientUrl}?oauth=${userDataParam}`);
-    // Debug header to check if DATABASE_URL is available
-    headers.set('X-Database-URL-Available', env.DATABASE_URL ? 'true' : 'false');
-    // Prefer canonical DB user id in the session cookie to satisfy FK constraints later
-    const sql = getSql(env);
-    let sidValue = frontendUserData.id;
-    if (sql) {
-      try {
-        sidValue = await sqlUpsertUser(sql, {
-          id: frontendUserData.id,
-          email: frontendUserData.email,
-          name: frontendUserData.name,
-          imageUrl: frontendUserData.imageUrl || null,
-        });
-      } catch (e) {
-        console.error('[DB] sqlUpsertUser for sid failed', e);
-      }
-    }
-    headers.append('Set-Cookie', buildSidCookie(sidValue, 60 * 60 * 24 * 30, url.toString()));
-    return new Response(null, { status: 302, headers });
-
-  } catch (error) {
-    console.error('OAuth callback error:', error);
-    return Response.json({
-      error: 'internal_error',
-      error_description: 'An internal error occurred during OAuth processing'
-    }, { status: 500 });
-  }
-}
-
 async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
@@ -3329,7 +3038,7 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   if (!sid && isLocalhost) {
     sid = crypto.randomUUID();
     headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, url.toString()));
-    const backendOrigin = getBackendOrigin(env, request);
+    const backendOrigin = getBackendUrl(env, request);
     try {
       await fetch(`${backendOrigin}/api/users`, {
         method: 'POST',
@@ -3505,7 +3214,7 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
   }
 
   // Persist OAuth token in backend UserSettings for later use (posting, library import, webhooks)
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const obtainedAt = new Date().toISOString();
   const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
   try {
@@ -3577,7 +3286,7 @@ async function handleTikTokScopes(request: Request, env: Env): Promise<Response>
     return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
   }
 
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   try {
     const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/tiktok_oauth`, {
       headers: { Accept: 'application/json' },
@@ -3623,7 +3332,7 @@ async function startFacebookOAuth(request: Request, env: Env): Promise<Response>
   if (!sid && isLocalhost) {
     sid = crypto.randomUUID();
     headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, url.toString()));
-    const backendOrigin = getBackendOrigin(env, request);
+    const backendOrigin = getBackendUrl(env, request);
     try {
       await fetch(`${backendOrigin}/api/users`, {
         method: 'POST',
@@ -3759,7 +3468,7 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
   }
 
   // Persist OAuth token into backend UserSettings for importer
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   try {
     await fetch(`${backendOrigin}/api/users`, {
       method: 'POST',
@@ -3822,7 +3531,7 @@ async function handleFacebookPermissions(request: Request, env: Env): Promise<Re
     return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
   }
 
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   try {
     const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/facebook_oauth`, {
       headers: { Accept: 'application/json' },
@@ -3883,7 +3592,7 @@ async function handleFacebookPages(request: Request, env: Env): Promise<Response
     return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
   }
 
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   try {
     const res = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/facebook_oauth`, {
       headers: { Accept: 'application/json' },
@@ -3931,7 +3640,7 @@ async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> 
   if (!sid && isLocalhost) {
     sid = crypto.randomUUID();
     headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, url.toString()));
-    const backendOrigin = getBackendOrigin(env, request);
+    const backendOrigin = getBackendUrl(env, request);
     try {
       await fetch(`${backendOrigin}/api/users`, {
         method: 'POST',
@@ -4069,7 +3778,7 @@ async function handleYouTubeCallback(request: Request, env: Env): Promise<Respon
     }
   }
 
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const obtainedAt = new Date().toISOString();
   const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
   try {
@@ -4245,7 +3954,7 @@ async function handlePinterestCallback(request: Request, env: Env): Promise<Resp
     }
   }
 
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const obtainedAt = new Date().toISOString();
   const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
   try {
@@ -4421,7 +4130,7 @@ async function handleThreadsCallback(request: Request, env: Env): Promise<Respon
     }
   }
 
-  const backendOrigin = getBackendOrigin(env, request);
+  const backendOrigin = getBackendUrl(env, request);
   const obtainedAt = new Date().toISOString();
   const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
   try {

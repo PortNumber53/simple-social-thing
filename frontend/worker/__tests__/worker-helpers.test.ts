@@ -2,7 +2,7 @@
  * @vitest-environment node
  */
 import { describe, expect, it } from 'vitest';
-import { buildCorsHeaders, buildSidCookie, getBackendOrigin, getCookie } from '../index';
+import { buildCorsHeaders, buildSidCookie, getBackendUrl, getCookie } from '../index';
 
 describe('worker helper functions', () => {
   it('getCookie returns decoded cookie values', () => {
@@ -33,15 +33,15 @@ describe('worker helper functions', () => {
     expect(headers.get('Vary')).toBe('Origin');
   });
 
-  it('getBackendOrigin: uses BACKEND_ORIGIN if present (normalizes scheme)', () => {
+  it('getBackendUrl: uses BACKEND_URL if present (normalizes scheme)', () => {
     const req = new Request('https://simple.acme.co/api/x');
-    const origin = getBackendOrigin({ BACKEND_ORIGIN: 'api-simple.acme.co' } as any, req);
+    const origin = getBackendUrl({ BACKEND_URL: 'api-simple.acme.co' } as any, req);
     expect(origin).toBe('https://api-simple.acme.co');
   });
 
-  it('getBackendOrigin: local requests default to dev backend port', () => {
+  it('getBackendUrl: local requests default to dev backend port', () => {
     const req = new Request('http://localhost:18912/api/x');
-    const origin = getBackendOrigin({} as any, req);
+    const origin = getBackendUrl({} as any, req);
     expect(origin).toBe('http://localhost:18911');
   });
 });

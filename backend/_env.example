@@ -1,10 +1,17 @@
 # Database Configuration
 DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 
-PUBLIC_ORIGIN=http://localhost:18911
+# URLs
+FRONTEND_URL=http://localhost:18910
+BACKEND_URL=http://localhost:18911
+
+# Google OAuth (backend handles login callback)
+GOOGLE_CLIENT_ID=your_google_client_id_here
+GOOGLE_CLIENT_SECRET=your_google_client_secret_here
+GOOGLE_CLIENT_CALLBACK_URL=/auth/google/callback
 
 # Server Configuration
-PORT=18002
+PORT=18911
 ENVIRONMENT=dev
 
 # Logging

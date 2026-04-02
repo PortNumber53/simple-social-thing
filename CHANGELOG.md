@@ -233,6 +233,6 @@
 
 ### Notes
 - Ensure Google OAuth client has Authorized redirect URI:
-  - Dev: `http://localhost:18912/api/auth/google/callback`
-  - Prod: `https://<your-worker-domain>/api/auth/google/callback`
+  - Dev: `http://localhost:18911/auth/google/callback`
+  - Prod: `https://<your-backend-api-domain>/auth/google/callback`
 - Start dev: `npm run dev` (client on 18910, worker on 18912).
