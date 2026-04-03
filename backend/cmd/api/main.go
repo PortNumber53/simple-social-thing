@@ -27,17 +27,34 @@ import (
 )
 
 func main() {
-	for _, arg := range os.Args[1:] {
-		if arg == "-h" || arg == "--help" || arg == "help" {
-			printUsage()
-			return
-		}
-	}
-
 	// Load .env file if it exists
 	_ = godotenv.Load()
-	if err := run(defaultDeps()); err != nil {
-		log.Fatal(err)
+
+	args := os.Args[1:]
+
+	// No args → start the server
+	if len(args) == 0 {
+		if err := run(defaultDeps()); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	switch args[0] {
+	case "help", "-h", "--help":
+		printUsage()
+	case "migrate":
+		if err := runMigrate(args[1:]); err != nil {
+			log.Fatal(err)
+		}
+	case "serve":
+		if err := run(defaultDeps()); err != nil {
+			log.Fatal(err)
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
+		printUsage()
+		os.Exit(1)
 	}
 }
 
@@ -45,8 +62,15 @@ func printUsage() {
 	fmt.Println(`simple-social-thing API server
 
 Usage:
-  go run ./cmd/api    Start the API server
-  go run .            Start the API server (from backend/)
+  go run .                       Start the API server
+  go run . serve                 Start the API server (explicit)
+  go run . migrate up            Apply all pending migrations
+  go run . migrate down          Rollback all migrations
+  go run . migrate up   -steps=N Apply N migrations forward
+  go run . migrate down -steps=N Rollback N migrations
+  go run . migrate status        Show current migration version
+  go run . migrate force VERSION Force-set migration version (clears dirty flag)
+  go run . help                  Show this help
 
 Environment variables:
   DATABASE_URL                 (required) PostgreSQL connection string
@@ -61,6 +85,108 @@ Environment variables:
   STRIPE_SECRET_KEY            Stripe API secret key
   STRIPE_WEBHOOK_SECRET        Stripe webhook signing secret
   INTERNAL_WS_SECRET           Shared secret for Worker → Backend WS auth`)
+}
+
+func runMigrate(args []string) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+		fmt.Println(`Usage:
+  go run . migrate up              Apply all pending migrations
+  go run . migrate down            Rollback all migrations
+  go run . migrate up   -steps=N   Apply N migrations forward
+  go run . migrate down -steps=N   Rollback N migrations
+  go run . migrate status          Show current migration version
+  go run . migrate force VERSION   Force-set migration version (clears dirty flag)`)
+		return nil
+	}
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		return fmt.Errorf("DATABASE_URL environment variable is required")
+	}
+
+	db, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer db.Close()
+
+	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to init migration driver: %w", err)
+	}
+	m, err := migrate.NewWithDatabaseInstance("file://db/migrations", "postgres", driver)
+	if err != nil {
+		return fmt.Errorf("failed to create migrator: %w", err)
+	}
+
+	direction := args[0]
+	rest := args[1:]
+
+	switch direction {
+	case "up":
+		steps := parseMigrateSteps(rest)
+		if steps > 0 {
+			err = m.Steps(steps)
+		} else {
+			err = m.Up()
+		}
+	case "down":
+		steps := parseMigrateSteps(rest)
+		if steps > 0 {
+			err = m.Steps(-steps)
+		} else {
+			err = m.Down()
+		}
+	case "status":
+		v, dirty, verr := m.Version()
+		if verr != nil {
+			return fmt.Errorf("failed to read version: %w", verr)
+		}
+		dirtyStr := ""
+		if dirty {
+			dirtyStr = " (dirty)"
+		}
+		fmt.Printf("version: %d%s\n", v, dirtyStr)
+		return nil
+	case "force":
+		if len(rest) == 0 {
+			return fmt.Errorf("usage: go run . migrate force VERSION")
+		}
+		var version int
+		if _, ferr := fmt.Sscanf(rest[0], "%d", &version); ferr != nil {
+			return fmt.Errorf("invalid version: %s", rest[0])
+		}
+		if err := m.Force(version); err != nil {
+			return fmt.Errorf("force failed: %w", err)
+		}
+		fmt.Printf("forced to version %d\n", version)
+		return nil
+	default:
+		return fmt.Errorf("unknown migrate direction: %s (use up, down, status, or force)", direction)
+	}
+
+	if err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("migration %s failed: %w", direction, err)
+	}
+	if err == migrate.ErrNoChange {
+		fmt.Println("no migrations to apply")
+	} else {
+		fmt.Printf("migrate %s completed\n", direction)
+	}
+	return nil
+}
+
+func parseMigrateSteps(args []string) int {
+	for _, a := range args {
+		var n int
+		if _, err := fmt.Sscanf(a, "-steps=%d", &n); err == nil && n > 0 {
+			return n
+		}
+		if _, err := fmt.Sscanf(a, "--steps=%d", &n); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 type deps struct {
