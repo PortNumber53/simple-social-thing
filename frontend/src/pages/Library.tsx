@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Layout } from '../components/Layout';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { UploadGrid, type UploadPreview } from '../components/library/UploadGrid';
 import { useIntegrations, type ProviderKey } from '../contexts/IntegrationsContext';
@@ -847,7 +846,7 @@ export const Library: React.FC = () => {
   }, [statusFilter]);
 
   return (
-    <Layout>
+    <>
       <div className="w-full max-w-7xl 2xl:max-w-none mx-auto space-y-4 min-h-[70vh]">
         <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 mt-1 mb-1 h-6">
           <span className="text-slate-500 dark:text-slate-400">Home</span>
@@ -1390,6 +1389,6 @@ export const Library: React.FC = () => {
           setDeleteConfirmItem(null);
         }}
       />
-    </Layout>
+    </>
   );
 };

@@ -1,5 +1,4 @@
 import React from 'react';
-import { Layout } from '../components/Layout';
 
 export const Pricing: React.FC = () => {
   const tiers = [
@@ -48,8 +47,7 @@ export const Pricing: React.FC = () => {
   ];
 
   return (
-    <Layout>
-        <div className="max-w-7xl 2xl:max-w-screen-2xl mx-auto space-y-10">
+    <div className="max-w-7xl 2xl:max-w-screen-2xl mx-auto space-y-10">
         <header className="text-center space-y-3">
           <h1 className="gradient-text text-4xl md:text-5xl font-extrabold leading-[1.15] inline-block pb-2">Pricing</h1>
           <p className="text-slate-600 dark:text-slate-400 text-lg">
@@ -92,7 +90,6 @@ export const Pricing: React.FC = () => {
             </div>
           ))}
         </section>
-        </div>
-    </Layout>
+    </div>
   );
 }

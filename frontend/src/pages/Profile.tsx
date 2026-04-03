@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { Layout } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { AlertBanner } from '../components/AlertBanner';
 
@@ -60,7 +59,6 @@ export const Profile: React.FC = () => {
   };
 
   return (
-    <Layout>
         <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
           {/* Header */}
           <div className="mb-8 animate-fade-in">
@@ -260,6 +258,5 @@ export const Profile: React.FC = () => {
             </div>
           </div>
         </div>
-    </Layout>
   );
 };

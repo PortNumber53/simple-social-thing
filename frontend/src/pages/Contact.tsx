@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { Layout } from '../components/Layout';
 
 export const Contact: React.FC = () => {
   const [name, setName] = useState('');
@@ -17,8 +16,7 @@ export const Contact: React.FC = () => {
   };
 
   return (
-    <Layout>
-      <div className="max-w-3xl mx-auto space-y-8">
+    <div className="max-w-3xl mx-auto space-y-8">
           <header className="text-center space-y-3">
             <h1 className="text-4xl md:text-5xl font-extrabold gradient-text">Contact</h1>
             <p className="text-slate-600 dark:text-slate-400 text-lg">
@@ -69,7 +67,6 @@ export const Contact: React.FC = () => {
             </button>
           </div>
         </form>
-      </div>
-    </Layout>
+    </div>
   );
 }

@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Layout } from '../components/Layout';
 import { useIntegrations } from '../contexts/IntegrationsContext';
 import { apiJson } from '../lib/api';
 import { useJobWebSocket } from '../lib/useJobWebSocket';
@@ -302,7 +301,6 @@ export const ContentPosts: React.FC = () => {
   };
 
 	return (
-		<Layout headerPaddingClass="pt-24">
 			<div className="w-full max-w-7xl 2xl:max-w-none mx-auto space-y-8">
 				<header className="space-y-2">
 					<h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50">Publish Post</h1>
@@ -419,7 +417,6 @@ export const ContentPosts: React.FC = () => {
           </div>
 				</div>
 			</div>
-		</Layout>
 	);
 };
 

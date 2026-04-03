@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Layout } from '../components/Layout';
 import { apiJson } from '../lib/api';
 import { useLocalStorageState } from '../lib/useLocalStorageState';
 import { useSelectionSet } from '../lib/useSelectionSet';
@@ -306,7 +305,6 @@ export const ContentPublished: React.FC = () => {
   }, []);
 
   return (
-    <Layout>
       <div className="w-full max-w-7xl 2xl:max-w-none mx-auto space-y-6">
         <header className="space-y-2">
           <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50">Published</h1>
@@ -384,6 +382,5 @@ export const ContentPublished: React.FC = () => {
           }}
         />
       </div>
-    </Layout>
   );
 };

@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Layout } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { getMediaDurationSec } from '../components/videoEditor/media';
 import {
@@ -1302,9 +1301,7 @@ export const ContentVideoEditor: React.FC = () => {
   };
 
   return (
-    <Layout headerPaddingClass="pt-24">
-      {/* Full-viewport editor: subtract header padding (pt-24 => 96px) + StatusBar (h-10 => 40px). */}
-      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto h-[calc(100vh-136px)] flex flex-col overflow-hidden">
+      <div className="w-full max-w-7xl 2xl:max-w-none mx-auto h-full flex flex-col overflow-hidden">
         <header className="flex items-start justify-between gap-6 mb-3">
           <div className="space-y-2">
             <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-50">Video Editor</h1>
@@ -2174,6 +2171,5 @@ export const ContentVideoEditor: React.FC = () => {
           </div>
         </div>
       </div>
-    </Layout>
   );
 };

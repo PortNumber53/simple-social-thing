@@ -1,10 +1,8 @@
 import React from 'react';
-import { Layout } from '../components/Layout';
 
 export const UserDataDeletion: React.FC = () => {
   return (
-    <Layout>
-        <div className="max-w-4xl mx-auto space-y-8">
+    <div className="max-w-4xl mx-auto space-y-8">
           <header className="text-center space-y-3">
             <h1 className="gradient-text text-4xl md:text-5xl font-extrabold leading-[1.15] inline-block pb-2">User Data Deletion</h1>
             <p className="text-slate-600 dark:text-slate-400 text-lg">
@@ -29,7 +27,6 @@ export const UserDataDeletion: React.FC = () => {
               Certain records may be retained as required by law or for fraud prevention and security, after which they are permanently deleted.
             </p>
           </section>
-        </div>
-    </Layout>
+    </div>
   );
 }

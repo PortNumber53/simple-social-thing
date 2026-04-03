@@ -25,160 +25,46 @@ import { AdminAnalytics } from './pages/AdminAnalytics';
 import { AdminSettings } from './pages/AdminSettings';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { AppShell } from './components/AppShell';
+import { PublicLayout } from './components/PublicLayout';
 
 function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/features" element={<Features />} />
-        <Route path="/contact" element={<Contact />} />
-        <Route path="/pricing" element={<Pricing />} />
-        <Route
-          path="/integrations"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <Integrations />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/content/music"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <ContentMusic />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/content/posts"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <ContentPosts />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/content/videos"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <ContentVideos />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/content/video-editor"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <ContentVideoEditor />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/content/published"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <ContentPublished />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/library"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <Library />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-        <Route path="/terms-of-service" element={<TermsOfService />} />
-        <Route path="/user-data-deletion" element={<UserDataDeletion />} />
-        <Route path="/help/instagram" element={<InstagramHelp />} />
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <Dashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/account/profile"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <Profile />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/account/settings"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <Settings />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/account/billing"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <ErrorBoundary>
-                <Billing />
-              </ErrorBoundary>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/billing"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <ErrorBoundary>
-                <AdminBilling />
-              </ErrorBoundary>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/custom-plan-requests"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <ErrorBoundary>
-                <AdminCustomPlanRequests />
-              </ErrorBoundary>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/users"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <ErrorBoundary>
-                <AdminUsers />
-              </ErrorBoundary>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/analytics"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <ErrorBoundary>
-                <AdminAnalytics />
-              </ErrorBoundary>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/settings"
-          element={
-            <ProtectedRoute fallback={<Navigate to="/login" replace />}>
-              <ErrorBoundary>
-                <AdminSettings />
-              </ErrorBoundary>
-            </ProtectedRoute>
-          }
-        />
-        <Route path="/login" element={<Home />} />
+        {/* Public routes — marketing layout with top nav + footer */}
+        <Route element={<PublicLayout />}>
+          <Route path="/" element={<Home />} />
+          <Route path="/login" element={<Home />} />
+          <Route path="/features" element={<Features />} />
+          <Route path="/contact" element={<Contact />} />
+          <Route path="/pricing" element={<Pricing />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/terms-of-service" element={<TermsOfService />} />
+          <Route path="/user-data-deletion" element={<UserDataDeletion />} />
+          <Route path="/help/instagram" element={<InstagramHelp />} />
+        </Route>
+
+        {/* Authenticated routes — sidebar + top bar shell */}
+        <Route element={<ProtectedRoute fallback={<Navigate to="/login" replace />}><AppShell /></ProtectedRoute>}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/integrations" element={<Integrations />} />
+          <Route path="/content/posts" element={<ContentPosts />} />
+          <Route path="/content/videos" element={<ContentVideos />} />
+          <Route path="/content/video-editor" element={<ContentVideoEditor />} />
+          <Route path="/content/published" element={<ContentPublished />} />
+          <Route path="/content/music" element={<ContentMusic />} />
+          <Route path="/library" element={<Library />} />
+          <Route path="/account/profile" element={<Profile />} />
+          <Route path="/account/settings" element={<Settings />} />
+          <Route path="/account/billing" element={<ErrorBoundary><Billing /></ErrorBoundary>} />
+          <Route path="/admin/billing" element={<ErrorBoundary><AdminBilling /></ErrorBoundary>} />
+          <Route path="/admin/custom-plan-requests" element={<ErrorBoundary><AdminCustomPlanRequests /></ErrorBoundary>} />
+          <Route path="/admin/users" element={<ErrorBoundary><AdminUsers /></ErrorBoundary>} />
+          <Route path="/admin/analytics" element={<ErrorBoundary><AdminAnalytics /></ErrorBoundary>} />
+          <Route path="/admin/settings" element={<ErrorBoundary><AdminSettings /></ErrorBoundary>} />
+        </Route>
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>

@@ -1,10 +1,8 @@
 import React from 'react';
-import { Layout } from '../components/Layout';
 
 export const InstagramHelp: React.FC = () => {
   return (
-    <Layout>
-      <div className="max-w-4xl mx-auto space-y-8">
+    <div className="max-w-4xl mx-auto space-y-8">
         <header className="text-center space-y-3">
           <h1 className="gradient-text text-4xl md:text-5xl font-extrabold leading-[1.15] inline-block pb-2">Instagram Integration Help</h1>
           <p className="text-slate-600 dark:text-slate-400 text-lg">
@@ -40,7 +38,6 @@ export const InstagramHelp: React.FC = () => {
             The Instagram Graph API only supports Business/Creator accounts linked to a Facebook Page. Personal accounts are not supported.
           </p>
         </section>
-      </div>
-    </Layout>
+    </div>
   );
 };

@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Layout } from '../components/Layout';
 import { AlertBanner } from '../components/AlertBanner';
 import { apiJson } from '../lib/api';
 
@@ -175,8 +174,8 @@ export const AdminCustomPlanRequests: React.FC = () => {
   };
 
   return (
-    <Layout>
-      <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
+    <>
+      <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto">
         <div className="mb-8 animate-fade-in">
           <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-2">Custom Plan Requests</h1>
           <p className="text-lg text-slate-600 dark:text-slate-400">Review requests and mark them as approved/rejected</p>
@@ -411,6 +410,6 @@ export const AdminCustomPlanRequests: React.FC = () => {
           </div>
         </div>
       )}
-    </Layout>
+    </>
   );
 };

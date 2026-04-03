@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { Layout } from '../components/Layout';
 import { useIntegrations } from '../contexts/IntegrationsContext';
 import { IntegrationCard } from '../components/IntegrationCard';
 
@@ -461,7 +460,6 @@ export const Integrations: React.FC = () => {
   };
 
   return (
-    <Layout>
       <div className="w-full max-w-7xl 2xl:max-w-none mx-auto space-y-6 sm:space-y-8">
         <header className="text-left sm:text-center space-y-2 sm:space-y-3">
           <h1 className="gradient-text text-3xl sm:text-4xl md:text-5xl font-extrabold leading-[1.15] inline-block pb-1 sm:pb-2">
@@ -789,6 +787,5 @@ export const Integrations: React.FC = () => {
         </section>
 
       </div>
-    </Layout>
   );
 }

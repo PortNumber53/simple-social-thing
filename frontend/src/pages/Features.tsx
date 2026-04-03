@@ -1,10 +1,8 @@
 import React from 'react';
-import { Layout } from '../components/Layout';
 
 export const Features: React.FC = () => {
   return (
-    <Layout>
-      <div className="max-w-7xl 2xl:max-w-screen-2xl mx-auto space-y-8">
+    <div className="max-w-7xl 2xl:max-w-screen-2xl mx-auto space-y-8">
         <header className="text-center space-y-3">
           <h1 className="text-4xl md:text-5xl font-extrabold gradient-text">Features</h1>
           <p className="text-slate-600 dark:text-slate-400 text-lg">
@@ -38,7 +36,6 @@ export const Features: React.FC = () => {
             </p>
           </div>
         </section>
-      </div>
-    </Layout>
+    </div>
   );
 };

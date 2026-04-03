@@ -26,13 +26,6 @@ describe('Dashboard', () => {
   beforeEach(() => {
     localStorage.clear();
     localStorage.setItem('user', JSON.stringify({ id: 'u1', email: 'e', name: 'Alice Example' }));
-    localStorage.setItem(
-      'user_settings',
-      JSON.stringify({
-        suno_credits: { availableCredits: 5, fetchedAt: '2024-01-01T00:00:00Z' },
-        suno_api_key: 'abc',
-      }),
-    );
     global.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -41,7 +34,7 @@ describe('Dashboard', () => {
     })) as any;
   });
 
-  it('shows dashboard stats and next steps pulled from the app contexts', async () => {
+  it('shows dashboard welcome, stats, and connected accounts', async () => {
     render(
       <MemoryRouter>
         <ThemeProvider>
@@ -55,17 +48,21 @@ describe('Dashboard', () => {
     // Welcome heading with user's first name
     expect(screen.getByRole('heading', { name: /Welcome back, Alice/i })).toBeInTheDocument();
 
-    // Top metric cards
-    await waitFor(() => expect(screen.getByText(/Ready to edit or publish now/i)).toBeInTheDocument());
-    expect(screen.getByText(/scheduled posts/i)).toBeInTheDocument();
-    expect(screen.getByText(/publish-ready networks/i)).toBeInTheDocument();
-    // With 3 connected publish-capable providers in the mock: instagram, facebook, youtube
+    // Quick actions
+    expect(screen.getByText('Compose Post')).toBeInTheDocument();
+
+    // Stats cards — use getAllByText since labels appear in both stat title and link
+    await waitFor(() => expect(screen.getAllByText(/Drafts/i).length).toBeGreaterThan(0));
+    expect(screen.getAllByText(/Scheduled/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Connected networks/i)).toBeInTheDocument();
+    // 3 connected publish-capable providers: instagram, facebook, youtube
     expect(screen.getByText(/3 \/ 5/i)).toBeInTheDocument();
 
-    // What to do next section
-    expect(screen.getByText(/What to do next/i)).toBeInTheDocument();
-    expect(screen.getByText(/Connect remaining providers/i)).toBeInTheDocument();
-    expect(screen.getByText(/Wire the Instagram video tool/i)).toBeInTheDocument();
-    expect(screen.getByText(/Refresh Suno credits/i)).toBeInTheDocument();
+    // Connected accounts section
+    expect(screen.getByText('Instagram')).toBeInTheDocument();
+    expect(screen.getByText('Facebook')).toBeInTheDocument();
+
+    // Getting started section
+    expect(screen.getByText('Getting started')).toBeInTheDocument();
   });
 });

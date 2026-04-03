@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Layout } from '../components/Layout';
 import { AlertBanner } from '../components/AlertBanner';
 import { useAuth } from '../contexts/AuthContext';
 import { apiJson } from '../lib/api';
@@ -402,42 +401,37 @@ export const Billing: React.FC = () => {
 
   if (isLoading) {
     return (
-      <Layout>
-        <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
-          <div className="animate-pulse">
-            <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-48 mb-6"></div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[...Array(6)].map((_, i) => (
-                <div key={i} className="card">
-                  <div className="h-6 bg-slate-200 dark:bg-slate-700 rounded w-32 mb-4"></div>
-                  <div className="space-y-2">
-                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-full"></div>
-                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
-                  </div>
+      <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto">
+        <div className="animate-pulse">
+          <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-48 mb-6"></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="card">
+                <div className="h-6 bg-slate-200 dark:bg-slate-700 rounded w-32 mb-4"></div>
+                <div className="space-y-2">
+                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-full"></div>
+                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
         </div>
-      </Layout>
+      </div>
     );
   }
 
   if (error) {
     return (
-      <Layout>
-        <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
-          <AlertBanner variant="error" className="mb-6 animate-slide-down">{error}</AlertBanner>
-        </div>
-      </Layout>
+      <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto">
+        <AlertBanner variant="error" className="mb-6 animate-slide-down">{error}</AlertBanner>
+      </div>
     );
   }
 
   return (
-    <Layout>
-      <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
-        <div className="mb-8 animate-fade-in">
-          <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-2">Billing</h1>
+    <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto">
+      <div className="mb-8 animate-fade-in">
+        <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-2">Billing</h1>
           <p className="text-lg text-slate-600 dark:text-slate-400">Manage your subscription and payment methods</p>
         </div>
 
@@ -837,7 +831,6 @@ export const Billing: React.FC = () => {
             </div>
           </div>
         )}
-      </div>
-    </Layout>
+    </div>
   );
 };

@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { Layout } from '../components/Layout';
 import { AlertBanner } from '../components/AlertBanner';
 import { useTheme, type ThemeMode } from '../contexts/ThemeContext';
 
@@ -28,7 +27,6 @@ export const Settings: React.FC = () => {
   };
 
   return (
-    <Layout>
       <div className="w-full max-w-6xl xl:max-w-7xl 2xl:max-w-none mx-auto pt-6">
         <div className="mb-8 animate-fade-in">
           <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-2">Settings</h1>
@@ -158,6 +156,5 @@ export const Settings: React.FC = () => {
           </div>
         </div>
       </div>
-    </Layout>
   );
 };

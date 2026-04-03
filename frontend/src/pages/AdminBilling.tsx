@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Layout } from '../components/Layout';
 import { AlertBanner } from '../components/AlertBanner';
 import { apiJson } from '../lib/api';
 
@@ -319,30 +318,28 @@ export const AdminBilling: React.FC = () => {
 
   if (isLoading) {
     return (
-      <Layout>
-        <div className="w-full max-w-7xl mx-auto pt-6">
-          <div className="animate-pulse">
-            <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-48 mb-6"></div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="card">
-                  <div className="h-6 bg-slate-200 dark:bg-slate-700 rounded w-32 mb-4"></div>
-                  <div className="space-y-2">
-                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-full"></div>
-                    <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
-                  </div>
+      <div className="w-full max-w-7xl mx-auto">
+        <div className="animate-pulse">
+          <div className="h-8 bg-slate-200 dark:bg-slate-700 rounded w-48 mb-6"></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="card">
+                <div className="h-6 bg-slate-200 dark:bg-slate-700 rounded w-32 mb-4"></div>
+                <div className="space-y-2">
+                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-full"></div>
+                  <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
         </div>
-      </Layout>
+      </div>
     );
   }
 
   return (
-    <Layout>
-      <div className="w-full max-w-7xl mx-auto pt-6">
+    <>
+      <div className="w-full max-w-7xl mx-auto">
         <div className="mb-8 animate-fade-in">
           <div className="flex items-center justify-between">
             <div>
@@ -777,6 +774,6 @@ export const AdminBilling: React.FC = () => {
           </div>
         </div>
       )}
-    </Layout>
+    </>
   );
 };
