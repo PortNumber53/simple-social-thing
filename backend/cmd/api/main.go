@@ -27,11 +27,40 @@ import (
 )
 
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "-h" || arg == "--help" || arg == "help" {
+			printUsage()
+			return
+		}
+	}
+
 	// Load .env file if it exists
 	_ = godotenv.Load()
 	if err := run(defaultDeps()); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func printUsage() {
+	fmt.Println(`simple-social-thing API server
+
+Usage:
+  go run ./cmd/api    Start the API server
+  go run .            Start the API server (from backend/)
+
+Environment variables:
+  DATABASE_URL                 (required) PostgreSQL connection string
+  PORT                         HTTP port (default: 18911)
+  ENVIRONMENT                  dev | staging | production
+  LOG_LEVEL                    error | warn | info | debug | trace
+  FRONTEND_URL                 Frontend origin (for CORS and OAuth redirect)
+  BACKEND_URL                  Backend public URL (for OAuth callback URI)
+  GOOGLE_CLIENT_ID             Google OAuth client ID
+  GOOGLE_CLIENT_SECRET         Google OAuth client secret
+  GOOGLE_CLIENT_CALLBACK_URL   OAuth callback path (default: /auth/google/callback)
+  STRIPE_SECRET_KEY            Stripe API secret key
+  STRIPE_WEBHOOK_SECRET        Stripe webhook signing secret
+  INTERNAL_WS_SECRET           Shared secret for Worker → Backend WS auth`)
 }
 
 type deps struct {
