@@ -23,4 +23,4 @@ The primary MVP flow is Instagram Business Account content scheduling:
 
 - Imported PRD: `docs/PRD.md`
 - Jira project: `SMT` / Social Manager Thing
-- Archived/scaffold source repo: `/home/grimlock/work/social-manager-scaffold`
+- Archived/scaffold source repo: `social-manager-scaffold` (archived)
