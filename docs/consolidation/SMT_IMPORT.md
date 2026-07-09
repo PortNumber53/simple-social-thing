@@ -1,6 +1,6 @@
 # Social Manager Thing Consolidation
 
-Simple Social Thing is now the implementation base for **Social Manager Thing** (`SMT`). The original SMT scaffold is preserved at `/home/grimlock/work/social-manager-scaffold`; this repo now carries the active implementation.
+Simple Social Thing is now the implementation base for **Social Manager Thing** (`SMT`). The original SMT scaffold is preserved in the archived scaffold repository; this repo now carries the active implementation.
 
 ## Direction
 
