@@ -120,6 +120,5 @@ The primary user is a small-to-medium business or marketing agency seeking a rel
 * **Carousel Support:** Full support for submitting multiple media URLs for carousel posts.  
 * **Media Uploads:** Allow direct image/video upload (instead of public URL) using Cloudflare R2 or similar storage before passing to Meta's servers.  
 * **Analytics:** Fetch and display post metrics (likes, comments, reach) using the Instagram Graph API Insights endpoints.  
-* **Scheduling:** Implement a time/date picker for future scheduling instead of "Publish Now."  
-* 
+* Scheduling: Implement a time/date picker for future scheduling instead of "Publish Now."
 
