@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "simple-social-thing-frontend",
+	"name": "social-manager-thing-frontend",
 	"main": "worker/index.ts",
 	"compatibility_date": "2025-01-01",
 	"compatibility_flags": [

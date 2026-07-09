@@ -21,7 +21,7 @@ export const TopNavigation: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
-            <span className="text-lg font-bold gradient-text">Simple Social Thing</span>
+            <span className="text-lg font-bold gradient-text">Social Manager Thing</span>
           </a>
 
           {/* Desktop links */}

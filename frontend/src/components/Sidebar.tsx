@@ -72,7 +72,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-const SECTION_STORAGE_KEY = 'sst-sidebar-sections';
+const SECTION_STORAGE_KEY = 'smt-sidebar-sections';
 
 function readSectionState(): Record<string, boolean> {
   try {
@@ -121,7 +121,7 @@ export const Sidebar: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
           </div>
-          {!isCollapsed && <span className="text-sm font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">Simple Social</span>}
+          {!isCollapsed && <span className="text-sm font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">Social Manager</span>}
         </Link>
       </div>
 

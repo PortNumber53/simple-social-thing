@@ -6,7 +6,7 @@ export const UserDataDeletion: React.FC = () => {
           <header className="text-center space-y-3">
             <h1 className="gradient-text text-4xl md:text-5xl font-extrabold leading-[1.15] inline-block pb-2">User Data Deletion</h1>
             <p className="text-slate-600 dark:text-slate-400 text-lg">
-              How to request deletion of your data from Simple Social Thing.
+              How to request deletion of your data from Social Manager Thing.
             </p>
           </header>
 

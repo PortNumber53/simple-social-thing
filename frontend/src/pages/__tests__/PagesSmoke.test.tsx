@@ -68,7 +68,7 @@ describe('Pages smoke', () => {
 
   it('renders public pages', () => {
     renderWithProviders(<Home />);
-    expect(screen.getByRole('heading', { name: /Simple Social Thing/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Social Manager Thing/i })).toBeInTheDocument();
 
     renderWithProviders(<Features />, { route: '/features' });
     expect(screen.getByRole('heading', { name: /Features/i })).toBeInTheDocument();
@@ -90,6 +90,18 @@ describe('Pages smoke', () => {
 
     renderWithProviders(<InstagramHelp />, { route: '/help/instagram' });
     expect(screen.getByRole('heading', { name: /Instagram/i })).toBeInTheDocument();
+  });
+
+  it('renders SMT pricing tiers from the product requirements', () => {
+    renderWithProviders(<Pricing />, { route: '/pricing' });
+
+    expect(screen.getByRole('heading', { name: /Pricing/i })).toBeInTheDocument();
+    expect(screen.getByText('$0')).toBeInTheDocument();
+    expect(screen.getByText(/1 post per day/i)).toBeInTheDocument();
+    expect(screen.getByText('$100')).toBeInTheDocument();
+    expect(screen.getByText(/10 posts per day/i)).toBeInTheDocument();
+    expect(screen.getByText('$500')).toBeInTheDocument();
+    expect(screen.getByText(/Meta rate limits/i)).toBeInTheDocument();
   });
 
   it('renders authenticated-only pages when a user is present', async () => {
