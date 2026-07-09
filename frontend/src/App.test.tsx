@@ -37,19 +37,19 @@ describe('App routing', () => {
   it('renders home on /', () => {
     window.history.replaceState({}, '', '/');
     renderApp();
-    expect(screen.getByRole('heading', { name: /Simple Social Thing/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Social Manager Thing/i })).toBeInTheDocument();
   });
 
   it('redirects unknown route to home', () => {
     window.history.replaceState({}, '', '/nope');
     renderApp();
-    expect(screen.getByRole('heading', { name: /Simple Social Thing/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Social Manager Thing/i })).toBeInTheDocument();
   });
 
   it('redirects protected route to home when logged out', async () => {
     window.history.replaceState({}, '', '/content/published');
     renderApp();
-    await waitFor(() => expect(screen.getByRole('heading', { name: /Simple Social Thing/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('heading', { name: /Social Manager Thing/i })).toBeInTheDocument());
   });
 
   it('renders protected route content when logged in', async () => {

@@ -4,42 +4,42 @@ export const Pricing: React.FC = () => {
   const tiers = [
     {
       name: 'Free',
-      price: '$10',
+      price: '$0',
       cadence: 'per month',
-      description: 'Try the product and explore core features.',
+      description: 'Designed for evaluation and very small Instagram publishing workflows.',
       features: [
-        'Connect 1 social account',
-        'Basic scheduling (5 queued posts)',
-        'Starter analytics',
-        'Community support'
+        '1 post per day',
+        'Connect one Instagram Business account',
+        'Standard team roles',
+        'Community support',
       ],
       cta: 'Get started',
       highlight: false,
     },
     {
-      name: 'Pro',
+      name: 'Standard',
       price: '$100',
       cadence: 'per month',
-      description: 'All features enabled for professionals and creators.',
+      description: 'For small businesses that need a reliable Instagram scheduling pipeline.',
       features: [
-        'Unlimited social accounts',
-        'Advanced scheduling & calendar',
-        'Full analytics & insights',
-        'Priority support'
+        '10 posts per day',
+        'Instagram scheduling calendar',
+        'Drafts and published-content tracking',
+        'Priority support',
       ],
-      cta: 'Start Pro',
+      cta: 'Start Standard',
       highlight: true,
     },
     {
-      name: 'Team',
-      price: '$150',
-      cadence: 'per seat / month',
-      description: 'All features plus collaboration tools for teams.',
+      name: 'Pro',
+      price: '$500',
+      cadence: 'per month',
+      description: 'For high-volume agencies and publishers.',
       features: [
-        'Everything in Pro',
-        'Roles & permissions',
-        'Approval workflows',
-        'Shared asset library'
+        'Meta rate limits',
+        'Advanced team roles and permissions',
+        'Shared asset library',
+        'Premium support',
       ],
       cta: 'Contact sales',
       highlight: false,
@@ -51,7 +51,7 @@ export const Pricing: React.FC = () => {
         <header className="text-center space-y-3">
           <h1 className="gradient-text text-4xl md:text-5xl font-extrabold leading-[1.15] inline-block pb-2">Pricing</h1>
           <p className="text-slate-600 dark:text-slate-400 text-lg">
-            Simple, transparent pricing to help you manage your social presence.
+            Usage-based tiers for Instagram Business Account scheduling.
           </p>
         </header>
 
@@ -81,7 +81,7 @@ export const Pricing: React.FC = () => {
               </ul>
               <div className="mt-auto pt-6">
                 <a
-                  href={t.name === 'Team' ? '/contact' : '/'}
+                  href={t.name === 'Pro' ? '/contact' : '/'}
                   className={`btn ${t.highlight ? 'btn-primary' : 'btn-secondary'} w-full`}
                 >
                   {t.cta}

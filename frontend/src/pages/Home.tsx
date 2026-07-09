@@ -9,7 +9,7 @@ export const Home: React.FC = () => {
       {/* Hero Section */}
       <div className="text-center space-y-6 mb-12">
         <h1 className="gradient-text font-bold text-5xl md:text-6xl lg:text-7xl tracking-tight leading-[1.15] inline-block pb-2">
-          Simple Social Thing
+          Social Manager Thing
         </h1>
         <p className="text-slate-600 dark:text-slate-400 text-lg md:text-xl max-w-2xl mx-auto">
           Plan posts, track engagement, and manage all your social accounts in one place—so you can focus on growing your audience.

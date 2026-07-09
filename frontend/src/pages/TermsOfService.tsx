@@ -6,7 +6,7 @@ export const TermsOfService: React.FC = () => {
         <header className="text-center space-y-3">
           <h1 className="gradient-text text-4xl md:text-5xl font-extrabold leading-[1.15] inline-block pb-2">Terms of Service</h1>
           <p className="text-slate-600 dark:text-slate-400 text-lg">
-            Please review these terms before using Simple Social Thing.
+            Please review these terms before using Social Manager Thing.
           </p>
         </header>
 
