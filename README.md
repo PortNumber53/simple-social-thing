@@ -2,7 +2,7 @@
 
 Full-stack app for connecting social accounts, importing social content into a unified library, and scheduling/publishing Instagram Business Account content.
 
-This repository is the active implementation base for Jira project **SMT / Social Manager Thing**. It was consolidated from the former Simple Social Thing codebase; the original SMT scaffold is preserved locally at `/home/grimlock/work/social-manager-scaffold`.
+This repository is the active implementation base for Jira project **SMT / Social Manager Thing**. It was consolidated from the former Simple Social Thing codebase; the original SMT scaffold is preserved in the archived scaffold repository.
 
 ## Product scope
 
