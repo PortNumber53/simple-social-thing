@@ -113,7 +113,7 @@ func TestPublishInstagramWithImageURLs_Success_Carousel(t *testing.T) {
 			return httpJSON(200, `{"id":"cX"}`, nil), nil
 		}
 		// Container status polling
-		if r.Method == "GET" && (p == "/v18.0/c1" || p == "/v18.0/c2" || p == "/v18.0/pc1") {
+		if r.Method == "GET" && (p == "/v24.0/c1" || p == "/v24.0/c2" || p == "/v24.0/pc1") {
 			return httpJSON(200, `{"id":"x","status_code":"FINISHED"}`, nil), nil
 		}
 		// Publish media
@@ -246,7 +246,7 @@ func TestPublishInstagram_WritesMediaAndUsesPublicOrigin(t *testing.T) {
 		if r.URL.Host == "graph.facebook.com" && strings.Contains(r.URL.Path, "/media") && r.Method == "POST" {
 			return httpJSON(200, `{"id":"c1"}`, nil), nil
 		}
-		if r.URL.Host == "graph.facebook.com" && strings.Contains(r.URL.Path, "/v18.0/c1") && r.Method == "GET" {
+		if r.URL.Host == "graph.facebook.com" && strings.Contains(r.URL.Path, "/v24.0/c1") && r.Method == "GET" {
 			return httpJSON(200, `{"id":"c1","status_code":"FINISHED"}`, nil), nil
 		}
 		return httpJSON(404, `{"error":"not_found"}`, nil), nil

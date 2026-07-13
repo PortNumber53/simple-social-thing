@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(npm run:*)",
+      "Bash(npx vitest:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(pip3 show:*)",
+      "Bash(git filter-repo:*)",
+      "Bash(git remote:*)",
+      "Bash(ls /Users/mauricio/work/simple-social-thing/backend/*.go)",
+      "Bash(go run:*)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(go vet:*)",
+      "Bash(find /Users/mauricio/work/simple-social-thing/frontend/src -name \"*.tsx\" -exec grep -l \"loading\\\\|isLoading\\\\|pending\" {} \\\\;)",
+      "Bash(grep -E \"\\\\.tsx$\")",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}

@@ -21,14 +21,14 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/gorilla/mux"
-	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"github.com/rs/cors"
 )
 
 func main() {
-	// Load .env file if it exists
-	_ = godotenv.Load()
+	if err := loadEnvironment(); err != nil {
+		log.Fatalf("failed to load environment: %v", err)
+	}
 
 	args := os.Args[1:]
 
@@ -573,6 +573,9 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	// Social connections endpoints
 	r.HandleFunc("/api/social-connections", h.CreateSocialConnection).Methods("POST")
 	r.HandleFunc("/api/social-connections/user/{userId}", h.GetUserSocialConnections).Methods("GET")
+	r.HandleFunc("/api/social-connections/user/{userId}/{provider}", h.GetUserSocialConnection).Methods("GET")
+	r.HandleFunc("/api/social-connections/user/{userId}/{provider}", h.DeleteUserSocialConnection).Methods("DELETE")
+	r.HandleFunc("/api/social-connections/provider/{provider}/{providerId}", h.DeleteSocialConnectionByProvider).Methods("DELETE")
 
 	// Social library (cached copies of user created content)
 	r.HandleFunc("/api/social-libraries/user/{userId}", h.ListSocialLibrariesForUser).Methods("GET")

@@ -54,6 +54,61 @@ func TestCreateAndListSocialConnections(t *testing.T) {
 	}
 }
 
+func TestGetAndDeleteSocialConnections(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	h := New(db)
+
+	now := time.Now().UTC()
+
+	// GetUserSocialConnection
+	mock.ExpectQuery(`SELECT id, user_id, provider, provider_id, email, name, created_at FROM public\.social_connections WHERE user_id = \$1 AND provider = \$2`).
+		WithArgs("u1", "instagram").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "userId", "provider", "providerId", "email", "name", "createdAt"}).
+			AddRow("c1", "u1", "instagram", "pid1", sql.NullString{}, sql.NullString{}, now))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/social-connections/user/u1/instagram", nil)
+	req = mux.SetURLVars(req, map[string]string{"userId": "u1", "provider": "instagram"})
+	h.GetUserSocialConnection(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%q", rr.Code, rr.Body.String())
+	}
+
+	// DeleteUserSocialConnection
+	mock.ExpectExec(`DELETE FROM public\.social_connections WHERE user_id = \$1 AND provider = \$2`).
+		WithArgs("u1", "instagram").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, "/api/social-connections/user/u1/instagram", nil)
+	req = mux.SetURLVars(req, map[string]string{"userId": "u1", "provider": "instagram"})
+	h.DeleteUserSocialConnection(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%q", rr.Code, rr.Body.String())
+	}
+
+	// DeleteSocialConnectionByProvider
+	mock.ExpectExec(`DELETE FROM public\.social_connections WHERE provider = \$1 AND provider_id = \$2`).
+		WithArgs("pinterest", "pid2").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, "/api/social-connections/provider/pinterest/pid2", nil)
+	req = mux.SetURLVars(req, map[string]string{"provider": "pinterest", "providerId": "pid2"})
+	h.DeleteSocialConnectionByProvider(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%q", rr.Code, rr.Body.String())
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations: %v", err)
+	}
+}
+
 func TestTeams_CreateGetList(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

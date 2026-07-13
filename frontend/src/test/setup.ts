@@ -52,9 +52,13 @@ class MemoryStorage {
 
 try {
   // Touching localStorage may throw in restricted runtimes; if so, replace it.
-  // eslint-disable-next-line no-void
+  // Also install the polyfill if localStorage is missing entirely (e.g. happy-dom).
+   
   void globalThis.localStorage?.getItem('__probe__');
 } catch {
+  // runtime threw
+}
+if (!globalThis.localStorage) {
   Object.defineProperty(globalThis, 'localStorage', {
     configurable: true,
     value: new MemoryStorage(),
@@ -64,11 +68,11 @@ try {
 // JSDOM doesn't implement media blob URL helpers; many pages rely on them for previews.
 if (typeof URL !== 'undefined') {
   if (typeof URL.createObjectURL !== 'function') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     (URL as any).createObjectURL = () => 'blob:vitest';
   }
   if (typeof URL.revokeObjectURL !== 'function') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     (URL as any).revokeObjectURL = () => void 0;
   }
 }

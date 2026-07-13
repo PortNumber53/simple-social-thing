@@ -16,7 +16,7 @@ describe('ProtectedRoute', () => {
         }),
       };
     });
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+     
     return import('../ProtectedRoute').then(({ ProtectedRoute }) => {
     render(
       <ProtectedRoute fallback={<div>nope</div>}>

@@ -145,10 +145,10 @@ type realtimeEvent struct {
 	PostID string `json:"postId,omitempty"`
 	JobID  string `json:"jobId,omitempty"`
 
-	Status string `json:"status,omitempty"`
+	Status string   `json:"status,omitempty"`
 	IDs    []string `json:"ids,omitempty"`
-	Now    string `json:"now,omitempty"`
-	At     string `json:"at"`
+	Now    string   `json:"now,omitempty"`
+	At     string   `json:"at"`
 }
 
 // EventsWebSocket is an internal WS endpoint (meant to be proxied by the Worker) that streams realtime events.

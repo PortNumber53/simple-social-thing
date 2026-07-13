@@ -27,17 +27,17 @@ func init() {
 }
 
 type bddTestContext struct {
-	db                *sql.DB
-	server            *httptest.Server
-	router            *mux.Router
-	handler           *handlers.Handler
-	lastResponse      *http.Response
-	lastBody          []byte
-	testData          map[string]interface{}
-	wsConnections     map[string]interface{}
-	internalSecret    string
-	origTransport     http.RoundTripper
-	mockHTTPEnabled   bool
+	db              *sql.DB
+	server          *httptest.Server
+	router          *mux.Router
+	handler         *handlers.Handler
+	lastResponse    *http.Response
+	lastBody        []byte
+	testData        map[string]interface{}
+	wsConnections   map[string]interface{}
+	internalSecret  string
+	origTransport   http.RoundTripper
+	mockHTTPEnabled bool
 }
 
 // mockRoundTripper intercepts HTTP requests and returns mock responses

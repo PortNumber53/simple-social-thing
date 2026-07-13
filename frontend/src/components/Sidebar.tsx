@@ -99,7 +99,7 @@ export const Sidebar: React.FC = () => {
   const toggleSection = (title: string) => {
     setSectionState((prev) => {
       const next = { ...prev, [title]: !prev[title] };
-      try { window.localStorage.setItem(SECTION_STORAGE_KEY, JSON.stringify(next)); } catch {}
+      try { window.localStorage.setItem(SECTION_STORAGE_KEY, JSON.stringify(next)); } catch { /* storage may be restricted */ }
       return next;
     });
   };
@@ -121,7 +121,7 @@ export const Sidebar: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
           </div>
-          {!isCollapsed && <span className="text-sm font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">Social Manager</span>}
+          {!isCollapsed && <span className="text-sm font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">Simple Social</span>}
         </Link>
       </div>
 

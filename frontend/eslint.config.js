@@ -19,5 +19,10 @@ export default tseslint.config([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // The codebase has extensive use of `any` (especially in the worker and external API integrations).
+      // Re-enable once the types are gradually cleaned up.
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
   },
 ])

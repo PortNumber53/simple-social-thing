@@ -69,7 +69,7 @@ func (p ThreadsProvider) SyncUser(ctx context.Context, db *sql.DB, userID string
 	}
 
 	// Best-effort Graph call. Fields may vary; adjust later based on API responses.
-	base := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/threads", url.PathEscape(tok.ThreadsUserID))
+	base := fmt.Sprintf("https://graph.facebook.com/v24.0/%s/threads", url.PathEscape(tok.ThreadsUserID))
 	q := url.Values{}
 	q.Set("fields", "id,text,permalink,timestamp,media_type,media_url,thumbnail_url,like_count,reply_count,repost_count")
 	q.Set("limit", "25")

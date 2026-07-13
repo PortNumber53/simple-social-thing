@@ -45,3 +45,21 @@ if ! git diff --quiet; then
   git --no-pager diff --stat
   exit 1
 fi
+
+# Backend tests (unit-level; root BDD test requires a running Postgres, so it is excluded)
+if [ -d "$ROOT_DIR/backend" ]; then
+  if command -v go >/dev/null 2>&1; then
+    (cd "$ROOT_DIR/backend" && run go test ./cmd/... ./internal/... ./db/...)
+  else
+    fail "go not found"
+  fi
+fi
+
+# Frontend tests
+if [ -d "$ROOT_DIR/frontend" ]; then
+  if command -v npm >/dev/null 2>&1; then
+    (cd "$ROOT_DIR/frontend" && run npm run -s test)
+  else
+    fail "npm not found"
+  fi
+fi

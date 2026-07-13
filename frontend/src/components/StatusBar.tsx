@@ -98,7 +98,7 @@ export const StatusBar: React.FC = () => {
 
           {/* Center - Additional info */}
           <div className="hidden md:flex items-center gap-4">
-            <span className="text-slate-400">Social Manager Thing</span>
+            <span className="text-slate-400">Simple Social Thing</span>
           </div>
 
           {/* Right side - Backend clock */}

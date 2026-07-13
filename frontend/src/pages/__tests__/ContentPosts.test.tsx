@@ -24,11 +24,11 @@ describe('ContentPosts', () => {
     vi.restoreAllMocks();
 
     // Prevent real WS connections in tests.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     (globalThis as any).WebSocket = class {
       onmessage: any = null;
       onerror: any = null;
-      constructor(_url: string) {}
+      constructor(_url: string) { void _url; }
       close() {}
     };
 

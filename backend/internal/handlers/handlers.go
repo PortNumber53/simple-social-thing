@@ -45,8 +45,8 @@ import (
 )
 
 type Handler struct {
-	db         *sql.DB
-	rt         *realtimeHub
+	db          *sql.DB
+	rt          *realtimeHub
 	googleOAuth *GoogleOAuthConfig
 }
 
@@ -166,11 +166,11 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 
 	// Include profile in response if present
 	response := map[string]interface{}{
-		"id":         user.ID,
-		"email":      user.Email,
-		"name":       user.Name,
-		"imageUrl":   user.ImageURL,
-		"createdAt":  user.CreatedAt,
+		"id":        user.ID,
+		"email":     user.Email,
+		"name":      user.Name,
+		"imageUrl":  user.ImageURL,
+		"createdAt": user.CreatedAt,
 	}
 
 	if profile.Valid && profile.String != "" {
@@ -217,11 +217,15 @@ func (h *Handler) CreateSocialConnection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if conn.ID == "" {
+		conn.ID = fmt.Sprintf("%s:%s", conn.Provider, conn.ProviderID)
+	}
+
 	query := `
 		INSERT INTO public.social_connections (id, user_id, provider, provider_id, email, name, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW())
-		ON CONFLICT (user_id, provider) DO UPDATE SET
-			provider_id = EXCLUDED.provider_id,
+		ON CONFLICT (provider, provider_id) DO UPDATE SET
+			user_id = EXCLUDED.user_id,
 			email = EXCLUDED.email,
 			name = EXCLUDED.name
 		RETURNING id, user_id, provider, provider_id, email, name, created_at
@@ -261,6 +265,52 @@ func (h *Handler) GetUserSocialConnections(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, connections)
+}
+
+func (h *Handler) GetUserSocialConnection(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := vars["userId"]
+	provider := vars["provider"]
+
+	var conn models.SocialConnection
+	query := `SELECT id, user_id, provider, provider_id, email, name, created_at FROM public.social_connections WHERE user_id = $1 AND provider = $2`
+	err := h.db.QueryRow(query, userID, provider).Scan(&conn.ID, &conn.UserID, &conn.Provider, &conn.ProviderID, &conn.Email, &conn.Name, &conn.CreatedAt)
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, "Social connection not found")
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, conn)
+}
+
+func (h *Handler) DeleteUserSocialConnection(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	userID := vars["userId"]
+	provider := vars["provider"]
+
+	if _, err := h.db.Exec(`DELETE FROM public.social_connections WHERE user_id = $1 AND provider = $2`, userID, provider); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (h *Handler) DeleteSocialConnectionByProvider(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	provider := vars["provider"]
+	providerID := vars["providerId"]
+
+	if _, err := h.db.Exec(`DELETE FROM public.social_connections WHERE provider = $1 AND provider_id = $2`, provider, providerID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
@@ -4654,7 +4704,7 @@ func (h *Handler) publishFacebookPages(ctx context.Context, userID string, capti
 		form := url.Values{}
 		form.Set("message", caption)
 		form.Set("access_token", page.AccessToken)
-		endpoint = fmt.Sprintf("https://graph.facebook.com/v18.0/%s/feed", url.PathEscape(page.ID))
+		endpoint = fmt.Sprintf("https://graph.facebook.com/v24.0/%s/feed", url.PathEscape(page.ID))
 		req, err = http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
 		if err != nil {
 			pageResults = append(pageResults, pageResult{PageID: page.ID, Posted: false, Error: err.Error()})
@@ -4767,7 +4817,7 @@ func fbPublishWithImages(ctx context.Context, client *http.Client, pageID, pageT
 		// Each value must be a JSON object string
 		form.Set(fmt.Sprintf("attached_media[%d]", i), fmt.Sprintf(`{"media_fbid":"%s"}`, id))
 	}
-	endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/feed", url.PathEscape(pageID))
+	endpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s/feed", url.PathEscape(pageID))
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", 0, "", err.Error(), err
@@ -4830,7 +4880,7 @@ func fbUploadPhoto(ctx context.Context, client *http.Client, pageID, pageToken, 
 	_, _ = fw.Write(media.Bytes)
 	_ = w.Close()
 
-	endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/photos", url.PathEscape(pageID))
+	endpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s/photos", url.PathEscape(pageID))
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(buf.Bytes()))
 	if err != nil {
 		return "", "", 0, "", err.Error(), err
@@ -4939,7 +4989,7 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 			if i > 0 {
 				time.Sleep(2 * time.Second)
 			}
-			endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s?fields=status_code&access_token=%s",
+			endpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s?fields=status_code&access_token=%s",
 				url.PathEscape(containerID),
 				url.QueryEscape(accessToken),
 			)
@@ -4987,7 +5037,7 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 		} else {
 			form.Set("caption", caption)
 		}
-		endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media", url.PathEscape(igID))
+		endpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s/media", url.PathEscape(igID))
 		req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Accept", "application/json")
@@ -5025,7 +5075,7 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 		form.Set("children", strings.Join(containerIDs, ","))
 		form.Set("caption", caption)
 		form.Set("access_token", accessToken)
-		endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media", url.PathEscape(igID))
+		endpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s/media", url.PathEscape(igID))
 		req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Accept", "application/json")
@@ -5060,7 +5110,7 @@ func (h *Handler) publishInstagramWithImageURLs(ctx context.Context, userID, cap
 	form := url.Values{}
 	form.Set("creation_id", creationID)
 	form.Set("access_token", accessToken)
-	endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media_publish", url.PathEscape(igID))
+	endpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s/media_publish", url.PathEscape(igID))
 	req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -5148,7 +5198,7 @@ func (h *Handler) publishInstagramReelWithVideoURL(ctx context.Context, userID, 
 			if i > 0 {
 				time.Sleep(2 * time.Second)
 			}
-			endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s?fields=status_code,status&access_token=%s",
+			endpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s?fields=status_code,status&access_token=%s",
 				url.PathEscape(containerID),
 				url.QueryEscape(accessToken),
 			)
@@ -5197,7 +5247,7 @@ func (h *Handler) publishInstagramReelWithVideoURL(ctx context.Context, userID, 
 	form.Set("caption", caption)
 	form.Set("share_to_feed", "true")
 	form.Set("access_token", accessToken)
-	endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media", url.PathEscape(igID))
+	endpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s/media", url.PathEscape(igID))
 	req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -5228,7 +5278,7 @@ func (h *Handler) publishInstagramReelWithVideoURL(ctx context.Context, userID, 
 	pubForm := url.Values{}
 	pubForm.Set("creation_id", containerID)
 	pubForm.Set("access_token", accessToken)
-	pubEndpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media_publish", url.PathEscape(igID))
+	pubEndpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s/media_publish", url.PathEscape(igID))
 	pubReq, _ := http.NewRequestWithContext(ctx, "POST", pubEndpoint, strings.NewReader(pubForm.Encode()))
 	pubReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	pubReq.Header.Set("Accept", "application/json")
@@ -5294,7 +5344,7 @@ func (h *Handler) deleteInstagramMedia(ctx context.Context, userID string, media
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s?access_token=%s",
+	endpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s?access_token=%s",
 		url.PathEscape(strings.TrimSpace(mediaID)),
 		url.QueryEscape(strings.TrimSpace(tok.AccessToken)),
 	)
@@ -5362,7 +5412,7 @@ func (h *Handler) deleteFacebookObject(ctx context.Context, userID string, objec
 	client := &http.Client{Timeout: 30 * time.Second}
 	var lastErr error
 	for _, p := range pages {
-		endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s?access_token=%s",
+		endpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s?access_token=%s",
 			url.PathEscape(strings.TrimSpace(objectID)),
 			url.QueryEscape(strings.TrimSpace(p.AccessToken)),
 		)

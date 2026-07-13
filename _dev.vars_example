@@ -33,12 +33,6 @@ PINTEREST_CLIENT_SECRET=your_pinterest_client_secret_here
 # Used by worker to call Go backend directly in local dev.
 BACKEND_URL=http://localhost:18911
 
-# --- Database / Hyperdrive local ---
-# Used when worker is configured with Hyperdrive in prod; for local dev set this to your Postgres URL.
-# You can reuse DATABASE_URL from your backend .env.
-DATABASE_URL=postgresql://user:password@localhost:5432/dbname
-CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://user:password@localhost:5432/dbname
-
 # --- Frontend build vars (Vite) ---
 VITE_WORKER_ORIGIN=http://localhost:18912
 VITE_GOOGLE_CLIENT_ID=your_google_client_id_here

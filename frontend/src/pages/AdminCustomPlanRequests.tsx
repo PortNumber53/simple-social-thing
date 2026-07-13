@@ -138,7 +138,7 @@ export const AdminCustomPlanRequests: React.FC = () => {
 
   useEffect(() => {
     void loadRequests();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   const updateRequestStatus = async (requestId: string, status: StatusValue) => {

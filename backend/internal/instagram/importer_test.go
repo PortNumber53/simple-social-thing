@@ -2,6 +2,7 @@ package instagram
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -243,6 +244,44 @@ func TestImporter_importForUser_Upserts(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet sql expectations: %v", err)
+	}
+}
+
+func TestFetchMediaInsights_MetricByMediaType(t *testing.T) {
+	tests := []struct {
+		mediaType      string
+		expectedMetric string
+	}{
+		{"VIDEO", "views"},
+		{"REELS", "views"},
+		{"IMAGE", "reach"},
+		{"CAROUSEL_ALBUM", "reach"},
+		{"", "reach"},
+	}
+
+	for _, tt := range tests {
+		var capturedURL string
+		imp := &Importer{
+			Client: &http.Client{
+				Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					capturedURL = r.URL.String()
+					body := fmt.Sprintf(`{"data":[{"name":"%s","values":[{"value":42}]}]}`, tt.expectedMetric)
+					return &http.Response{
+						StatusCode: 200,
+						Header:     make(http.Header),
+						Body:       io.NopCloser(strings.NewReader(body)),
+					}, nil
+				}),
+			},
+		}
+
+		_, err := imp.fetchMediaInsights(context.Background(), "media123", tt.mediaType, "token")
+		if err != nil {
+			t.Fatalf("mediaType=%q: unexpected error: %v", tt.mediaType, err)
+		}
+		if !strings.Contains(capturedURL, "metric="+tt.expectedMetric) {
+			t.Fatalf("mediaType=%q: expected URL to contain metric=%s, got %s", tt.mediaType, tt.expectedMetric, capturedURL)
+		}
 	}
 }
 

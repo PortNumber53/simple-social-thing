@@ -15,6 +15,7 @@ function readCollapsed(): boolean {
   try {
     return window.localStorage.getItem(STORAGE_KEY) === 'true';
   } catch {
+    // Storage access may be restricted (e.g. private mode).
     return false;
   }
 }
@@ -26,7 +27,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const toggle = () => {
     setIsCollapsed((prev) => {
       const next = !prev;
-      try { window.localStorage.setItem(STORAGE_KEY, String(next)); } catch {}
+      try { window.localStorage.setItem(STORAGE_KEY, String(next)); } catch { /* storage may be restricted */ }
       return next;
     });
   };
@@ -39,6 +40,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   return <SidebarContext.Provider value={value}>{children}</SidebarContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useSidebar() {
   const ctx = useContext(SidebarContext);
   if (!ctx) throw new Error('useSidebar must be used within SidebarProvider');

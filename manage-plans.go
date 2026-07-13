@@ -32,8 +32,8 @@ func main() {
 		log.Println("Inserting default plans...")
 
 		plans := []struct {
-			id, name, desc string
-			price          int
+			id, name, desc   string
+			price            int
 			features, limits string
 		}{
 			{

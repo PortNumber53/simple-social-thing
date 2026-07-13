@@ -66,10 +66,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       mq.addEventListener('change', onChange);
       return () => mq.removeEventListener('change', onChange);
     }
-    // Safari < 14
-    // eslint-disable-next-line deprecation/deprecation
+    // Safari < 14 fallback (matchMedia addListener/removeListener are deprecated but still needed).
     mq.addListener(onChange);
-    // eslint-disable-next-line deprecation/deprecation
     return () => mq.removeListener(onChange);
   }, []);
 
@@ -94,6 +92,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useTheme() {
   const ctx = useContext(ThemeContext);
   if (!ctx) throw new Error('useTheme must be used within ThemeProvider');

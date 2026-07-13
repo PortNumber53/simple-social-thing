@@ -54,7 +54,7 @@ describe('Library', () => {
 
     // Mock XHR upload used by Library addFiles().
     FakeXHR.instances = [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     (globalThis as any).XMLHttpRequest = function () {
       const x = new FakeXHR();
       FakeXHR.instances.push(x);

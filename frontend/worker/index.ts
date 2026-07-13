@@ -1,4 +1,3 @@
-import postgres from 'postgres';
 import { buildCorsHeaders, buildSidCookie, getCookie, publicUrlForRequest } from './lib/http';
 import { withCors } from './lib/cors';
 import { requireSid } from './lib/sid';
@@ -21,9 +20,6 @@ interface Env {
   PINTEREST_CLIENT_SECRET?: string;
   THREADS_OAUTH_BASE?: string;
   BACKEND_URL?: string;
-  DATABASE_URL?: string;
-  // Hyperdrive binding is available on env.HYPERDRIVE in CF
-  HYPERDRIVE?: { connectionString?: string };
   // Shared secret used to open internal backend WS connections (Worker -> Backend).
   INTERNAL_WS_SECRET?: string;
 }
@@ -46,8 +42,7 @@ function logWarn(env: Env, ...args: unknown[]) {
   if (isAtLeast(env, 'warn')) console.warn(...args);
 }
 
-// --- Hyperdrive (Postgres) helpers ---
-type SqlClient = ReturnType<typeof postgres> | null;
+// --- Backend social connection helpers ---
 
 type JsonRecord = Record<string, unknown>;
 
@@ -139,74 +134,68 @@ function requestIdFor(request: Request): string {
   );
 }
 
-function getSql(env: Env): SqlClient {
+async function fetchSocialConnection(
+  backendOrigin: string,
+  userId: string,
+  provider: string
+): Promise<{ providerId: string; name: string | null } | null> {
   try {
-    // Prefer Hyperdrive binding in prod; in local, if it resolves to hyperdrive.local (Miniflare),
-    // fall back to DATABASE_URL to avoid local CONNECT_TIMEOUTs.
-    let cs: string | undefined = env.HYPERDRIVE?.connectionString;
-    if (!cs || /hyperdrive\.local/i.test(cs)) {
-      cs = env.DATABASE_URL || cs;
-    }
-    if (!cs) {
-      console.warn('[getSql] No database connection string available. HYPERDRIVE:', !!env.HYPERDRIVE, 'DATABASE_URL:', !!env.DATABASE_URL);
-      return null;
-    }
-    const url = new URL(cs);
-    const sslmode = url.searchParams.get('sslmode');
-    const ssl =
-      sslmode === 'disable'
-        ? false
-        : 'require';
-    console.log('[getSql] Creating postgres connection with ssl:', ssl);
-    return postgres(cs, {
-      ssl,
-      connect_timeout: 5,  // 5 second timeout instead of default 30s
-      idle_timeout: 10,
-      max_lifetime: 60
-    });
+    const res = await fetch(
+      `${backendOrigin}/api/social-connections/user/${encodeURIComponent(userId)}/${encodeURIComponent(provider)}`,
+      { method: 'GET', headers: { Accept: 'application/json' } }
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as { providerId?: string; name?: string | null };
+    if (!body.providerId) return null;
+    return { providerId: body.providerId, name: body.name ?? null };
   } catch (e) {
-    console.error('[getSql] Error creating connection:', e);
+    console.error(`[SocialConnection] fetch ${provider} failed`, e);
     return null;
   }
 }
 
-async function sqlUpsertSocial(sql: NonNullable<SqlClient>, conn: { userId: string; provider: string; providerId: string; email?: string | null; name?: string | null }) {
-  const id = `${conn.provider}:${conn.providerId}`;
-  await sql`
-    INSERT INTO public.social_connections (id, user_id, provider, provider_id, email, name, created_at)
-    VALUES (${id}, ${conn.userId}, ${conn.provider}, ${conn.providerId}, ${conn.email ?? null}, ${conn.name ?? null}, NOW())
-    ON CONFLICT (provider, provider_id) DO UPDATE SET
-      user_id = EXCLUDED.user_id,
-      email = EXCLUDED.email,
-      name = EXCLUDED.name;
-  `;
+async function upsertSocialConnection(
+  backendOrigin: string,
+  conn: { userId: string; provider: string; providerId: string; email?: string | null; name?: string | null }
+): Promise<void> {
+  const res = await fetch(`${backendOrigin}/api/social-connections`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: `${conn.provider}:${conn.providerId}`,
+      userId: conn.userId,
+      provider: conn.provider,
+      providerId: conn.providerId,
+      email: conn.email ?? null,
+      name: conn.name ?? null,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`backend returned ${res.status}: ${text.slice(0, 200)}`);
+  }
 }
 
-async function sqlQuerySocial(sql: NonNullable<SqlClient>, userId: string, provider: string) {
-  const rows = await sql<{
-    id: string; user_id: string; provider: string; provider_id: string; name: string | null
-  }[]>`
-    SELECT id, user_id, provider, provider_id, name
-    FROM public.social_connections
-    WHERE user_id = ${userId} AND provider = ${provider}
-    ORDER BY created_at DESC
-    LIMIT 1;
-  `;
-  return rows[0] || null;
+async function deleteSocialConnection(backendOrigin: string, userId: string, provider: string): Promise<void> {
+  try {
+    await fetch(
+      `${backendOrigin}/api/social-connections/user/${encodeURIComponent(userId)}/${encodeURIComponent(provider)}`,
+      { method: 'DELETE' }
+    );
+  } catch (e) {
+    console.error(`[SocialConnection] delete ${provider} failed`, e);
+  }
 }
 
-async function sqlDeleteSocial(sql: NonNullable<SqlClient>, userId: string, provider: string) {
-  await sql`
-    DELETE FROM public.social_connections
-    WHERE user_id = ${userId} AND provider = ${provider};
-  `;
-}
-
-async function sqlDeleteSocialByProviderId(sql: NonNullable<SqlClient>, provider: string, providerId: string) {
-  await sql`
-    DELETE FROM public.social_connections
-    WHERE provider = ${provider} AND provider_id = ${providerId};
-  `;
+async function deleteSocialConnectionByProvider(backendOrigin: string, provider: string, providerId: string): Promise<void> {
+  try {
+    await fetch(
+      `${backendOrigin}/api/social-connections/provider/${encodeURIComponent(provider)}/${encodeURIComponent(providerId)}`,
+      { method: 'DELETE' }
+    );
+  } catch (e) {
+    console.error(`[SocialConnection] delete by provider ${provider} failed`, e);
+  }
 }
 
 // --- Generic cookie helpers are in ./lib/http.ts (re-exported above) ---
@@ -356,18 +345,19 @@ export default {
         return handleUserSettingsBundle(request, env);
       }
 
-      // DB ping endpoint
+      // DB ping endpoint (proxied to backend health check)
       if (url.pathname === "/api/db/ping") {
-        const sql = getSql(env);
-        if (!sql) {
-          return Response.json({ ok: false, error: 'no_sql_client' }, { status: 503 });
-        }
+        const backendOrigin = getBackendUrl(env, request);
         try {
-          await sql`select 1 as one`;
-          return Response.json({ ok: true });
+          const res = await fetch(`${backendOrigin}/health`, { method: 'GET' });
+          if (res.ok) {
+            return Response.json({ ok: true });
+          }
+          console.error('[DB] ping failed', res.status);
+          return Response.json({ ok: false, error: 'db_unreachable' }, { status: 502 });
         } catch (e) {
           console.error('[DB] ping failed', e);
-          return Response.json({ ok: false, error: 'db_unreachable' }, { status: 500 });
+          return Response.json({ ok: false, error: 'backend_unreachable' }, { status: 502 });
         }
       }
       // Connection status endpoint
@@ -380,29 +370,29 @@ export default {
         const pinConn = parsePinterestCookie(cookie);
         const thConn = parseThreadsCookie(cookie);
         const sid = getCookie(cookie, 'sid');
-        // Prefer Hyperdrive-backed status if we have a session id and SQL client
+        // Prefer backend-persisted status if we have a session id
         if (sid) {
-          const sql = getSql(env);
-          if (sql) {
-            try {
-              const igRow = await sqlQuerySocial(sql, sid, 'instagram');
-              const ttRow = await sqlQuerySocial(sql, sid, 'tiktok');
-              const fbRow = await sqlQuerySocial(sql, sid, 'facebook');
-              const ytRow = await sqlQuerySocial(sql, sid, 'youtube');
-              const pinRow = await sqlQuerySocial(sql, sid, 'pinterest');
-              const thRow = await sqlQuerySocial(sql, sid, 'threads');
-              return Response.json({
-                instagram: igRow ? { connected: true, account: { id: igRow.provider_id, username: igRow.name || null } } : (conn ? { connected: true, account: conn } : { connected: false }),
-                tiktok: ttRow ? { connected: true, account: { id: ttRow.provider_id, displayName: ttRow.name || null } } : (ttConn ? { connected: true, account: ttConn } : { connected: false }),
-                facebook: fbRow ? { connected: true, account: { id: fbRow.provider_id, name: fbRow.name || null } } : (fbConn ? { connected: true, account: fbConn } : { connected: false }),
-                youtube: ytRow ? { connected: true, account: { id: ytRow.provider_id, name: ytRow.name || null } } : (ytConn ? { connected: true, account: ytConn } : { connected: false }),
-                pinterest: pinRow ? { connected: true, account: { id: pinRow.provider_id, name: pinRow.name || null } } : (pinConn ? { connected: true, account: pinConn } : { connected: false }),
-                threads: thRow ? { connected: true, account: { id: thRow.provider_id, name: thRow.name || null } } : (thConn ? { connected: true, account: thConn } : { connected: false }),
-              });
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              logWarn(env, '[IntegrationsStatus] sql failed', { reqId, message });
-            }
+          try {
+            const backendOrigin = getBackendUrl(env, request);
+            const [igRow, ttRow, fbRow, ytRow, pinRow, thRow] = await Promise.all([
+              fetchSocialConnection(backendOrigin, sid, 'instagram'),
+              fetchSocialConnection(backendOrigin, sid, 'tiktok'),
+              fetchSocialConnection(backendOrigin, sid, 'facebook'),
+              fetchSocialConnection(backendOrigin, sid, 'youtube'),
+              fetchSocialConnection(backendOrigin, sid, 'pinterest'),
+              fetchSocialConnection(backendOrigin, sid, 'threads'),
+            ]);
+            return Response.json({
+              instagram: igRow ? { connected: true, account: { id: igRow.providerId, username: igRow.name || null } } : (conn ? { connected: true, account: conn } : { connected: false }),
+              tiktok: ttRow ? { connected: true, account: { id: ttRow.providerId, displayName: ttRow.name || null } } : (ttConn ? { connected: true, account: ttConn } : { connected: false }),
+              facebook: fbRow ? { connected: true, account: { id: fbRow.providerId, name: fbRow.name || null } } : (fbConn ? { connected: true, account: fbConn } : { connected: false }),
+              youtube: ytRow ? { connected: true, account: { id: ytRow.providerId, name: ytRow.name || null } } : (ytConn ? { connected: true, account: ytConn } : { connected: false }),
+              pinterest: pinRow ? { connected: true, account: { id: pinRow.providerId, name: pinRow.name || null } } : (pinConn ? { connected: true, account: pinConn } : { connected: false }),
+              threads: thRow ? { connected: true, account: { id: thRow.providerId, name: thRow.name || null } } : (thConn ? { connected: true, account: thConn } : { connected: false }),
+            });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            logWarn(env, '[IntegrationsStatus] backend fetch failed', { reqId, message });
           }
         }
         // Fallback to cookie-only status
@@ -422,11 +412,9 @@ export default {
         const headers = new Headers({ 'Set-Cookie': buildInstagramCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
         const sid = getCookie(cookie, 'sid');
-        const sql = getSql(env);
-        if (sid && sql) {
-          try {
-            await sqlDeleteSocial(sql, sid, 'instagram');
-          } catch { void 0; }
+        if (sid) {
+          const backendOrigin = getBackendUrl(env, request);
+          try { await deleteSocialConnection(backendOrigin, sid, 'instagram'); } catch { void 0; }
         }
         // Best-effort: clear stored OAuth token server-side (do not block the response)
         if (sid) {
@@ -447,11 +435,9 @@ export default {
         const headers = new Headers({ 'Set-Cookie': buildTikTokCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
         const sid = getCookie(cookie, 'sid');
-        const sql = getSql(env);
-        if (sid && sql) {
-          try {
-            await sqlDeleteSocial(sql, sid, 'tiktok');
-          } catch { void 0; }
+        if (sid) {
+          const backendOrigin = getBackendUrl(env, request);
+          try { await deleteSocialConnection(backendOrigin, sid, 'tiktok'); } catch { void 0; }
         }
         if (sid) {
           const backendOrigin = getBackendUrl(env, request);
@@ -475,11 +461,9 @@ export default {
         const headers = new Headers({ 'Set-Cookie': buildFacebookCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
         const sid = getCookie(cookie, 'sid');
-        const sql = getSql(env);
-        if (sid && sql) {
-          try {
-            await sqlDeleteSocial(sql, sid, 'facebook');
-          } catch { void 0; }
+        if (sid) {
+          const backendOrigin = getBackendUrl(env, request);
+          try { await deleteSocialConnection(backendOrigin, sid, 'facebook'); } catch { void 0; }
         }
         if (sid) {
           const backendOrigin = getBackendUrl(env, request);
@@ -500,9 +484,9 @@ export default {
         const headers = new Headers({ 'Set-Cookie': buildYouTubeCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
         const sid = getCookie(cookie, 'sid');
-        const sql = getSql(env);
-        if (sid && sql) {
-          try { await sqlDeleteSocial(sql, sid, 'youtube'); } catch { void 0; }
+        if (sid) {
+          const backendOrigin = getBackendUrl(env, request);
+          try { await deleteSocialConnection(backendOrigin, sid, 'youtube'); } catch { void 0; }
         }
         if (sid) {
           const backendOrigin = getBackendUrl(env, request);
@@ -526,13 +510,13 @@ export default {
         const cookie = request.headers.get('Cookie') || '';
         const existing = parsePinterestCookie(cookie);
         const sid = getCookie(cookie, 'sid');
-        const sql = getSql(env);
-        if (sid && sql) {
+        if (sid) {
+          const backendOrigin = getBackendUrl(env, request);
           // Prefer deleting by providerId as `sid` can change (we canonicalize users by email in SQL),
           // and older rows may still reference the prior id.
           try {
-            if (existing?.id) await sqlDeleteSocialByProviderId(sql, 'pinterest', existing.id);
-            else await sqlDeleteSocial(sql, sid, 'pinterest');
+            if (existing?.id) await deleteSocialConnectionByProvider(backendOrigin, 'pinterest', existing.id);
+            else await deleteSocialConnection(backendOrigin, sid, 'pinterest');
           } catch { void 0; }
         }
         if (sid) {
@@ -555,9 +539,9 @@ export default {
         const headers = new Headers({ 'Set-Cookie': buildThreadsCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
         const sid = getCookie(cookie, 'sid');
-        const sql = getSql(env);
-        if (sid && sql) {
-          try { await sqlDeleteSocial(sql, sid, 'threads'); } catch { void 0; }
+        if (sid) {
+          const backendOrigin = getBackendUrl(env, request);
+          try { await deleteSocialConnection(backendOrigin, sid, 'threads'); } catch { void 0; }
         }
         if (sid) {
           const backendOrigin = getBackendUrl(env, request);
@@ -2812,7 +2796,7 @@ async function startInstagramOAuth(request: Request, env: Env): Promise<Response
   ].join(',');
 
   const state = crypto.randomUUID();
-  const authUrl = new URL('https://www.facebook.com/v18.0/dialog/oauth');
+  const authUrl = new URL('https://www.facebook.com/v24.0/dialog/oauth');
   authUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID!);
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('scope', scopes);
@@ -2885,7 +2869,7 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
   }
 
   // Exchange code for short-lived token
-  const tokenUrl = new URL('https://graph.facebook.com/v18.0/oauth/access_token');
+  const tokenUrl = new URL('https://graph.facebook.com/v24.0/oauth/access_token');
   tokenUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID!);
   tokenUrl.searchParams.set('client_secret', env.INSTAGRAM_APP_SECRET!);
   tokenUrl.searchParams.set('redirect_uri', redirectUri);
@@ -2909,7 +2893,7 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
     let expiresIn = short.expires_in || 0;
     let rawTokenPayload: unknown = { short };
     try {
-      const longUrl = new URL('https://graph.facebook.com/v18.0/oauth/access_token');
+      const longUrl = new URL('https://graph.facebook.com/v24.0/oauth/access_token');
       longUrl.searchParams.set('grant_type', 'fb_exchange_token');
       longUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID!);
       longUrl.searchParams.set('client_secret', env.INSTAGRAM_APP_SECRET!);
@@ -2930,7 +2914,7 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
     }
 
     // Step 2: Get user pages and find linked Instagram business account
-    const pagesRes = await fetch(`https://graph.facebook.com/v18.0/me/accounts?fields=name,instagram_business_account&access_token=${encodeURIComponent(accessToken)}`);
+    const pagesRes = await fetch(`https://graph.facebook.com/v24.0/me/accounts?fields=name,instagram_business_account&access_token=${encodeURIComponent(accessToken)}`);
     if (!pagesRes.ok) {
       const errText = await pagesRes.text().catch(() => '');
       console.error('[IG] pages_fetch_failed', pagesRes.status, errText);
@@ -2948,21 +2932,21 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
 
     // Step 3: Fetch IG username for display
     const igId = withIg.instagram_business_account!.id;
-    const igRes = await fetch(`https://graph.facebook.com/v18.0/${encodeURIComponent(igId)}?fields=username&access_token=${encodeURIComponent(accessToken)}`);
+    const igRes = await fetch(`https://graph.facebook.com/v24.0/${encodeURIComponent(igId)}?fields=username&access_token=${encodeURIComponent(accessToken)}`);
     const ig = igRes.ok ? ((await igRes.json()) as { username?: string }) : {};
 
-    // Persist connection via Hyperdrive SQL when available (falls back to no-op on DB)
-    const sql = getSql(env);
-    if (sql && sid) {
+    // Persist connection via backend API
+    if (sid) {
+      const backendOrigin = getBackendUrl(env, request);
       try {
-        await sqlUpsertSocial(sql, {
+        await upsertSocialConnection(backendOrigin, {
           userId: sid,
           provider: 'instagram',
           providerId: igId,
           name: ig.username || null,
         });
       } catch (e) {
-        console.error('[DB] sqlUpsertSocial (instagram) failed', e);
+        console.error('[DB] upsertSocialConnection (instagram) failed', e);
       }
     }
 
@@ -3198,18 +3182,18 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
     console.warn('[TT] user_info_error', e);
   }
 
-  // Persist SocialConnections (Hyperdrive) if available
-  const sql = getSql(env);
-  if (sql) {
+  // Persist SocialConnections via backend API
+  if (sid) {
+    const backendOrigin = getBackendUrl(env, request);
     try {
-      await sqlUpsertSocial(sql, {
+      await upsertSocialConnection(backendOrigin, {
         userId: sid,
         provider: 'tiktok',
         providerId: openId,
         name: displayName,
       });
     } catch (e) {
-      console.error('[DB] sqlUpsertSocial (tiktok) failed', e);
+      console.error('[DB] upsertSocialConnection (tiktok) failed', e);
     }
   }
 
@@ -3358,7 +3342,7 @@ async function startFacebookOAuth(request: Request, env: Env): Promise<Response>
     'pages_manage_posts',
   ].join(',');
 
-  const authUrl = new URL('https://www.facebook.com/v18.0/dialog/oauth');
+  const authUrl = new URL('https://www.facebook.com/v24.0/dialog/oauth');
   authUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
   authUrl.searchParams.set('redirect_uri', redirectUri);
   authUrl.searchParams.set('scope', scopes);
@@ -3405,7 +3389,7 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
   }
 
   // Exchange code for short-lived token
-  const tokenUrl = new URL('https://graph.facebook.com/v18.0/oauth/access_token');
+  const tokenUrl = new URL('https://graph.facebook.com/v24.0/oauth/access_token');
   tokenUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
   tokenUrl.searchParams.set('client_secret', env.INSTAGRAM_APP_SECRET);
   tokenUrl.searchParams.set('redirect_uri', redirectUri);
@@ -3428,7 +3412,7 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
   // Exchange for long-lived user token (best-effort)
   let userToken = shortToken;
   try {
-    const longUrl = new URL('https://graph.facebook.com/v18.0/oauth/access_token');
+    const longUrl = new URL('https://graph.facebook.com/v24.0/oauth/access_token');
     longUrl.searchParams.set('grant_type', 'fb_exchange_token');
     longUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
     longUrl.searchParams.set('client_secret', env.INSTAGRAM_APP_SECRET);
@@ -3441,7 +3425,7 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
   } catch { void 0; }
 
   // Get pages and pick the first page; use page access token for page posts API.
-  const pagesRes = await fetch(`https://graph.facebook.com/v18.0/me/accounts?fields=id,name,access_token,tasks&access_token=${encodeURIComponent(userToken)}`);
+  const pagesRes = await fetch(`https://graph.facebook.com/v24.0/me/accounts?fields=id,name,access_token,tasks&access_token=${encodeURIComponent(userToken)}`);
   const pagesText = await pagesRes.text().catch(() => '');
   if (!pagesRes.ok) {
     console.error('[FB] pages_fetch_failed', pagesRes.status, pagesText);
@@ -3459,12 +3443,12 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
     return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
   }
 
-  // Persist SocialConnections (Hyperdrive) if available
-  const sql = getSql(env);
-  if (sql) {
+  // Persist SocialConnections via backend API
+  if (sid) {
+    const backendOrigin = getBackendUrl(env, request);
     try {
-      await sqlUpsertSocial(sql, { userId: sid, provider: 'facebook', providerId: pageId, name: pageName });
-    } catch (e) { console.error('[DB] sqlUpsertSocial (facebook) failed', e); }
+      await upsertSocialConnection(backendOrigin, { userId: sid, provider: 'facebook', providerId: pageId, name: pageName });
+    } catch (e) { console.error('[DB] upsertSocialConnection (facebook) failed', e); }
   }
 
   // Persist OAuth token into backend UserSettings for importer
@@ -3549,7 +3533,7 @@ async function handleFacebookPermissions(request: Request, env: Env): Promise<Re
       return new Response(JSON.stringify({ ok: true, connected: true, hasUserToken: false, pagesCount: pages.length }), { status: 200, headers });
     }
 
-    const permRes = await fetch(`https://graph.facebook.com/v18.0/me/permissions?access_token=${encodeURIComponent(userToken)}`, {
+    const permRes = await fetch(`https://graph.facebook.com/v24.0/me/permissions?access_token=${encodeURIComponent(userToken)}`, {
       headers: { Accept: 'application/json' },
     });
     const permText = await permRes.text().catch(() => '');
@@ -3768,13 +3752,13 @@ async function handleYouTubeCallback(request: Request, env: Env): Promise<Respon
     channelId = `youtube-${sid}`;
   }
 
-  // Persist SocialConnections (Hyperdrive) if available
-  const sql = getSql(env);
-  if (sql && channelId) {
+  // Persist SocialConnections via backend API
+  if (sid && channelId) {
+    const backendOrigin = getBackendUrl(env, request);
     try {
-      await sqlUpsertSocial(sql, { userId: sid, provider: 'youtube', providerId: channelId, name: channelTitle });
+      await upsertSocialConnection(backendOrigin, { userId: sid, provider: 'youtube', providerId: channelId, name: channelTitle });
     } catch (e) {
-      console.error('[DB] sqlUpsertSocial (youtube) failed', e);
+      console.error('[DB] upsertSocialConnection (youtube) failed', e);
     }
   }
 
@@ -3945,12 +3929,12 @@ async function handlePinterestCallback(request: Request, env: Env): Promise<Resp
     accountId = `pinterest-${sid}`;
   }
 
-  const sql = getSql(env);
-  if (sql && accountId) {
+  if (sid && accountId) {
+    const backendOrigin = getBackendUrl(env, request);
     try {
-      await sqlUpsertSocial(sql, { userId: sid, provider: 'pinterest', providerId: accountId, name: accountName });
+      await upsertSocialConnection(backendOrigin, { userId: sid, provider: 'pinterest', providerId: accountId, name: accountName });
     } catch (e) {
-      console.error('[DB] sqlUpsertSocial (pinterest) failed', e);
+      console.error('[DB] upsertSocialConnection (pinterest) failed', e);
     }
   }
 
@@ -4121,12 +4105,12 @@ async function handleThreadsCallback(request: Request, env: Env): Promise<Respon
     console.warn('[TH] me_error', e);
   }
 
-  const sql = getSql(env);
-  if (sql && threadsUserId) {
+  if (sid && threadsUserId) {
+    const backendOrigin = getBackendUrl(env, request);
     try {
-      await sqlUpsertSocial(sql, { userId: sid, provider: 'threads', providerId: threadsUserId, name });
+      await upsertSocialConnection(backendOrigin, { userId: sid, provider: 'threads', providerId: threadsUserId, name });
     } catch (e) {
-      console.error('[DB] sqlUpsertSocial (threads) failed', e);
+      console.error('[DB] upsertSocialConnection (threads) failed', e);
     }
   }
 

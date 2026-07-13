@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { GoogleLoginButton } from './GoogleLoginButton';
 
-const navLinks = [
+const publicLinks = [
   { href: '/', label: 'Home' },
   { href: '/features', label: 'Features' },
   { href: '/pricing', label: 'Pricing' },
@@ -9,6 +11,7 @@ const navLinks = [
 
 export const TopNavigation: React.FC = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { isAuthenticated, user, logout } = useAuth();
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-b border-slate-200/50 dark:border-slate-700/50">
@@ -21,20 +24,48 @@ export const TopNavigation: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
-            <span className="text-lg font-bold gradient-text">Social Manager Thing</span>
+            <span className="text-lg font-bold gradient-text">Simple Social Thing</span>
           </a>
 
           {/* Desktop links */}
           <div className="hidden md:flex items-center gap-1">
-            {navLinks.map((link) => (
-              <a
-                key={link.href}
-                href={link.href}
-                className="inline-flex items-center h-10 px-3 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
-              >
-                {link.label}
-              </a>
-            ))}
+            {isAuthenticated ? (
+              <>
+                <a
+                  href="/dashboard"
+                  className="inline-flex items-center h-10 px-3 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+                >
+                  Dashboard
+                </a>
+                <a
+                  href="/profile"
+                  className="inline-flex items-center h-10 px-3 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+                >
+                  {user?.name || 'Profile'}
+                </a>
+                <button
+                  onClick={logout}
+                  className="inline-flex items-center h-10 px-3 rounded-md text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                >
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <>
+                {publicLinks.map((link) => (
+                  <a
+                    key={link.href}
+                    href={link.href}
+                    className="inline-flex items-center h-10 px-3 rounded-md text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+                  >
+                    {link.label}
+                  </a>
+                ))}
+                <div className="pl-2">
+                  <GoogleLoginButton buttonText="Sign in" className="!px-4 !py-2" />
+                </div>
+              </>
+            )}
           </div>
 
           {/* Mobile toggle */}
@@ -57,15 +88,43 @@ export const TopNavigation: React.FC = () => {
       {/* Mobile menu */}
       {mobileOpen && (
         <div className="md:hidden border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 space-y-1">
-          {navLinks.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            >
-              {link.label}
-            </a>
-          ))}
+          {isAuthenticated ? (
+            <>
+              <a
+                href="/dashboard"
+                className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                Dashboard
+              </a>
+              <a
+                href="/profile"
+                className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                {user?.name || 'Profile'}
+              </a>
+              <button
+                onClick={logout}
+                className="block w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+              >
+                Sign out
+              </button>
+            </>
+          ) : (
+            <>
+              {publicLinks.map((link) => (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  className="block px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  {link.label}
+                </a>
+              ))}
+              <div className="px-3 py-2">
+                <GoogleLoginButton buttonText="Sign in" className="w-full" />
+              </div>
+            </>
+          )}
         </div>
       )}
     </nav>

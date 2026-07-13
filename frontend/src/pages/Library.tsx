@@ -250,7 +250,7 @@ export const Library: React.FC = () => {
 
     ws.onopen = () => {
       isOpen = true;
-      // eslint-disable-next-line no-console
+       
       console.info('[Library] realtime websocket connected');
     };
     ws.onmessage = (ev) => {
@@ -283,12 +283,12 @@ export const Library: React.FC = () => {
     };
     ws.onerror = () => {
       // Keep quiet in-prod; this just helps local debugging.
-      // eslint-disable-next-line no-console
+       
       console.warn('[Library] realtime websocket error');
     };
     ws.onclose = () => {
       isOpen = false;
-      // eslint-disable-next-line no-console
+       
       console.warn('[Library] realtime websocket closed');
     };
 
@@ -558,7 +558,7 @@ export const Library: React.FC = () => {
     };
 
     void loadUploads(uploadFolder);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [uploadFolder]);
 
   useEffect(() => {
@@ -582,7 +582,7 @@ export const Library: React.FC = () => {
         /* ignore */
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   const reorderUploads = (fromId: string, toId: string) => {

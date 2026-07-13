@@ -255,7 +255,7 @@ func (i *Importer) importForUser(ctx context.Context, userID string, tok oauthRe
 		if !insightsAvailable {
 			break
 		}
-		views, err := i.fetchMediaInsights(ctx, media[idx].ID, tok.AccessToken)
+		views, err := i.fetchMediaInsights(ctx, media[idx].ID, media[idx].MediaType, tok.AccessToken)
 		if err != nil {
 			// If we get a permission error, skip insights for all remaining items
 			if strings.Contains(err.Error(), "does not have permission") {
@@ -337,7 +337,7 @@ func (i *Importer) fetchRecentMedia(ctx context.Context, igBusinessID string, ac
 		default:
 		}
 
-		u := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/media?fields=id,caption,media_type,permalink,timestamp,like_count,media_url,thumbnail_url&limit=100",
+		u := fmt.Sprintf("https://graph.facebook.com/v24.0/%s/media?fields=id,caption,media_type,permalink,timestamp,like_count,media_url,thumbnail_url&limit=100",
 			igBusinessID,
 		)
 		if after != "" {
@@ -381,13 +381,26 @@ func (i *Importer) fetchRecentMedia(ctx context.Context, igBusinessID string, ac
 }
 
 // fetchMediaInsights retrieves view count for a single media item from Instagram insights API.
-func (i *Importer) fetchMediaInsights(ctx context.Context, mediaID string, accessToken string) (int64, error) {
-	// Instagram insights for media require the insights metric (views, impressions, etc.)
-	// For reels: plays is the primary metric
-	// For posts: impressions is the primary metric
-	// Note: insights endpoint requires instagram_business_content_access permission
-	u := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/insights?metric=impressions,plays&access_token=%s",
+func (i *Importer) fetchMediaInsights(ctx context.Context, mediaID string, mediaType string, accessToken string) (int64, error) {
+	// Instagram insights metrics are media-type dependent. Valid metrics for a media object include
+	// reach, saved, likes, comments, shares, total_interactions, views,
+	// ig_reels_video_view_total_time, ig_reels_avg_watch_time, reels_skip_rate, reposts, etc.
+	// 'plays' and 'impressions' are not accepted on v22.0+; for video/reels we use 'views',
+	// for images/carousels we use 'reach'.
+	mt := strings.ToUpper(strings.TrimSpace(mediaType))
+	var metric string
+	switch mt {
+	case "VIDEO", "REELS":
+		metric = "views"
+	case "IMAGE", "CAROUSEL_ALBUM":
+		metric = "reach"
+	default:
+		metric = "reach"
+	}
+
+	u := fmt.Sprintf("https://graph.facebook.com/v24.0/%s/insights?metric=%s&access_token=%s",
 		mediaID,
+		metric,
 		accessToken,
 	)
 

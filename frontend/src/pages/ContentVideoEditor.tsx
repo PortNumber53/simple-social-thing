@@ -883,7 +883,7 @@ export const ContentVideoEditor: React.FC = () => {
   useEffect(() => {
     if (!galleryOpen) return;
     void loadGalleryItems(galleryFolder);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [galleryOpen, galleryFolder]);
 
   const addFromGallery = async () => {
@@ -1556,8 +1556,8 @@ export const ContentVideoEditor: React.FC = () => {
                         <div className="text-sm text-slate-600 dark:text-slate-300">No visual clip at the playhead.</div>
                       </div>
                     ) : activeVisual.kind === 'image' ? (
-                      // eslint-disable-next-line jsx-a11y/alt-text
                       <img
+                        alt=""
                         src={activeVisualMediaAtPlayhead?.part.objectUrl || activeVisualMediaClip?.parts[0]?.objectUrl}
                         className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none"
                         draggable={false}

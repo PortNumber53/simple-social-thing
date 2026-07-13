@@ -68,7 +68,7 @@ describe('Pages smoke', () => {
 
   it('renders public pages', () => {
     renderWithProviders(<Home />);
-    expect(screen.getByRole('heading', { name: /Social Manager Thing/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Simple Social Thing/i })).toBeInTheDocument();
 
     renderWithProviders(<Features />, { route: '/features' });
     expect(screen.getByRole('heading', { name: /Features/i })).toBeInTheDocument();
@@ -92,7 +92,7 @@ describe('Pages smoke', () => {
     expect(screen.getByRole('heading', { name: /Instagram/i })).toBeInTheDocument();
   });
 
-  it('renders SMT pricing tiers from the product requirements', () => {
+  it('renders Simple Social Thing pricing tiers from the product requirements', () => {
     renderWithProviders(<Pricing />, { route: '/pricing' });
 
     expect(screen.getByRole('heading', { name: /Pricing/i })).toBeInTheDocument();

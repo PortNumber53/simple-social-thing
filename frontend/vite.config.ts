@@ -39,7 +39,7 @@ export default defineConfig(({ mode }) => {
       },
       // Allow accessing Vite through nginx with custom dev hostnames.
       // Vite blocks unknown Host headers by default to prevent DNS rebinding attacks.
-      allowedHosts: ['simple.dev.portnumber53.com', '.dev.portnumber53.com'],
+      allowedHosts: ['simple.dev.portnumber53.com', '.dev.portnumber53.com', 'simple14.hotel.portnumber53.com', '.hotel.portnumber53.com'],
       port: 18910,
       strictPort: true,
       proxy: {

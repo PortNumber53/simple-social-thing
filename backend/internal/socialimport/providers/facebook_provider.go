@@ -131,7 +131,7 @@ func (p FacebookProvider) SyncUser(ctx context.Context, db *sql.DB, userID strin
 		}
 
 		// Prefer the published_posts edge; some page setups return empty results on /posts.
-		endpoint := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/published_posts", url.PathEscape(page.ID))
+		endpoint := fmt.Sprintf("https://graph.facebook.com/v24.0/%s/published_posts", url.PathEscape(page.ID))
 		q := url.Values{}
 		q.Set("fields", "id,message,created_time,permalink_url,attachments{type,url,media}")
 		q.Set("limit", "25")
