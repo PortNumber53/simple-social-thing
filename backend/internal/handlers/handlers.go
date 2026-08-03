@@ -3496,6 +3496,15 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 	`, jobID)
 
 	// Realtime: let the UI know we're actively processing.
+	// Emit a publish_job event for all jobs (including direct publishes with no
+	// associated post) so the frontend can track progress via the events WS
+	// without polling. The post.updated event is only relevant for scheduled posts.
+	h.emitEvent(userID, realtimeEvent{
+		Type:   "publish_job",
+		JobID:  jobID,
+		Status: "running",
+		At:     time.Now().UTC().Format(time.RFC3339),
+	})
 	if strings.TrimSpace(postID) != "" {
 		h.emitEvent(userID, realtimeEvent{
 			Type:   "post.updated",
@@ -3980,6 +3989,16 @@ afterInstagramProvider:
 	log.Printf("[PublishJob] done jobId=%s userId=%s postId=%s status=%s dur=%dms failures=%v", jobID, userID, postID, finalStatus, time.Since(start).Milliseconds(), failures)
 
 	// Realtime notification (proxied to frontend via Worker WS).
+	// Emit a publish_job event for all jobs (including direct publishes with no
+	// associated post) so the frontend can render results without polling. The
+	// result payload is included so the client doesn't need an extra HTTP fetch.
+	h.emitEvent(userID, realtimeEvent{
+		Type:   "publish_job",
+		JobID:  jobID,
+		Status: finalStatus,
+		Result: resJSON,
+		At:     time.Now().UTC().Format(time.RFC3339),
+	})
 	if strings.TrimSpace(postID) != "" {
 		h.emitEvent(userID, realtimeEvent{
 			Type:   "post.publish",

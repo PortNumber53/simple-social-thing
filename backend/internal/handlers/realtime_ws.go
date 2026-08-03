@@ -149,6 +149,10 @@ type realtimeEvent struct {
 	IDs    []string `json:"ids,omitempty"`
 	Now    string   `json:"now,omitempty"`
 	At     string   `json:"at"`
+
+	// Result carries the full job result payload for terminal publish_job events,
+	// so the frontend can render results without an extra HTTP round-trip.
+	Result json.RawMessage `json:"result,omitempty"`
 }
 
 // EventsWebSocket is an internal WS endpoint (meant to be proxied by the Worker) that streams realtime events.

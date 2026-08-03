@@ -715,6 +715,10 @@ export default {
       if (url.pathname === "/api/posts/publish/ws") {
         return handlePublishJobWs(request, env);
       }
+      // Job status fetch (used as a fallback when realtime events are missed).
+      if (url.pathname.startsWith("/api/posts/publish-jobs/") && request.method === "GET") {
+        return handleGetPublishJob(request, env);
+      }
 	  if (url.pathname.startsWith("/api/instagram-agent/")) {
 		return handleInstagramAgent(request, env);
 	  }
@@ -1594,6 +1598,34 @@ async function handleFacebookWebhook(request: Request, env: Env): Promise<Respon
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// GET /api/posts/publish-jobs/:jobId — proxies backend job status for the frontend.
+// Used as a fallback when realtime events are missed (e.g. WS reconnect).
+async function handleGetPublishJob(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const jobId = url.pathname.slice("/api/posts/publish-jobs/".length).replace(/\/+$/g, "");
+  const headers = buildCorsHeaders(request);
+  if (!jobId) {
+    return new Response(JSON.stringify({ ok: false, error: "missing_jobId" }), { status: 400, headers });
+  }
+  const cookieHeader = request.headers.get("Cookie") || "";
+  const sid = getCookie(cookieHeader, "sid");
+  if (!sid) {
+    return new Response(JSON.stringify({ ok: false, error: "unauthenticated" }), { status: 401, headers });
+  }
+  const backendOrigin = getBackendUrl(env, request);
+  try {
+    const res = await fetch(`${backendOrigin}/api/social-posts/publish-jobs/${encodeURIComponent(jobId)}`, {
+      headers: { Accept: "application/json" },
+    });
+    const text = await res.text().catch(() => "");
+    headers.set("Content-Type", "application/json");
+    return new Response(text, { status: res.status, headers });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return new Response(JSON.stringify({ ok: false, error: "backend_unreachable", details: { message } }), { status: 502, headers });
+  }
 }
 
 async function handlePublishJobWs(request: Request, env: Env): Promise<Response> {

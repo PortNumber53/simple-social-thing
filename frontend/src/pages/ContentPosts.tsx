@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useIntegrations } from '../contexts/IntegrationsContext';
 import { apiJson } from '../lib/api';
-import { useJobWebSocket } from '../lib/useJobWebSocket';
 import { ProviderPicker } from '../components/ProviderPicker';
 import { FacebookPagePicker } from '../components/FacebookPagePicker';
 import { MediaPicker } from '../components/MediaPicker';
@@ -56,13 +55,13 @@ export const ContentPosts: React.FC = () => {
   const [fbExpanded, setFbExpanded] = useState(true);
   const didInit = useRef(false);
   const facebookProviderRef = useRef<HTMLInputElement | null>(null);
-  const onJobMessage = useCallback((msg: any) => {
+
+  // Process a terminal publish-job result (from realtime event or fallback fetch).
+  const handleJobResult = useCallback((job: { status?: string; result?: PublishResponse }) => {
     try {
-      const job = msg?.job;
       const st = typeof job?.status === 'string' ? job.status : null;
       if (st) setStatus(`Publish job ${st}...`);
 
-      // Backend job status response includes `result` (JSON) when finished.
       const result = job?.result;
       if (result && typeof result === 'object' && (result as any).results) {
         setResults(result as PublishResponse);
@@ -70,19 +69,75 @@ export const ContentPosts: React.FC = () => {
         const anyFail = rmap && typeof rmap === 'object' && Object.values(rmap).some((r: any) => !r?.ok);
         if (st === 'failed' || anyFail) setStatus('Publish completed with errors. Expand Results for details.');
         if (st === 'completed' && !anyFail) setStatus('Publish completed successfully.');
+      } else if (st === 'completed') {
+        setStatus('Publish completed successfully.');
+      } else if (st === 'failed') {
+        setStatus('Publish completed with errors. Expand Results for details.');
+      }
+
+      if (st === 'completed' || st === 'failed') {
+        setJobId(null);
       }
     } catch {
       /* ignore */
     }
   }, []);
 
-  useJobWebSocket({
-    jobId,
-    enabled: !!jobId,
-    path: (id) => `/api/posts/publish/ws?jobId=${encodeURIComponent(id)}`,
-    onMessage: onJobMessage,
-    onError: () => setStatus('Publish started, but realtime updates failed (websocket error).'),
-  });
+  // Subscribe to realtime publish_job events (push-based via the global events WS
+  // that StatusBar maintains). Falls back to a single HTTP poll every 15s if the
+  // WS is disconnected or events are missed — far fewer subrequests than the old
+  // 1-second polling WebSocket, which exhausted the Cloudflare Worker limit.
+  useEffect(() => {
+    if (!jobId) return;
+    let done = false;
+
+    const onRealtimeEvent = (e: Event) => {
+      const msg = (e as CustomEvent).detail as any;
+      if (!msg || msg.type !== 'publish_job') return;
+      if (String(msg.jobId || '') !== String(jobId)) return;
+      const st = typeof msg.status === 'string' ? msg.status : null;
+      if (st && st !== 'completed' && st !== 'failed') {
+        setStatus(`Publish job ${st}...`);
+        return;
+      }
+      if (st === 'completed' || st === 'failed') {
+        done = true;
+        handleJobResult({ status: st, result: msg.result });
+      }
+    };
+    window.addEventListener('realtime:event', onRealtimeEvent);
+
+    // Fallback: if no realtime event arrives (e.g. WS disconnected), poll the
+    // job status endpoint once every 15 seconds. At most ~4 subrequests per minute
+    // instead of 60+, staying well within the Worker subrequest limit.
+    let fallbackTimer: number | null = null;
+    const scheduleFallback = () => {
+      fallbackTimer = window.setTimeout(async () => {
+        if (done) return;
+        try {
+          const res = await apiJson<any>(`/api/posts/publish-jobs/${encodeURIComponent(jobId)}`, { method: 'GET' });
+          if (done) return;
+          const job = res.data;
+          const st = typeof job?.status === 'string' ? job.status : null;
+          if (st === 'completed' || st === 'failed') {
+            done = true;
+            handleJobResult({ status: st, result: job?.result });
+            return;
+          }
+        } catch {
+          /* ignore — will retry */
+        }
+        if (!done) scheduleFallback();
+      }, 15000);
+    };
+    scheduleFallback();
+
+    return () => {
+      done = true;
+      window.removeEventListener('realtime:event', onRealtimeEvent);
+      if (fallbackTimer) window.clearTimeout(fallbackTimer);
+    };
+  }, [jobId, handleJobResult]);
 
   // Allow linking into the publisher with a pre-filled caption (used by the new local Library page).
   useEffect(() => {
