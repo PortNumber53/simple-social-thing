@@ -47,11 +47,12 @@ func (h *Handler) GoogleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Build the redirect_uri that must match what was sent to Google.
 	redirectURI := strings.TrimRight(cfg.BackendURL, "/") + cfg.CallbackURL
+	log.Printf("[GoogleOAuth] callback received: frontendURL=%s backendURL=%s redirectURI=%s", frontendURL, cfg.BackendURL, redirectURI)
 
 	// Exchange authorization code for access token.
 	tokenData, err := exchangeGoogleCode(code, cfg.ClientID, cfg.Secret, redirectURI)
 	if err != nil {
-		log.Printf("[GoogleOAuth] token exchange failed: %v", err)
+		log.Printf("[GoogleOAuth] token exchange failed: redirectURI=%s err=%v", redirectURI, err)
 		redirectWithError(w, r, frontendURL, "token_exchange_failed", "Failed to exchange authorization code")
 		return
 	}
