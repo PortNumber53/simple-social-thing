@@ -36,7 +36,7 @@ BACKEND_URL=http://localhost:18911
 # --- Frontend build vars (Vite) ---
 VITE_WORKER_ORIGIN=http://localhost:18912
 VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
-VITE_BACKEND_URL=http://localhost:18911
+VITE_BACKEND_ORIGIN=http://localhost:18911
 VITE_DISABLE_CF_PLUGIN=1
 
 # --- Local dev switches ---

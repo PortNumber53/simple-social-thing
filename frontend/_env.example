@@ -3,7 +3,7 @@
 VITE_GOOGLE_CLIENT_ID=your_google_client_id_here
 
 # Backend URL (for Google OAuth redirect)
-VITE_BACKEND_URL=http://localhost:18911
+VITE_BACKEND_ORIGIN=http://localhost:18911
 
 # Stripe Configuration (for frontend payment processing)
 VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...

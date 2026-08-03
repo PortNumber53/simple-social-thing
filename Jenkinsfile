@@ -198,7 +198,7 @@ pipeline {
                 set -euo pipefail
                 if [ -z "${BACKEND_URL:-}" ]; then
                   echo "ERROR: BACKEND_URL is empty. The Jenkins credential 'prod-backend-url-simple-social-thing' is missing or not configured."
-                  echo "The frontend build requires VITE_BACKEND_URL (derived from BACKEND_URL) to build Google OAuth redirect URIs correctly."
+                  echo "The frontend build requires VITE_BACKEND_ORIGIN (derived from BACKEND_URL) to build Google OAuth redirect URIs correctly."
                   exit 1
                 fi
                 bash deploy/jenkins-deploy-frontend.sh

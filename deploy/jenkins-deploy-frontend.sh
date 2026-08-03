@@ -40,7 +40,7 @@ npm ci --no-audit --no-fund
 # Build-time (Vite) vars
 export VITE_GOOGLE_CLIENT_ID="${VITE_GOOGLE_CLIENT_ID:-${GOOGLE_CLIENT_ID:-}}"
 export VITE_STRIPE_PUBLISHABLE_KEY="${VITE_STRIPE_PUBLISHABLE_KEY:-${STRIPE_PUBLISHABLE_KEY:-}}"
-export VITE_BACKEND_URL="${VITE_BACKEND_URL:-${BACKEND_URL:-}}"
+export VITE_BACKEND_ORIGIN="${VITE_BACKEND_ORIGIN:-${BACKEND_URL:-}}"
 
 echo "=== Frontend: syncing Cloudflare Worker secrets ==="
 # Default to syncing secrets on deploy; set SYNC_SECRETS=false to skip.

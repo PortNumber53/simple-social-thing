@@ -7,7 +7,7 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		VITE_GOOGLE_CLIENT_ID: string;
-		VITE_BACKEND_URL: string;
+		VITE_BACKEND_ORIGIN: string;
 		ASSETS: Fetcher;
 	}
 }
