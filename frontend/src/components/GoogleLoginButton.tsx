@@ -18,7 +18,17 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
 
     // Generate Google OAuth URL that redirects to the backend API
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    const backendUrl = (import.meta.env.VITE_BACKEND_URL || window.location.origin).replace(/\/+$/, '');
+    const rawBackendUrl = import.meta.env.VITE_BACKEND_URL;
+    if (!rawBackendUrl) {
+      const msg = 'VITE_BACKEND_URL is not set. The frontend bundle was built without a backend URL, ' +
+        'so Google OAuth cannot redirect to the API. Set VITE_BACKEND_URL (e.g. https://api-simple16.dev.portnumber53.com) ' +
+        'in the build environment and rebuild.';
+      console.error('[GoogleLoginButton]', msg);
+      alert(msg);
+      setIsLoading(false);
+      return;
+    }
+    const backendUrl = rawBackendUrl.replace(/\/+$/, '');
     const redirectUri = `${backendUrl}/auth/google/callback`;
     const scope = 'openid email profile';
     const state = Math.random().toString(36).substring(2, 15);

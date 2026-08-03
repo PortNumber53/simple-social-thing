@@ -295,7 +295,28 @@ export default {
       return handleSunoCallback(request, env);
     }
 
-    // Google OAuth login callback is now handled by the Go backend at /auth/google/callback.
+    // Google OAuth login callback — proxy to the Go backend at /auth/google/callback.
+    if (url.pathname === "/auth/google/callback") {
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        const res = await fetch(`${backendOrigin}/auth/google/callback${url.search}`, {
+          method: request.method,
+          headers: { Accept: 'application/json' },
+          redirect: 'manual', // backend returns 302 to frontend; pass it through unchanged
+        });
+        const respHeaders = new Headers(res.headers);
+        respHeaders.set('Access-Control-Allow-Origin', request.headers.get('Origin') || '*');
+        respHeaders.set('Access-Control-Allow-Credentials', 'true');
+        respHeaders.set('Vary', 'Origin');
+        return new Response(res.body, {
+          status: res.status,
+          headers: respHeaders,
+        });
+      } catch (err) {
+        console.error("[Worker] Failed to proxy Google OAuth callback", err);
+        return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+      }
+    }
 
     // Proxy public media from backend (uploaded assets under /media/)
     if (url.pathname.startsWith("/media/")) {
@@ -1130,7 +1151,34 @@ export default {
         }
       }
 
-      return Response.json({ ok: true });
+      // Generic catch-all: proxy any remaining /api/* route to the backend.
+      // Specific routes above handle auth/session wiring; this covers everything else
+      // (e.g., /api/auth/google/callback, /api/health, future endpoints).
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        const proxyHeaders = new Headers();
+        for (const key of ['Content-Type', 'Authorization', 'Cookie', 'Accept']) {
+          const v = request.headers.get(key);
+          if (v) proxyHeaders.set(key, v);
+        }
+        const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
+        const res = await fetch(`${backendOrigin}${url.pathname}${url.search}`, {
+          method: request.method,
+          headers: proxyHeaders,
+          body: hasBody ? request.body : undefined,
+        });
+        const data = await res.text();
+        const respHeaders = buildCorsHeaders(request);
+        const resCt = res.headers.get('Content-Type');
+        if (resCt) respHeaders.set('Content-Type', resCt);
+        return new Response(data, {
+          status: res.status,
+          headers: respHeaders,
+        });
+      } catch (err) {
+        console.error(`[Worker] Failed to proxy ${request.method} ${url.pathname}`, err);
+        return Response.json({ ok: false, error: "backend_unreachable" }, { status: 502, headers: buildCorsHeaders(request) });
+      }
     }
 
     // For all non-API requests, delegate to the static assets handler
