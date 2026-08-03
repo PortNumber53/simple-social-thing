@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -110,12 +111,14 @@ func (h *Handler) GenerateInstagramContent(w http.ResponseWriter, r *http.Reques
 
 	res, err := instagramAgentHTTPClient.Do(req)
 	if err != nil {
+		log.Printf("[InstagramAgent] LLM request failed: baseURL=%s err=%v", baseURL, err)
 		writeError(w, http.StatusBadGateway, "llm_unreachable")
 		return
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+		log.Printf("[InstagramAgent] LLM returned non-2xx: baseURL=%s status=%d body=%s", baseURL, res.StatusCode, truncate(string(b), 200))
 		writeJSON(w, http.StatusBadGateway, map[string]interface{}{
 			"error":   "llm_request_failed",
 			"status":  res.StatusCode,
@@ -148,10 +151,12 @@ func (h *Handler) GenerateInstagramContent(w http.ResponseWriter, r *http.Reques
 
 	var result openAIChatResponse
 	if err := json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(&result); err != nil {
+		log.Printf("[InstagramAgent] LLM response decode failed: err=%v", err)
 		writeError(w, http.StatusBadGateway, "llm_invalid_response")
 		return
 	}
 	if len(result.Choices) == 0 || strings.TrimSpace(result.Choices[0].Message.Content) == "" {
+		log.Printf("[InstagramAgent] LLM returned empty response: baseURL=%s model=%s", baseURL, model)
 		writeError(w, http.StatusBadGateway, "llm_empty_response")
 		return
 	}
@@ -282,17 +287,20 @@ func (h *Handler) GenerateInstagramImage(w http.ResponseWriter, r *http.Request)
 	req.Header.Set("Content-Type", "application/json")
 	res, err := instagramAgentHTTPClient.Do(req)
 	if err != nil {
+		log.Printf("[InstagramAgent] Image generator request failed: endpoint=%s err=%v", endpoint, err)
 		writeError(w, http.StatusBadGateway, "image_generator_unreachable")
 		return
 	}
 	defer res.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(res.Body, 32<<20))
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		log.Printf("[InstagramAgent] Image generator returned non-2xx: endpoint=%s status=%d body=%s", endpoint, res.StatusCode, truncate(string(b), 200))
 		writeJSON(w, http.StatusBadGateway, map[string]interface{}{"error": "image_generation_failed", "status": res.StatusCode, "details": truncate(string(b), 1200)})
 		return
 	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(b, &result); err != nil {
+		log.Printf("[InstagramAgent] Image generator response decode failed: err=%v", err)
 		writeError(w, http.StatusBadGateway, "image_generator_invalid_response")
 		return
 	}
@@ -314,6 +322,7 @@ func (h *Handler) GetInstagramAccount(w http.ResponseWriter, r *http.Request) {
 		"access_token": {tok.AccessToken},
 	})
 	if err != nil {
+		log.Printf("[InstagramAgent] GetInstagramAccount failed: userId=%s err=%v", userID, err)
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -334,6 +343,7 @@ func (h *Handler) GetInstagramInsights(w http.ResponseWriter, r *http.Request) {
 	if mediaID != "" {
 		result, err := getInstagramMediaInsights(r.Context(), tok, mediaID)
 		if err != nil {
+			log.Printf("[InstagramAgent] GetInstagramInsights(media) failed: userId=%s mediaId=%s err=%v", userID, mediaID, err)
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
@@ -348,6 +358,7 @@ func (h *Handler) GetInstagramInsights(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := getInstagramAccountInsights(r.Context(), tok, period)
 	if err != nil {
+		log.Printf("[InstagramAgent] GetInstagramInsights(account) failed: userId=%s period=%s err=%v", userID, period, err)
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
