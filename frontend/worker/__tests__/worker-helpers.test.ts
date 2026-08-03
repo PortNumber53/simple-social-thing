@@ -1,8 +1,8 @@
 /**
  * @vitest-environment node
  */
-import { describe, expect, it } from 'vitest';
-import { buildCorsHeaders, buildSidCookie, getBackendUrl, getCookie } from '../index';
+import { describe, expect, it, vi } from 'vitest';
+import worker, { buildCorsHeaders, buildSidCookie, getBackendUrl, getCookie } from '../index';
 
 describe('worker helper functions', () => {
   it('getCookie returns decoded cookie values', () => {
@@ -43,5 +43,31 @@ describe('worker helper functions', () => {
     const req = new Request('http://localhost:18912/api/x');
     const origin = getBackendUrl({} as any, req);
     expect(origin).toBe('http://localhost:18911');
+  });
+
+  it('proxies authenticated Instagram Agent requests to the current user backend route', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === 'https://backend.example/api/instagram-agent/generate/user/u1') {
+        return new Response(JSON.stringify({ ok: true, content: 'generated' }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ error: 'unexpected_target', url }), { status: 500 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const request = new Request('https://app.example/api/instagram-agent/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Cookie': 'sid=u1' },
+        body: JSON.stringify({ type: 'post', input: 'coffee' }),
+      });
+      const response = await worker.fetch(request, { BACKEND_URL: 'https://backend.example' } as any);
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ ok: true, content: 'generated' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

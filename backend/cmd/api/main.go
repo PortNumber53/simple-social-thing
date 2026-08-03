@@ -595,6 +595,12 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	// Publishing job status
 	r.HandleFunc("/api/social-posts/publish-jobs/{jobId}", h.GetPublishJob).Methods("GET")
 
+	// Instagram Agent: AI content/image generation plus account analytics.
+	r.HandleFunc("/api/instagram-agent/generate/user/{userId}", h.GenerateInstagramContent).Methods("POST")
+	r.HandleFunc("/api/instagram-agent/image/user/{userId}", h.GenerateInstagramImage).Methods("POST")
+	r.HandleFunc("/api/instagram-agent/account/user/{userId}", h.GetInstagramAccount).Methods("GET")
+	r.HandleFunc("/api/instagram-agent/insights/user/{userId}", h.GetInstagramInsights).Methods("GET")
+
 	// Local content library (draft/scheduled posts stored in DB)
 	r.HandleFunc("/api/posts/user/{userId}", h.ListPostsForUser).Methods("GET")
 	r.HandleFunc("/api/posts/user/{userId}", h.CreatePostForUser).Methods("POST")

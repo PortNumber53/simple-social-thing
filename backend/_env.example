@@ -17,6 +17,14 @@ ENVIRONMENT=dev
 # Logging
 LOG_LEVEL=info
 
+# Instagram Agent (OpenAI-compatible text + image generation)
+LLM_API_KEY=your_api_key
+LLM_BASE_URL=http://localhost:3001/v1
+LLM_MODEL=auto
+# Optional image overrides. Defaults to $LLM_BASE_URL/images/generations and model "schnell".
+LLM_IMAGE_ENDPOINT=http://localhost:3001/v1/images/generations
+LLM_IMAGE_MODEL=schnell
+
 # Stripe Configuration (for billing)
 STRIPE_SECRET_KEY=sk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...

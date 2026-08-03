@@ -13,6 +13,9 @@ The MVP is focused on Instagram Business Account management:
 - secure server-side provider token storage
 - draft, scheduled, published, and failed post tracking
 - Instagram Graph API publishing
+- AI-assisted Instagram posts, captions, hashtags, strategy, and chat (with streaming)
+- configurable FLUX/MFlux-compatible image generation
+- Instagram profile and account/media insights
 - team roles: Admin, Editor, Viewer
 - Stripe tiers:
   - **Free** — 1 post per day
@@ -102,6 +105,18 @@ Current publish support inherited from Simple Social Thing:
 - **Instagram**: images (container creation + polling)
 - **TikTok**: video (requires approved scopes)
 - **YouTube**: video upload
+
+## Instagram Agent
+
+The authenticated **Content → Instagram Agent** page adds the content-generation and analytics tools ported from the standalone Instagram-Agent project:
+
+- streaming chat and generation for posts, captions, hashtags, and content strategy, with an optional concise rationale
+- optional OpenAI-compatible image generation
+- Instagram Business profile details and account/media insights
+- manual refresh of the connected account's long-lived Meta token
+- one-click handoff of generated text to the existing composer
+
+Configure the backend with `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL`. Image generation defaults to `${LLM_BASE_URL}/images/generations`; override it with `LLM_IMAGE_ENDPOINT` and `LLM_IMAGE_MODEL` when the image service is separate.
 
 The SMT product path should prioritize Instagram/Meta first; other providers remain secondary until deliberately productized.
 

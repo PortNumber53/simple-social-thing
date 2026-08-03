@@ -694,6 +694,9 @@ export default {
       if (url.pathname === "/api/posts/publish/ws") {
         return handlePublishJobWs(request, env);
       }
+	  if (url.pathname.startsWith("/api/instagram-agent/")) {
+		return handleInstagramAgent(request, env);
+	  }
       if (url.pathname === "/api/events/ws") {
         return handleRealtimeEventsWs(request, env);
       }
@@ -1379,6 +1382,99 @@ async function handlePostsPublish(request: Request, env: Env): Promise<Response>
     console.error('[PostsPublish] backend unreachable', { reqId, sid, backendOrigin, message });
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
+  }
+}
+
+async function handleInstagramAgent(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendUrl(env, request);
+  const { headers, preflight } = withCors(request, { methods: 'GET,POST,OPTIONS' });
+  if (preflight) return preflight;
+
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+  if (!sid) return Response.json({ ok: false, error: 'unauthenticated' }, { status: 401, headers });
+
+  const url = new URL(request.url);
+  const action = url.pathname.slice('/api/instagram-agent/'.length).replace(/\/+$/g, '');
+  if (action === 'refresh-token') {
+	if (request.method !== 'POST') return new Response(null, { status: 405, headers });
+	return refreshInstagramAgentToken(backendOrigin, sid, env, headers);
+  }
+
+  const routes: Record<string, { method: 'GET' | 'POST'; backendPath: string }> = {
+	generate: { method: 'POST', backendPath: 'generate' },
+	image: { method: 'POST', backendPath: 'image' },
+	account: { method: 'GET', backendPath: 'account' },
+	insights: { method: 'GET', backendPath: 'insights' },
+  };
+  const route = routes[action];
+  if (!route) return Response.json({ ok: false, error: 'not_found' }, { status: 404, headers });
+  if (request.method !== route.method) return new Response(null, { status: 405, headers });
+
+  try {
+	const target = `${backendOrigin}/api/instagram-agent/${route.backendPath}/user/${encodeURIComponent(sid)}${url.search}`;
+	const init: RequestInit = {
+	  method: route.method,
+	  headers: {
+		'Accept': request.headers.get('Accept') || 'application/json, text/event-stream',
+		...(route.method === 'POST' ? { 'Content-Type': request.headers.get('Content-Type') || 'application/json' } : {}),
+	  },
+	};
+	if (route.method === 'POST') init.body = await request.arrayBuffer();
+	const res = await fetch(target, init);
+	const responseHeaders = new Headers(headers);
+	responseHeaders.set('Content-Type', res.headers.get('Content-Type') || 'application/json');
+	const cacheControl = res.headers.get('Cache-Control');
+	if (cacheControl) responseHeaders.set('Cache-Control', cacheControl);
+	return new Response(res.body, { status: res.status, headers: responseHeaders });
+  } catch (err) {
+	const message = err instanceof Error ? err.message : String(err);
+	return Response.json({ ok: false, error: 'backend_unreachable', details: { message } }, { status: 502, headers });
+  }
+}
+
+async function refreshInstagramAgentToken(backendOrigin: string, sid: string, env: Env, headers: Headers): Promise<Response> {
+  if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
+	return Response.json({ ok: false, error: 'instagram_secrets_missing' }, { status: 503, headers });
+  }
+  try {
+	const settingRes = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/instagram_oauth`, {
+	  headers: { 'Accept': 'application/json' },
+	});
+	const setting = asRecord(await settingRes.json().catch(() => null));
+	const oauth = asRecord(setting?.['value']);
+	const currentToken = getString(oauth?.['accessToken']);
+	if (!settingRes.ok || !oauth || !currentToken) {
+	  return Response.json({ ok: false, error: 'instagram_not_connected' }, { status: 409, headers });
+	}
+
+	const tokenUrl = new URL('https://graph.facebook.com/v24.0/oauth/access_token');
+	tokenUrl.searchParams.set('grant_type', 'fb_exchange_token');
+	tokenUrl.searchParams.set('client_id', env.INSTAGRAM_APP_ID);
+	tokenUrl.searchParams.set('client_secret', env.INSTAGRAM_APP_SECRET);
+	tokenUrl.searchParams.set('fb_exchange_token', currentToken);
+	const tokenRes = await fetch(tokenUrl.toString(), { headers: { 'Accept': 'application/json' } });
+	const tokenPayload = asRecord(await tokenRes.json().catch(() => null));
+	const accessToken = getString(tokenPayload?.['access_token']);
+	if (!tokenRes.ok || !accessToken) {
+	  return Response.json({ ok: false, error: 'instagram_token_refresh_failed' }, { status: 502, headers });
+	}
+
+	const expiresIn = getNumber(tokenPayload?.['expires_in']);
+	const obtainedAt = new Date().toISOString();
+	const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
+	const nextOAuth = { ...oauth, accessToken, expiresIn, obtainedAt, expiresAt, raw: tokenPayload };
+	const saveRes = await fetch(`${backendOrigin}/api/user-settings/${encodeURIComponent(sid)}/instagram_oauth`, {
+	  method: 'PUT',
+	  headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+	  body: JSON.stringify({ value: nextOAuth }),
+	});
+	if (!saveRes.ok) {
+	  return Response.json({ ok: false, error: 'instagram_token_save_failed' }, { status: 502, headers });
+	}
+	return Response.json({ ok: true, obtainedAt, expiresAt }, { status: 200, headers });
+  } catch (err) {
+	const message = err instanceof Error ? err.message : String(err);
+	return Response.json({ ok: false, error: 'instagram_token_refresh_failed', details: { message } }, { status: 502, headers });
   }
 }
 

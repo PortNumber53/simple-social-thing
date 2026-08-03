@@ -10,6 +10,7 @@ import { ContentVideos } from './pages/ContentVideos';
 import { ContentVideoEditor } from './pages/ContentVideoEditor';
 import { Library } from './pages/Library';
 import { ContentPublished } from './pages/ContentPublished';
+import { InstagramAgent } from './pages/InstagramAgent';
 import { PrivacyPolicy } from './pages/PrivacyPolicy';
 import { TermsOfService } from './pages/TermsOfService';
 import { UserDataDeletion } from './pages/UserDataDeletion';
@@ -53,6 +54,7 @@ function App() {
           <Route path="/content/videos" element={<ContentVideos />} />
           <Route path="/content/video-editor" element={<ContentVideoEditor />} />
           <Route path="/content/published" element={<ContentPublished />} />
+          <Route path="/content/instagram-agent" element={<InstagramAgent />} />
           <Route path="/content/music" element={<ContentMusic />} />
           <Route path="/library" element={<Library />} />
           <Route path="/account/profile" element={<Profile />} />

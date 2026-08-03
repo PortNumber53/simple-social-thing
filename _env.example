@@ -12,6 +12,15 @@ PORT=18911
 # Optional environment name: dev | staging | production
 ENVIRONMENT=dev
 
+# --- Instagram Agent / AI generation ---
+# OpenAI-compatible text endpoint used by the authenticated Instagram Agent page.
+LLM_API_KEY=your_api_key
+LLM_BASE_URL=http://localhost:3001/v1
+LLM_MODEL=auto
+# Optional OpenAI-compatible FLUX/MFlux image endpoint and model.
+LLM_IMAGE_ENDPOINT=http://localhost:3001/v1/images/generations
+LLM_IMAGE_MODEL=schnell
+
 # --- Local development helpers ---
 # If you run the Cloudflare Worker locally and want it to hit a non-default backend origin:
 # (otherwise worker uses same-origin or VITE_WORKER_ORIGIN)
@@ -24,5 +33,4 @@ BACKEND_URL=http://localhost:18911
 # --- Suno integration ---
 # Suno API keys are stored per-user in the database (`UserSettings`) via the Integrations UI.
 # No Suno secrets should be placed in this root `.env`.
-
 
