@@ -16,10 +16,10 @@ test: ## Run tests
 	go test ./... -v
 
 migrate-up: ## Run database migrations (up)
-	go run db/migrate.go -direction=up
+	go run ./cmd/api migrate up
 
 migrate-down: ## Rollback database migrations (down)
-	go run db/migrate.go -direction=down
+	go run ./cmd/api migrate down
 
 clean: ## Clean build artifacts
 	rm -rf bin/ tmp/

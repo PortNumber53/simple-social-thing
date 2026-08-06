@@ -221,25 +221,20 @@ func migrateUp(db *sql.DB) error {
 		return fmt.Errorf("Failed to create migrator: %w", err)
 	}
 	if err := migrator.Up(); err != nil && err != migrate.ErrNoChange {
-		// If the DB is dirty, allow an opt-in forced recovery.
-		// This is a common failure mode after an interrupted migration.
-		if os.Getenv("MIGRATE_FORCE_DIRTY") != "" {
-			v, dirty, verr := migrator.Version()
-			if verr == nil && dirty {
-				// Force to the current version (clears dirty flag), then retry.
-				if ferr := migrator.Force(int(v)); ferr == nil {
-					if err2 := migrator.Up(); err2 == nil || err2 == migrate.ErrNoChange {
-						log.Printf("Database was dirty at version %d; forced and recovered", v)
-						return nil
-					} else {
-						return fmt.Errorf("Database migration failed after forcing dirty version %d: %w", v, err2)
-					}
-				}
-			}
-		}
-		// Keep error message explicit for manual recovery (best-effort hint).
+		// If the DB is dirty, automatically force the current version and retry.
+		// This is a common failure mode after an interrupted migration; migrations use
+		// IF NOT EXISTS so forcing is safe.
 		if v, dirty, verr := migrator.Version(); verr == nil && dirty {
-			return fmt.Errorf("Database migration failed: %w (hint: run `go run db/migrate.go -force=%d` or set MIGRATE_FORCE_DIRTY=1)", err, v)
+			log.Printf("Database is dirty at version %d; forcing and retrying", v)
+			if ferr := migrator.Force(int(v)); ferr != nil {
+				return fmt.Errorf("Database migration failed (dirty at version %d, force failed): %w", v, ferr)
+			}
+			if err2 := migrator.Up(); err2 == nil || err2 == migrate.ErrNoChange {
+				log.Printf("Database recovered from dirty version %d", v)
+				return nil
+			} else {
+				return fmt.Errorf("Database migration failed after forcing dirty version %d: %w", v, err2)
+			}
 		}
 		return fmt.Errorf("Database migration failed: %w", err)
 	}
@@ -539,6 +534,11 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	r.HandleFunc("/api/users/{id}", h.GetUser).Methods("GET")
 	r.HandleFunc("/api/users/{id}", h.UpdateUser).Methods("PUT")
 
+	// Session endpoints (server-side session storage)
+	r.HandleFunc("/api/sessions", h.CreateSession).Methods("POST")
+	r.HandleFunc("/api/sessions/{token}", h.ResolveSession).Methods("GET")
+	r.HandleFunc("/api/sessions/{token}", h.DeleteSession).Methods("DELETE")
+
 	// Billing endpoints
 	r.HandleFunc("/api/billing/sync/legacy-plans", h.SyncLegacyPlans).Methods("POST")
 	r.HandleFunc("/api/billing/plans", h.GetBillingPlans).Methods("GET")
@@ -629,6 +629,10 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 	// Suno async callbacks (SunoAPI provider → our backend)
 	r.HandleFunc("/callback/suno/music", h.SunoMusicCallback).Methods("POST")
 	r.HandleFunc("/callback/suno/music/", h.SunoMusicCallback).Methods("POST")
+
+	// News collection (via TinyFish API) for Instagram content generation
+	r.HandleFunc("/api/news/collect/user/{userId}", h.CollectNews).Methods("POST")
+	r.HandleFunc("/api/news/article/user/{userId}", h.FetchArticle).Methods("POST")
 
 	// User settings (for per-user Suno API keys)
 	r.HandleFunc("/api/user-settings/{userId}", h.GetUserSettings).Methods("GET")

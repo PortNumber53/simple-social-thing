@@ -1,6 +1,6 @@
 import { buildCorsHeaders, buildSidCookie, getCookie, publicUrlForRequest } from './lib/http';
 import { withCors } from './lib/cors';
-import { requireSid } from './lib/sid';
+import { requireSid, resolveSidToken, createLocalSession } from './lib/sid';
 
 export { buildCorsHeaders, buildSidCookie, getCookie };
 
@@ -20,6 +20,7 @@ interface Env {
   PINTEREST_CLIENT_SECRET?: string;
   THREADS_OAUTH_BASE?: string;
   BACKEND_URL?: string;
+  FRONTEND_URL?: string;
   // Shared secret used to open internal backend WS connections (Worker -> Backend).
   INTERNAL_WS_SECRET?: string;
 }
@@ -390,7 +391,8 @@ export default {
         const ytConn = parseYouTubeCookie(cookie);
         const pinConn = parsePinterestCookie(cookie);
         const thConn = parseThreadsCookie(cookie);
-        const sid = getCookie(cookie, 'sid');
+        const sidToken = getCookie(cookie, 'sid');
+        const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
         // Prefer backend-persisted status if we have a session id
         if (sid) {
           try {
@@ -432,7 +434,8 @@ export default {
         const reqUrl = publicUrlForRequest(request).toString();
         const headers = new Headers({ 'Set-Cookie': buildInstagramCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
-        const sid = getCookie(cookie, 'sid');
+        const sidToken = getCookie(cookie, 'sid');
+        const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
         if (sid) {
           const backendOrigin = getBackendUrl(env, request);
           try { await deleteSocialConnection(backendOrigin, sid, 'instagram'); } catch { void 0; }
@@ -455,7 +458,8 @@ export default {
         const reqUrl = publicUrlForRequest(request).toString();
         const headers = new Headers({ 'Set-Cookie': buildTikTokCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
-        const sid = getCookie(cookie, 'sid');
+        const sidToken = getCookie(cookie, 'sid');
+        const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
         if (sid) {
           const backendOrigin = getBackendUrl(env, request);
           try { await deleteSocialConnection(backendOrigin, sid, 'tiktok'); } catch { void 0; }
@@ -481,7 +485,8 @@ export default {
         const reqUrl = publicUrlForRequest(request).toString();
         const headers = new Headers({ 'Set-Cookie': buildFacebookCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
-        const sid = getCookie(cookie, 'sid');
+        const sidToken = getCookie(cookie, 'sid');
+        const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
         if (sid) {
           const backendOrigin = getBackendUrl(env, request);
           try { await deleteSocialConnection(backendOrigin, sid, 'facebook'); } catch { void 0; }
@@ -504,7 +509,8 @@ export default {
         const reqUrl = publicUrlForRequest(request).toString();
         const headers = new Headers({ 'Set-Cookie': buildYouTubeCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
-        const sid = getCookie(cookie, 'sid');
+        const sidToken = getCookie(cookie, 'sid');
+        const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
         if (sid) {
           const backendOrigin = getBackendUrl(env, request);
           try { await deleteSocialConnection(backendOrigin, sid, 'youtube'); } catch { void 0; }
@@ -530,7 +536,8 @@ export default {
         const headers = new Headers({ 'Set-Cookie': buildPinterestCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
         const existing = parsePinterestCookie(cookie);
-        const sid = getCookie(cookie, 'sid');
+        const sidToken = getCookie(cookie, 'sid');
+        const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
         if (sid) {
           const backendOrigin = getBackendUrl(env, request);
           // Prefer deleting by providerId as `sid` can change (we canonicalize users by email in SQL),
@@ -559,7 +566,8 @@ export default {
         const reqUrl = publicUrlForRequest(request).toString();
         const headers = new Headers({ 'Set-Cookie': buildThreadsCookie('', 0, reqUrl) });
         const cookie = request.headers.get('Cookie') || '';
-        const sid = getCookie(cookie, 'sid');
+        const sidToken = getCookie(cookie, 'sid');
+        const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
         if (sid) {
           const backendOrigin = getBackendUrl(env, request);
           try { await deleteSocialConnection(backendOrigin, sid, 'threads'); } catch { void 0; }
@@ -721,6 +729,9 @@ export default {
       }
 	  if (url.pathname.startsWith("/api/instagram-agent/")) {
 		return handleInstagramAgent(request, env);
+	  }
+	  if (url.pathname === "/api/news/collect" || url.pathname === "/api/news/article") {
+		return handleNewsProxy(request, env);
 	  }
       if (url.pathname === "/api/events/ws") {
         return handleRealtimeEventsWs(request, env);
@@ -1209,6 +1220,49 @@ export default {
   }
 };
 
+// getSidUserId resolves the sid cookie (now a session token) to a user ID via the backend.
+// For local dev, if no session exists, it can auto-create one (when allowLocalAutoCreate=true).
+// Returns the user ID, or null if unauthenticated.
+async function getSidUserId(
+  request: Request,
+  env: Env,
+  headers: Headers,
+  opts: { allowLocalAutoCreate?: boolean } = {},
+): Promise<string | null> {
+  const { allowLocalAutoCreate = false } = opts;
+  const backendOrigin = getBackendUrl(env, request);
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sidToken = getCookie(cookieHeader, 'sid');
+  const requestUrl = request.url;
+  const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
+
+  if (sidToken) {
+    const userId = await resolveSidToken(backendOrigin, sidToken);
+    if (userId) return userId;
+  }
+
+  if (allowLocalAutoCreate && isLocal) {
+    const newUserId = crypto.randomUUID();
+    const newToken = await createLocalSession(backendOrigin, newUserId);
+    if (newToken) {
+      headers.append('Set-Cookie', buildSidCookie(newToken, 60 * 60 * 24 * 30, requestUrl));
+      return newUserId;
+    }
+    // Fallback: old flow
+    headers.append('Set-Cookie', buildSidCookie(newUserId, 60 * 60 * 24 * 30, requestUrl));
+    try {
+      await fetch(`${backendOrigin}/api/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: newUserId, email: '', name: 'Local Dev User', imageUrl: null }),
+      });
+    } catch { void 0; }
+    return newUserId;
+  }
+
+  return null;
+}
+
 async function handleSunoGenerate(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendUrl(env, request);
 	const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
@@ -1373,7 +1427,8 @@ async function handlePostsPublish(request: Request, env: Env): Promise<Response>
   headers.set('X-Request-Id', reqId);
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   if (!sid) {
     console.warn('[PostsPublish] unauthenticated', { reqId, url: request.url, hasCookie: cookieHeader.length > 0 });
     headers.set('Content-Type', 'application/json');
@@ -1477,6 +1532,36 @@ async function handleInstagramAgent(request: Request, env: Env): Promise<Respons
 	responseHeaders.set('Content-Type', res.headers.get('Content-Type') || 'application/json');
 	const cacheControl = res.headers.get('Cache-Control');
 	if (cacheControl) responseHeaders.set('Cache-Control', cacheControl);
+	return new Response(res.body, { status: res.status, headers: responseHeaders });
+  } catch (err) {
+	const message = err instanceof Error ? err.message : String(err);
+	return Response.json({ ok: false, error: 'backend_unreachable', details: { message } }, { status: 502, headers });
+  }
+}
+
+async function handleNewsProxy(request: Request, env: Env): Promise<Response> {
+  const backendOrigin = getBackendUrl(env, request);
+  const { headers, preflight } = withCors(request, { methods: 'POST,OPTIONS' });
+  if (preflight) return preflight;
+
+  const sid = await requireSid({ request, headers, backendOrigin, allowLocalAutoCreate: true });
+  if (!sid) return Response.json({ ok: false, error: 'unauthenticated' }, { status: 401, headers });
+
+  const url = new URL(request.url);
+  const action = url.pathname.slice('/api/news/'.length).replace(/\/+$/g, '');
+
+  try {
+	const target = `${backendOrigin}/api/news/${action}/user/${encodeURIComponent(sid)}`;
+	const res = await fetch(target, {
+	  method: 'POST',
+	  headers: {
+		'Content-Type': request.headers.get('Content-Type') || 'application/json',
+		'Accept': 'application/json',
+	  },
+	  body: await request.arrayBuffer(),
+	});
+	const responseHeaders = new Headers(headers);
+	responseHeaders.set('Content-Type', res.headers.get('Content-Type') || 'application/json');
 	return new Response(res.body, { status: res.status, headers: responseHeaders });
   } catch (err) {
 	const message = err instanceof Error ? err.message : String(err);
@@ -1610,7 +1695,8 @@ async function handleGetPublishJob(request: Request, env: Env): Promise<Response
     return new Response(JSON.stringify({ ok: false, error: "missing_jobId" }), { status: 400, headers });
   }
   const cookieHeader = request.headers.get("Cookie") || "";
-  const sid = getCookie(cookieHeader, "sid");
+  const sidToken = getCookie(cookieHeader, "sid");
+  const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   if (!sid) {
     return new Response(JSON.stringify({ ok: false, error: "unauthenticated" }), { status: 401, headers });
   }
@@ -1642,7 +1728,8 @@ async function handlePublishJobWs(request: Request, env: Env): Promise<Response>
 
   const headers = buildCorsHeaders(request);
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   if (!sid) {
     return new Response('unauthenticated', { status: 401, headers });
   }
@@ -1722,7 +1809,8 @@ async function handleRealtimeEventsWs(request: Request, env: Env): Promise<Respo
 
   const headers = buildCorsHeaders(request);
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   if (!sid) {
     console.log('[EventsWS] unauthenticated url=%s hasCookie=%s', request.url, cookieHeader.length > 0);
     return new Response('unauthenticated', { status: 401, headers });
@@ -2011,11 +2099,10 @@ async function handleLibraryItems(request: Request, env: Env): Promise<Response>
 
 async function handleLibrarySync(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendUrl(env, request);
-	const cookie = request.headers.get('Cookie') || '';
-	let sid = getCookie(cookie, 'sid');
+	const headers = buildCorsHeaders(request);
+	const sid = await getSidUserId(request, env, headers, { allowLocalAutoCreate: true });
 	const requestUrl = request.url;
 	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
-	const headers = buildCorsHeaders(request);
 
 	if (request.method === 'OPTIONS') {
 		headers.set('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -2024,17 +2111,6 @@ async function handleLibrarySync(request: Request, env: Env): Promise<Response> 
 	}
 	if (request.method !== 'POST') return new Response(null, { status: 405, headers });
 
-	if (!sid && isLocal) {
-		sid = crypto.randomUUID();
-		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
-		try {
-			await fetch(`${backendOrigin}/api/users`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-			});
-		} catch { void 0; }
-	}
 	if (!sid) {
 		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
 	}
@@ -2603,11 +2679,9 @@ async function handleMediaProxy(request: Request, env: Env): Promise<Response> {
 
 async function handleSunoSync(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendUrl(env, request);
-	const cookie = request.headers.get('Cookie') || '';
-	let sid = getCookie(cookie, 'sid');
-	const requestUrl = request.url;
-	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
 	const headers = buildCorsHeaders(request);
+	const sid = await getSidUserId(request, env, headers, { allowLocalAutoCreate: true });
+	const requestUrl = request.url;
 
 	if (request.method === 'OPTIONS') {
 		headers.set('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -2616,18 +2690,6 @@ async function handleSunoSync(request: Request, env: Env): Promise<Response> {
 	}
 	if (request.method !== 'POST') return new Response(null, { status: 405, headers });
 
-	if (!sid && isLocal) {
-		sid = crypto.randomUUID();
-		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
-		// ensure user exists
-		try {
-			await fetch(`${backendOrigin}/api/users`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-			});
-		} catch { void 0; }
-	}
 	if (!sid) {
 		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
 	}
@@ -2748,11 +2810,9 @@ async function handleSunoStore(request: Request, env: Env): Promise<Response> {
 
 async function handleSunoTracksList(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendUrl(env, request);
-	const cookie = request.headers.get('Cookie') || '';
-	let sid = getCookie(cookie, 'sid');
-	const requestUrl = request.url;
-	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
 	const headers = buildCorsHeaders(request);
+	const sid = await getSidUserId(request, env, headers, { allowLocalAutoCreate: true });
+	const requestUrl = request.url;
 
 	if (request.method === 'OPTIONS') {
 		headers.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -2761,18 +2821,6 @@ async function handleSunoTracksList(request: Request, env: Env): Promise<Respons
 	}
 	if (request.method !== 'GET') return new Response(null, { status: 405, headers });
 
-	if (!sid && isLocal) {
-		sid = crypto.randomUUID();
-		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
-		// ensure user exists
-		try {
-			await fetch(`${backendOrigin}/api/users`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-			});
-		} catch { void 0; }
-	}
 	if (!sid) {
 		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
 	}
@@ -2796,28 +2844,13 @@ async function handleSunoTracksList(request: Request, env: Env): Promise<Respons
 
 async function handleSunoApiKey(request: Request, env: Env): Promise<Response> {
 	const backendOrigin = getBackendUrl(env, request);
-	const cookie = request.headers.get('Cookie') || '';
-	let sid = getCookie(cookie, 'sid');
-	// Local dev helper: if no sid, issue one so the user can save their key
-	const requestUrl = request.url;
-	const isLocal = new URL(requestUrl).hostname === 'localhost' || new URL(requestUrl).hostname === '127.0.0.1';
 	const headers = buildCorsHeaders(request);
+	const sid = await getSidUserId(request, env, headers, { allowLocalAutoCreate: true });
+	const requestUrl = request.url;
 	if (request.method === 'OPTIONS') {
 		headers.set('Access-Control-Allow-Methods', 'GET,PUT,OPTIONS');
 		headers.set('Access-Control-Allow-Headers', request.headers.get('Access-Control-Request-Headers') || 'Content-Type');
 		return new Response(null, { status: 204, headers });
-	}
-	if (!sid && isLocal) {
-		sid = crypto.randomUUID();
-		headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, requestUrl));
-		// ensure user exists in Go backend to satisfy FK in UserSettings
-		try {
-			await fetch(`${backendOrigin}/api/users`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-			});
-		} catch { void 0; }
 	}
 	if (!sid) {
 		return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
@@ -2921,41 +2954,60 @@ export function getBackendUrl(env: Env, request: Request): string {
 	return url.origin;
 }
 
+// getFrontendUrl returns the public-facing origin for OAuth redirect URIs and browser redirects.
+// Prefers FRONTEND_URL env var (set when behind a reverse proxy), falls back to publicUrlForRequest.
+export function getFrontendUrl(env: Env, request: Request): string {
+	const raw = (env.FRONTEND_URL || '').trim().replace(/\/+$/g, '');
+	if (raw) {
+		// If scheme is missing, infer from request (https for non-localhost).
+		if (!/^https?:\/\//i.test(raw)) {
+			if (/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(raw)) {
+				return `http://${raw}`;
+			}
+			return `https://${raw}`;
+		}
+		return raw;
+	}
+	return publicUrlForRequest(request).origin;
+}
+
 async function startInstagramOAuth(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/instagram/callback', url.origin).toString();
-
-  // Require an authenticated session before starting, otherwise the callback cannot associate the
-  // connection to a user and will fail with `unauthenticated`.
-  {
-    const cookieHeader = request.headers.get('Cookie') || '';
-    const sid = getCookie(cookieHeader, 'sid');
-    if (!sid) {
-      const data = encodeURIComponent(
-        JSON.stringify({
-          success: false,
-          error: 'unauthenticated',
-          debug: {
-            requestUrl: request.url,
-            browserFacingUrl: url.toString(),
-            cookieNames: cookieHeader
-              .split(/;\s*/)
-              .map(kv => kv.split('=')[0]?.trim())
-              .filter(Boolean)
-              .slice(0, 50),
-            xForwardedHost: request.headers.get('X-Forwarded-Host'),
-            xForwardedProto: request.headers.get('X-Forwarded-Proto'),
-          },
-        }),
-      );
-      return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
-    }
-  }
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/instagram/callback', frontendOrigin).toString();
 
   if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'instagram_secrets_missing' }));
+    return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
+  }
+
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const sidToken = getCookie(cookieHeader, 'sid');
+  let sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
+  const headers = new Headers();
+
+  if (!sid) {
+    const newUserId = crypto.randomUUID();
+    const newToken = await createLocalSession(getBackendUrl(env, request), newUserId);
+    if (newToken) {
+      sid = newUserId;
+      headers.append('Set-Cookie', buildSidCookie(newToken, 60 * 60 * 24 * 30, frontendOrigin));
+    } else {
+      sid = newUserId;
+      headers.append('Set-Cookie', buildSidCookie(newUserId, 60 * 60 * 24 * 30, frontendOrigin));
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        await fetch(`${backendOrigin}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: newUserId, email: '', name: 'Local Dev User', imageUrl: null }),
+        });
+      } catch { void 0; }
+    }
+  }
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
     return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
   }
 
@@ -2979,14 +3031,15 @@ async function startInstagramOAuth(request: Request, env: Env): Promise<Response
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('state', state);
 
-  return Response.redirect(authUrl.toString(), 302);
+  headers.set('Location', authUrl.toString());
+  return new Response(null, { status: 302, headers });
 }
 
 async function handleInstagramCallback(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/instagram/callback', url.origin).toString();
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/instagram/callback', frontendOrigin).toString();
 
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
@@ -3022,25 +3075,27 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  let sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   if (!sid) {
-    const data = encodeURIComponent(
-      JSON.stringify({
-        success: false,
-        error: 'unauthenticated',
-        debug: {
-          requestUrl: request.url,
-          browserFacingUrl: url.toString(),
-          cookieNames: cookieHeader
-            .split(/;\s*/)
-            .map(kv => kv.split('=')[0]?.trim())
-            .filter(Boolean)
-            .slice(0, 50),
-          xForwardedHost: request.headers.get('X-Forwarded-Host'),
-          xForwardedProto: request.headers.get('X-Forwarded-Proto'),
-        },
-      }),
-    );
+    const newUserId = crypto.randomUUID();
+    const newToken = await createLocalSession(getBackendUrl(env, request), newUserId);
+    if (newToken) {
+      sid = newUserId;
+    } else {
+      sid = newUserId;
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        await fetch(`${backendOrigin}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: newUserId, email: '', name: 'Local Dev User', imageUrl: null }),
+        });
+      } catch { void 0; }
+    }
+  }
+  if (!sid) {
+    const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
     return Response.redirect(`${clientUrl}/integrations?instagram=${data}`, 302);
   }
 
@@ -3168,7 +3223,7 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
     const location = `${clientUrl}/integrations?instagram=${data}`;
     const headers = new Headers();
     headers.set('Location', location);
-    headers.append('Set-Cookie', buildInstagramCookie(cookieValue, 60 * 60 * 24 * 30, url.toString())); // 30 days
+    headers.append('Set-Cookie', buildInstagramCookie(cookieValue, 60 * 60 * 24 * 30, frontendOrigin)); // 30 days
     return new Response(null, { status: 302, headers });
   } catch (e) {
     console.error('[IG] internal_error', e);
@@ -3179,9 +3234,9 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
 
 async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/tiktok/callback', url.origin).toString();
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/tiktok/callback', frontendOrigin).toString();
 
   const clientKey = (env.TIKTOK_CLIENT_KEY || '').trim();
   const clientSecret = (env.TIKTOK_CLIENT_SECRET || '').trim();
@@ -3191,21 +3246,28 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  let sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  let sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   const headers = new Headers();
 
-  // local dev helper: create sid if missing, so callback can persist tokens
-  if (!sid && isLocalhost) {
-    sid = crypto.randomUUID();
-    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, url.toString()));
-    const backendOrigin = getBackendUrl(env, request);
-    try {
-      await fetch(`${backendOrigin}/api/users`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-      });
-    } catch { void 0; }
+  if (!sid) {
+    const newUserId = crypto.randomUUID();
+    const newToken = await createLocalSession(getBackendUrl(env, request), newUserId);
+    if (newToken) {
+      sid = newUserId;
+      headers.append('Set-Cookie', buildSidCookie(newToken, 60 * 60 * 24 * 30, frontendOrigin));
+    } else {
+      sid = newUserId;
+      headers.append('Set-Cookie', buildSidCookie(newUserId, 60 * 60 * 24 * 30, frontendOrigin));
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        await fetch(`${backendOrigin}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: newUserId, email: '', name: 'Local Dev User', imageUrl: null }),
+        });
+      } catch { void 0; }
+    }
   }
   if (!sid) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
@@ -3216,8 +3278,8 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   const verifier = base64UrlRandom(32);
   const challenge = await pkceChallengeS256(verifier);
 
-  headers.append('Set-Cookie', buildTempCookie('tt_state', state, 10 * 60, url.toString()));
-  headers.append('Set-Cookie', buildTempCookie('tt_verifier', verifier, 10 * 60, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('tt_state', state, 10 * 60, frontendOrigin));
+  headers.append('Set-Cookie', buildTempCookie('tt_verifier', verifier, 10 * 60, frontendOrigin));
 
   // Scopes:
   // - default: Login Kit minimal (`user.info.basic`)
@@ -3241,7 +3303,7 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
   // returning `error=invalid_scope`.
   const scopes = Array.from(finalScopes).join(' ');
 
-  headers.append('Set-Cookie', buildTempCookie('tt_scopes', scopes, 10 * 60, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('tt_scopes', scopes, 10 * 60, frontendOrigin));
   const authUrl = new URL('https://www.tiktok.com/v2/auth/authorize/');
   authUrl.searchParams.set('client_key', clientKey);
   authUrl.searchParams.set('scope', scopes);
@@ -3257,9 +3319,9 @@ async function startTikTokOAuth(request: Request, env: Env): Promise<Response> {
 
 async function handleTikTokCallback(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/tiktok/callback', url.origin).toString();
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/tiktok/callback', frontendOrigin).toString();
 
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
@@ -3283,12 +3345,30 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  let sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   const stateCookie = getCookie(cookieHeader, 'tt_state');
   const verifier = getCookie(cookieHeader, 'tt_verifier');
   const requestedScopes = getCookie(cookieHeader, 'tt_scopes') || null;
   const state = url.searchParams.get('state');
 
+  if (!sid) {
+    const newUserId = crypto.randomUUID();
+    const newToken = await createLocalSession(getBackendUrl(env, request), newUserId);
+    if (newToken) {
+      sid = newUserId;
+    } else {
+      sid = newUserId;
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        await fetch(`${backendOrigin}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: newUserId, email: '', name: 'Local Dev User', imageUrl: null }),
+        });
+      } catch { void 0; }
+    }
+  }
   if (!sid) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
     return Response.redirect(`${clientUrl}/integrations?tiktok=${data}`, 302);
@@ -3420,11 +3500,11 @@ async function handleTikTokCallback(request: Request, env: Env): Promise<Respons
   // Set minimal cookie so UI can show status even if DB status fetch fails
   const headers = new Headers();
   const cookieValue = JSON.stringify({ id: openId, displayName });
-  headers.append('Set-Cookie', buildTikTokCookie(cookieValue, 60 * 60 * 24 * 30, url.toString()));
+  headers.append('Set-Cookie', buildTikTokCookie(cookieValue, 60 * 60 * 24 * 30, frontendOrigin));
   // Clear temp cookies
-  headers.append('Set-Cookie', buildTempCookie('tt_state', '', 0, url.toString()));
-  headers.append('Set-Cookie', buildTempCookie('tt_verifier', '', 0, url.toString()));
-  headers.append('Set-Cookie', buildTempCookie('tt_scopes', '', 0, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('tt_state', '', 0, frontendOrigin));
+  headers.append('Set-Cookie', buildTempCookie('tt_verifier', '', 0, frontendOrigin));
+  headers.append('Set-Cookie', buildTempCookie('tt_scopes', '', 0, frontendOrigin));
 
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'tiktok', account: { id: openId, displayName } }));
   headers.set('Location', `${clientUrl}/integrations?tiktok=${data}`);
@@ -3441,7 +3521,8 @@ async function handleTikTokScopes(request: Request, env: Env): Promise<Response>
   if (request.method !== 'GET') return new Response(null, { status: 405, headers });
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   if (!sid) {
     return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
   }
@@ -3474,9 +3555,9 @@ async function handleTikTokScopes(request: Request, env: Env): Promise<Response>
 
 async function startFacebookOAuth(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/facebook/callback', url.origin).toString();
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/facebook/callback', frontendOrigin).toString();
 
   // Reuse Meta app credentials (same app for Instagram/Facebook).
   if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
@@ -3485,21 +3566,28 @@ async function startFacebookOAuth(request: Request, env: Env): Promise<Response>
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  let sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  let sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   const headers = new Headers();
 
-  // local dev helper: create sid if missing, so callback can persist tokens
-  if (!sid && isLocalhost) {
-    sid = crypto.randomUUID();
-    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, url.toString()));
-    const backendOrigin = getBackendUrl(env, request);
-    try {
-      await fetch(`${backendOrigin}/api/users`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-      });
-    } catch { void 0; }
+  if (!sid) {
+    const newUserId = crypto.randomUUID();
+    const newToken = await createLocalSession(getBackendUrl(env, request), newUserId);
+    if (newToken) {
+      sid = newUserId;
+      headers.append('Set-Cookie', buildSidCookie(newToken, 60 * 60 * 24 * 30, frontendOrigin));
+    } else {
+      sid = newUserId;
+      headers.append('Set-Cookie', buildSidCookie(newUserId, 60 * 60 * 24 * 30, frontendOrigin));
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        await fetch(`${backendOrigin}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: newUserId, email: '', name: 'Local Dev User', imageUrl: null }),
+        });
+      } catch { void 0; }
+    }
   }
   if (!sid) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
@@ -3507,7 +3595,7 @@ async function startFacebookOAuth(request: Request, env: Env): Promise<Response>
   }
 
   const state = crypto.randomUUID();
-  headers.append('Set-Cookie', buildTempCookie('fb_state', state, 10 * 60, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('fb_state', state, 10 * 60, frontendOrigin));
 
   // Scopes needed for reading Page posts.
   const scopes = [
@@ -3531,9 +3619,9 @@ async function startFacebookOAuth(request: Request, env: Env): Promise<Response>
 
 async function handleFacebookCallback(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/facebook/callback', url.origin).toString();
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/facebook/callback', frontendOrigin).toString();
 
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
@@ -3552,9 +3640,27 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  let sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   const stateCookie = getCookie(cookieHeader, 'fb_state');
   const state = url.searchParams.get('state');
+  if (!sid) {
+    const newUserId = crypto.randomUUID();
+    const newToken = await createLocalSession(getBackendUrl(env, request), newUserId);
+    if (newToken) {
+      sid = newUserId;
+    } else {
+      sid = newUserId;
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        await fetch(`${backendOrigin}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: newUserId, email: '', name: 'Local Dev User', imageUrl: null }),
+        });
+      } catch { void 0; }
+    }
+  }
   if (!sid) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
     return Response.redirect(`${clientUrl}/integrations?facebook=${data}`, 302);
@@ -3668,8 +3774,8 @@ async function handleFacebookCallback(request: Request, env: Env): Promise<Respo
   }
 
   const headers = new Headers();
-  headers.append('Set-Cookie', buildFacebookCookie(JSON.stringify({ id: pageId, name: pageName }), 60 * 60 * 24 * 30, url.toString()));
-  headers.append('Set-Cookie', buildTempCookie('fb_state', '', 0, url.toString()));
+  headers.append('Set-Cookie', buildFacebookCookie(JSON.stringify({ id: pageId, name: pageName }), 60 * 60 * 24 * 30, frontendOrigin));
+  headers.append('Set-Cookie', buildTempCookie('fb_state', '', 0, frontendOrigin));
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'facebook', account: { id: pageId, name: pageName } }));
   headers.set('Location', `${clientUrl}/integrations?facebook=${data}`);
   return new Response(null, { status: 302, headers });
@@ -3685,7 +3791,8 @@ async function handleFacebookPermissions(request: Request, env: Env): Promise<Re
   if (request.method !== 'GET') return new Response(null, { status: 405, headers });
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   if (!sid) {
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
@@ -3746,7 +3853,8 @@ async function handleFacebookPages(request: Request, env: Env): Promise<Response
   if (request.method !== 'GET') return new Response(null, { status: 405, headers });
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   if (!sid) {
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'unauthenticated' }), { status: 401, headers });
@@ -3785,9 +3893,9 @@ async function handleFacebookPages(request: Request, env: Env): Promise<Response
 
 async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/youtube/callback', url.origin).toString();
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/youtube/callback', frontendOrigin).toString();
 
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'google_secrets_missing' }));
@@ -3795,19 +3903,27 @@ async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> 
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  let sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  let sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   const headers = new Headers();
-  if (!sid && isLocalhost) {
-    sid = crypto.randomUUID();
-    headers.append('Set-Cookie', buildSidCookie(sid, 60 * 60 * 24 * 30, url.toString()));
-    const backendOrigin = getBackendUrl(env, request);
-    try {
-      await fetch(`${backendOrigin}/api/users`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: sid, email: '', name: 'Local Dev User', imageUrl: null }),
-      });
-    } catch { void 0; }
+  if (!sid) {
+    const newUserId = crypto.randomUUID();
+    const newToken = await createLocalSession(getBackendUrl(env, request), newUserId);
+    if (newToken) {
+      sid = newUserId;
+      headers.append('Set-Cookie', buildSidCookie(newToken, 60 * 60 * 24 * 30, frontendOrigin));
+    } else {
+      sid = newUserId;
+      headers.append('Set-Cookie', buildSidCookie(newUserId, 60 * 60 * 24 * 30, frontendOrigin));
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        await fetch(`${backendOrigin}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: newUserId, email: '', name: 'Local Dev User', imageUrl: null }),
+        });
+      } catch { void 0; }
+    }
   }
   if (!sid) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
@@ -3817,8 +3933,8 @@ async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> 
   const state = crypto.randomUUID();
   const verifier = base64UrlRandom(32);
   const challenge = await pkceChallengeS256(verifier);
-  headers.append('Set-Cookie', buildTempCookie('yt_state', state, 10 * 60, url.toString()));
-  headers.append('Set-Cookie', buildTempCookie('yt_verifier', verifier, 10 * 60, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('yt_state', state, 10 * 60, frontendOrigin));
+  headers.append('Set-Cookie', buildTempCookie('yt_verifier', verifier, 10 * 60, frontendOrigin));
 
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
@@ -3840,9 +3956,9 @@ async function startYouTubeOAuth(request: Request, env: Env): Promise<Response> 
 
 async function handleYouTubeCallback(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/youtube/callback', url.origin).toString();
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/youtube/callback', frontendOrigin).toString();
 
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
@@ -3861,10 +3977,28 @@ async function handleYouTubeCallback(request: Request, env: Env): Promise<Respon
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  let sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   const stateCookie = getCookie(cookieHeader, 'yt_state');
   const verifier = getCookie(cookieHeader, 'yt_verifier');
   const state = url.searchParams.get('state');
+  if (!sid) {
+    const newUserId = crypto.randomUUID();
+    const newToken = await createLocalSession(getBackendUrl(env, request), newUserId);
+    if (newToken) {
+      sid = newUserId;
+    } else {
+      sid = newUserId;
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        await fetch(`${backendOrigin}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: newUserId, email: '', name: 'Local Dev User', imageUrl: null }),
+        });
+      } catch { void 0; }
+    }
+  }
   if (!sid) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
     return Response.redirect(`${clientUrl}/integrations?youtube=${data}`, 302);
@@ -3963,9 +4097,9 @@ async function handleYouTubeCallback(request: Request, env: Env): Promise<Respon
   }
 
   const headers = new Headers();
-  headers.append('Set-Cookie', buildYouTubeCookie(JSON.stringify({ id: channelId, name: channelTitle }), 60 * 60 * 24 * 30, url.toString()));
-  headers.append('Set-Cookie', buildTempCookie('yt_state', '', 0, url.toString()));
-  headers.append('Set-Cookie', buildTempCookie('yt_verifier', '', 0, url.toString()));
+  headers.append('Set-Cookie', buildYouTubeCookie(JSON.stringify({ id: channelId, name: channelTitle }), 60 * 60 * 24 * 30, frontendOrigin));
+  headers.append('Set-Cookie', buildTempCookie('yt_state', '', 0, frontendOrigin));
+  headers.append('Set-Cookie', buildTempCookie('yt_verifier', '', 0, frontendOrigin));
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'youtube', account: { id: channelId, name: channelTitle } }));
   headers.set('Location', `${clientUrl}/integrations?youtube=${data}`);
   return new Response(null, { status: 302, headers });
@@ -3973,9 +4107,9 @@ async function handleYouTubeCallback(request: Request, env: Env): Promise<Respon
 
 async function startPinterestOAuth(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/pinterest/callback', url.origin).toString();
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/pinterest/callback', frontendOrigin).toString();
 
   const clientId = (env.PINTEREST_CLIENT_ID || '').trim();
   const clientSecret = (env.PINTEREST_CLIENT_SECRET || '').trim();
@@ -3985,7 +4119,8 @@ async function startPinterestOAuth(request: Request, env: Env): Promise<Response
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   if (!sid) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
     return Response.redirect(`${clientUrl}/integrations?pinterest=${data}`, 302);
@@ -3993,7 +4128,7 @@ async function startPinterestOAuth(request: Request, env: Env): Promise<Response
 
   const state = crypto.randomUUID();
   const headers = new Headers();
-  headers.append('Set-Cookie', buildTempCookie('pin_state', state, 10 * 60, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('pin_state', state, 10 * 60, frontendOrigin));
 
   const authUrl = new URL('https://www.pinterest.com/oauth/');
   authUrl.searchParams.set('client_id', clientId);
@@ -4020,9 +4155,9 @@ async function startPinterestOAuth(request: Request, env: Env): Promise<Response
 
 async function handlePinterestCallback(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/pinterest/callback', url.origin).toString();
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/pinterest/callback', frontendOrigin).toString();
 
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
@@ -4042,9 +4177,27 @@ async function handlePinterestCallback(request: Request, env: Env): Promise<Resp
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  let sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   const stateCookie = getCookie(cookieHeader, 'pin_state');
   const state = url.searchParams.get('state');
+  if (!sid) {
+    const newUserId = crypto.randomUUID();
+    const newToken = await createLocalSession(getBackendUrl(env, request), newUserId);
+    if (newToken) {
+      sid = newUserId;
+    } else {
+      sid = newUserId;
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        await fetch(`${backendOrigin}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: newUserId, email: '', name: 'Local Dev User', imageUrl: null }),
+        });
+      } catch { void 0; }
+    }
+  }
   if (!sid) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
     return Response.redirect(`${clientUrl}/integrations?pinterest=${data}`, 302);
@@ -4139,8 +4292,8 @@ async function handlePinterestCallback(request: Request, env: Env): Promise<Resp
   }
 
   const headers = new Headers();
-  headers.append('Set-Cookie', buildPinterestCookie(JSON.stringify({ id: accountId, name: accountName }), 60 * 60 * 24 * 30, url.toString()));
-  headers.append('Set-Cookie', buildTempCookie('pin_state', '', 0, url.toString()));
+  headers.append('Set-Cookie', buildPinterestCookie(JSON.stringify({ id: accountId, name: accountName }), 60 * 60 * 24 * 30, frontendOrigin));
+  headers.append('Set-Cookie', buildTempCookie('pin_state', '', 0, frontendOrigin));
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'pinterest', account: { id: accountId, name: accountName } }));
   headers.set('Location', `${clientUrl}/integrations?pinterest=${data}`);
   return new Response(null, { status: 302, headers });
@@ -4148,9 +4301,9 @@ async function handlePinterestCallback(request: Request, env: Env): Promise<Resp
 
 async function startThreadsOAuth(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/threads/callback', url.origin).toString();
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/threads/callback', frontendOrigin).toString();
 
   if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'threads_secrets_missing' }));
@@ -4158,7 +4311,8 @@ async function startThreadsOAuth(request: Request, env: Env): Promise<Response> 
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  const sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   if (!sid) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
     return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
@@ -4166,7 +4320,7 @@ async function startThreadsOAuth(request: Request, env: Env): Promise<Response> 
 
   const state = crypto.randomUUID();
   const headers = new Headers();
-  headers.append('Set-Cookie', buildTempCookie('th_state', state, 10 * 60, url.toString()));
+  headers.append('Set-Cookie', buildTempCookie('th_state', state, 10 * 60, frontendOrigin));
 
   // IMPORTANT:
   // These are not Facebook Login permissions, so requesting them via `facebook.com/.../dialog/oauth`
@@ -4199,9 +4353,9 @@ async function startThreadsOAuth(request: Request, env: Env): Promise<Response> 
 
 async function handleThreadsCallback(request: Request, env: Env): Promise<Response> {
   const url = publicUrlForRequest(request);
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  const clientUrl = isLocalhost ? `http://localhost:18910` : url.origin.replace(/\/_worker\/.*/, '');
-  const redirectUri = new URL('/api/integrations/threads/callback', url.origin).toString();
+  const frontendOrigin = getFrontendUrl(env, request);
+  const clientUrl = frontendOrigin.replace(/\/_worker\/.*/, '');
+  const redirectUri = new URL('/api/integrations/threads/callback', frontendOrigin).toString();
 
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
@@ -4220,9 +4374,27 @@ async function handleThreadsCallback(request: Request, env: Env): Promise<Respon
   }
 
   const cookieHeader = request.headers.get('Cookie') || '';
-  const sid = getCookie(cookieHeader, 'sid');
+  const sidToken = getCookie(cookieHeader, 'sid');
+  let sid = sidToken ? await resolveSidToken(getBackendUrl(env, request), sidToken) : null;
   const stateCookie = getCookie(cookieHeader, 'th_state');
   const state = url.searchParams.get('state');
+  if (!sid) {
+    const newUserId = crypto.randomUUID();
+    const newToken = await createLocalSession(getBackendUrl(env, request), newUserId);
+    if (newToken) {
+      sid = newUserId;
+    } else {
+      sid = newUserId;
+      const backendOrigin = getBackendUrl(env, request);
+      try {
+        await fetch(`${backendOrigin}/api/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: newUserId, email: '', name: 'Local Dev User', imageUrl: null }),
+        });
+      } catch { void 0; }
+    }
+  }
   if (!sid) {
     const data = encodeURIComponent(JSON.stringify({ success: false, error: 'unauthenticated' }));
     return Response.redirect(`${clientUrl}/integrations?threads=${data}`, 302);
@@ -4315,8 +4487,8 @@ async function handleThreadsCallback(request: Request, env: Env): Promise<Respon
   }
 
   const headers = new Headers();
-  headers.append('Set-Cookie', buildThreadsCookie(JSON.stringify({ id: threadsUserId, name }), 60 * 60 * 24 * 30, url.toString()));
-  headers.append('Set-Cookie', buildTempCookie('th_state', '', 0, url.toString()));
+  headers.append('Set-Cookie', buildThreadsCookie(JSON.stringify({ id: threadsUserId, name }), 60 * 60 * 24 * 30, frontendOrigin));
+  headers.append('Set-Cookie', buildTempCookie('th_state', '', 0, frontendOrigin));
   const data = encodeURIComponent(JSON.stringify({ success: true, provider: 'threads', account: { id: threadsUserId, name } }));
   headers.set('Location', `${clientUrl}/integrations?threads=${data}`);
   return new Response(null, { status: 302, headers });

@@ -19,13 +19,13 @@ cd "$(dirname "$0")/../backend"
 # IMPORTANT: In CI matrix builds, GOOS/GOARCH may be set for cross-compilation.
 # `go run` respects those vars, which can cause "exec format error" when trying to
 # execute a non-native binary on the build host. Force native arch for migrations.
-if [[ -f "db/migrate.go" ]]; then
-  echo "Using Go migrate tool..."
+if [[ -f "cmd/api/main.go" ]]; then
+  echo "Using built-in migrate command..."
   HOST_GOARCH="$(go env GOARCH)"
   HOST_GOOS="$(go env GOOS)"
-  GOARCH="$HOST_GOARCH" GOOS="$HOST_GOOS" go run db/migrate.go -direction=up
+  GOARCH="$HOST_GOARCH" GOOS="$HOST_GOOS" go run ./cmd/api migrate up
 else
-  echo "ERROR: Migration tool not found at db/migrate.go"
+  echo "ERROR: Application not found at cmd/api/main.go"
   exit 1
 fi
 

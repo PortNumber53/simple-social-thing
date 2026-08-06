@@ -39,6 +39,22 @@ const inputLabels: Record<Tool, string> = {
   chat: 'Ask your Instagram question',
 };
 
+type NewsHeadline = {
+  title: string;
+  link: string;
+  summary: string;
+  source: string;
+  publishedDate?: string;
+};
+
+const NEWS_CATEGORIES: Array<{ id: string; label: string }> = [
+  { id: 'general', label: 'General' },
+  { id: 'technology', label: 'Technology' },
+  { id: 'science', label: 'Science' },
+  { id: 'business', label: 'Business' },
+  { id: 'all', label: 'All' },
+];
+
 function errorMessage(value: unknown): string {
   if (value && typeof value === 'object') {
     const obj = value as Record<string, unknown>;
@@ -75,6 +91,16 @@ export const InstagramAgent: React.FC = () => {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageStatus, setImageStatus] = useState<string | null>(null);
   const [generatingImage, setGeneratingImage] = useState(false);
+
+  const [newsCategory, setNewsCategory] = useState('general');
+  const [headlines, setHeadlines] = useState<NewsHeadline[]>([]);
+  const [newsStatus, setNewsStatus] = useState<string | null>(null);
+  const [loadingNews, setLoadingNews] = useState(false);
+  const [articleText, setArticleText] = useState<string | null>(null);
+  const [articleTitle, setArticleTitle] = useState<string | null>(null);
+  const [articleUrl, setArticleUrl] = useState<string | null>(null);
+  const [fetchingArticle, setFetchingArticle] = useState(false);
+  const [articleStatus, setArticleStatus] = useState<string | null>(null);
 
   const composerUrl = useMemo(() => `/content/posts?caption=${encodeURIComponent(content.trim())}`, [content]);
 
@@ -187,6 +213,55 @@ export const InstagramAgent: React.FC = () => {
     else setAccountStatus(res.error.message);
   };
 
+  const collectNews = async (category?: string) => {
+    const cat = category || newsCategory;
+    setLoadingNews(true);
+    setNewsStatus('Collecting headlines…');
+    setHeadlines([]);
+    setArticleText(null);
+    setArticleTitle(null);
+    setArticleUrl(null);
+    const res = await apiJson<{ count: number; headlines: NewsHeadline[] }>('/api/news/collect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ categories: [cat] }),
+    });
+    if (res.ok) {
+      setHeadlines(res.data.headlines || []);
+      setNewsStatus(res.data.headlines?.length ? `${res.data.headlines.length} headlines from ${cat}.` : 'No headlines found.');
+    } else setNewsStatus(res.error.message);
+    setLoadingNews(false);
+  };
+
+  const fetchArticle = async (url: string) => {
+    setFetchingArticle(true);
+    setArticleStatus('Fetching article…');
+    setArticleText(null);
+    setArticleTitle(null);
+    setArticleUrl(null);
+    const res = await apiJson<{ ok: boolean; title: string; text: string; url: string }>('/api/news/article', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (res.ok) {
+      setArticleTitle(res.data.title || '(untitled)');
+      setArticleText(res.data.text || '');
+      setArticleUrl(res.data.url || url);
+      setArticleStatus(null);
+    } else setArticleStatus(res.error.message);
+    setFetchingArticle(false);
+  };
+
+  const generateFromArticle = async () => {
+    if (!articleText) return;
+    const summary = articleText.length > 4000 ? articleText.slice(0, 4000) + '…' : articleText;
+    setInput(`Based on this news article:\n\nTitle: ${articleTitle || ''}\n\n${summary}\n\nCreate an engaging Instagram post about this topic.`);
+    setTool('post');
+    setGenerationStatus('Article loaded into content studio — click Generate to create the post.');
+    document.getElementById('content-studio')?.scrollIntoView({ behavior: 'smooth' });
+  };
+
   const generateImage = async () => {
     if (!imagePrompt.trim()) {
       setImageStatus('Enter an image prompt first.');
@@ -218,7 +293,7 @@ export const InstagramAgent: React.FC = () => {
       </header>
 
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="xl:col-span-2 bg-white dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-700 p-6 space-y-5">
+        <div className="xl:col-span-2 bg-white dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-700 p-6 space-y-5" id="content-studio">
           <div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Content studio</h2>
             <p className="text-sm text-slate-500 dark:text-slate-400">Uses the server-configured OpenAI-compatible model.</p>
@@ -303,6 +378,54 @@ export const InstagramAgent: React.FC = () => {
         </div>
         <div className="flex items-center gap-3"><button type="button" className="btn btn-primary" onClick={generateImage} disabled={generatingImage}>{generatingImage ? 'Generating…' : 'Generate image'}</button>{imageStatus && <span className="text-sm text-slate-500">{imageStatus}</span>}</div>
         {imageUrl && <img src={imageUrl} alt={imagePrompt} className="w-full max-w-xl aspect-square rounded-xl object-cover border border-slate-200 dark:border-slate-700" />}
+      </section>
+
+      <section className="bg-white dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-700 p-6 space-y-5">
+        <div>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">News feed</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Collect headlines from RSS feeds via TinyFish, read full articles, and generate Instagram posts from the news.</p>
+        </div>
+        <div className="flex flex-wrap gap-2" role="tablist" aria-label="News category">
+          {NEWS_CATEGORIES.map((cat) => (
+            <button key={cat.id} type="button" role="tab" aria-selected={newsCategory === cat.id}
+              onClick={() => { setNewsCategory(cat.id); void collectNews(cat.id); }}
+              className={`px-3 py-1.5 rounded-lg text-sm border ${newsCategory === cat.id ? 'bg-primary-600 text-white border-primary-600' : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'}`}>
+              {cat.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <button type="button" className="btn btn-secondary" onClick={() => void collectNews()} disabled={loadingNews}>{loadingNews ? 'Collecting…' : 'Collect headlines'}</button>
+          {newsStatus && <span className="text-sm text-slate-500 dark:text-slate-400">{newsStatus}</span>}
+        </div>
+        {headlines.length > 0 && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 max-h-[28rem] overflow-y-auto">
+            {headlines.map((h, i) => (
+              <button key={i} type="button" onClick={() => void fetchArticle(h.link)}
+                className={`text-left rounded-lg border p-3 space-y-1 transition-colors ${articleUrl === h.link ? 'border-primary-500 bg-primary-50 dark:bg-primary-950/30' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'}`}>
+                <div className="text-sm font-medium text-slate-900 dark:text-slate-100 line-clamp-2">{h.title}</div>
+                {h.summary && <div className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">{h.summary}</div>}
+                <div className="text-[11px] text-slate-400 dark:text-slate-500">{h.source}{h.publishedDate ? ` · ${new Date(h.publishedDate).toLocaleDateString()}` : ''}</div>
+              </button>
+            ))}
+          </div>
+        )}
+        {fetchingArticle && <p className="text-sm text-slate-500">{articleStatus}</p>}
+        {articleText && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">{articleTitle}</h3>
+              <div className="flex gap-2 shrink-0">
+                {articleUrl && <a href={articleUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-600">Open original</a>}
+              </div>
+            </div>
+            <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-4 text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{articleText}</div>
+            <div className="flex items-center gap-3">
+              <button type="button" className="btn btn-primary" onClick={generateFromArticle}>Generate post from article</button>
+              {articleStatus && <span className="text-sm text-slate-500">{articleStatus}</span>}
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

@@ -53,8 +53,11 @@ func setupFixture(t *testing.T, withMigrate bool) fixture {
 		if err := os.MkdirAll(dbDir, 0o755); err != nil {
 			t.Fatalf("mkdir db: %v", err)
 		}
-		if err := os.WriteFile(filepath.Join(dbDir, "migrate.go"), []byte("// stub migrate"), 0o644); err != nil {
-			t.Fatalf("write migrate stub: %v", err)
+		if err := os.MkdirAll(filepath.Join(backendDir, "cmd", "api"), 0o755); err != nil {
+			t.Fatalf("mkdir cmd/api: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(backendDir, "cmd", "api", "main.go"), []byte("// stub main"), 0o644); err != nil {
+			t.Fatalf("write main stub: %v", err)
 		}
 	}
 
@@ -161,7 +164,7 @@ func TestDbtoolMigrateUsesHostArchForGoRun(t *testing.T) {
 	if strings.Contains(log, "RUN_GOARCH=arm64") || strings.Contains(log, "RUN_GOOS=linux") {
 		t.Fatalf("go run should not inherit matrix GOARCH/GOOS, log=%s", log)
 	}
-	if !strings.Contains(log, "ARGS=run db/migrate.go -direction=up") {
+	if !strings.Contains(log, "ARGS=run ./cmd/api migrate up") {
 		t.Fatalf("expected migrate invocation, log=%s", log)
 	}
 }
@@ -176,7 +179,7 @@ func TestDbtoolMigrateErrorsWhenMigrateFileMissing(t *testing.T) {
 	if status == 0 {
 		t.Fatalf("expected failure without migrate.go, output=%s", out)
 	}
-	if !strings.Contains(out, "Migration tool not found at db/migrate.go") {
+	if !strings.Contains(out, "Application not found at cmd/api/main.go") {
 		t.Fatalf("expected missing migrate.go message, got: %s", out)
 	}
 }

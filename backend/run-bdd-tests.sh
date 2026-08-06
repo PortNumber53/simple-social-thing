@@ -11,7 +11,7 @@ echo "==> Dropping and recreating test database schema..."
 psql "$DATABASE_URL" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" 2>/dev/null || true
 
 echo "==> Running migrations on test database..."
-go run db/migrate.go -direction=up
+go run ./cmd/api migrate up
 
 echo "==> Running BDD tests..."
 make -f Makefile.bdd bdd-test

@@ -98,6 +98,14 @@ func (h *Handler) GoogleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		// Non-fatal — continue with redirect.
 	}
 
+	// Create a server-side session and use the session token as the cookie value.
+	sessionToken, err := h.CreateSessionForUser(r, userID)
+	if err != nil {
+		log.Printf("[GoogleOAuth] session creation failed: %v", err)
+		redirectWithError(w, r, frontendURL, "internal_error", "Failed to create session")
+		return
+	}
+
 	// Build frontend redirect with user data + set session cookie.
 	userData := map[string]interface{}{
 		"success": true,
@@ -114,7 +122,7 @@ func (h *Handler) GoogleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	isSecure := strings.HasPrefix(cfg.FrontendURL, "https")
 	cookie := &http.Cookie{
 		Name:     "sid",
-		Value:    userID,
+		Value:    sessionToken,
 		Path:     "/",
 		MaxAge:   60 * 60 * 24 * 30, // 30 days
 		HttpOnly: true,
