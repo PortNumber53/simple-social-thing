@@ -94,6 +94,8 @@ func (ctx *bddTestContext) theDatabaseIsClean() error {
 		"public.team_members",
 		"public.teams",
 		"public.social_connections",
+		"public.sessions",
+		"public.custom_plan_requests",
 		"public.users",
 	}
 
@@ -112,6 +114,13 @@ func (ctx *bddTestContext) theAPIServerIsRunning() error {
 	}
 
 	ctx.handler = handlers.New(ctx.db)
+	ctx.handler.SetGoogleOAuth(&handlers.GoogleOAuthConfig{
+		ClientID:    "test-client-id",
+		Secret:      "test-secret",
+		CallbackURL: "/auth/google/callback",
+		BackendURL:  "http://127.0.0.1:18911",
+		FrontendURL: "http://127.0.0.1:18910",
+	})
 	ctx.router = buildTestRouter(ctx.handler)
 	ctx.server = httptest.NewServer(ctx.router)
 	return nil
@@ -158,6 +167,38 @@ func buildTestRouter(h *handlers.Handler) *mux.Router {
 	r.HandleFunc("/api/uploads/user/{userId}", h.UploadUploadsForUser).Methods("POST")
 	r.HandleFunc("/api/uploads/delete/user/{userId}", h.DeleteUploadsForUser).Methods("POST")
 	r.HandleFunc("/api/uploads/folders/user/{userId}", h.ListUploadFoldersForUser).Methods("GET")
+	r.HandleFunc("/api/video-editor/export/user/{userId}", h.ExportVideoEditor).Methods("POST")
+
+	// Sessions
+	r.HandleFunc("/api/sessions", h.CreateSession).Methods("POST")
+	r.HandleFunc("/api/sessions/{token}", h.ResolveSession).Methods("GET")
+	r.HandleFunc("/api/sessions/{token}", h.DeleteSession).Methods("DELETE")
+
+	// Billing additional routes
+	r.HandleFunc("/api/billing/plans/{id}", h.DeleteBillingPlan).Methods("DELETE")
+	r.HandleFunc("/api/billing/custom-plan-requests/user/{userId}", h.CreateCustomPlanRequest).Methods("POST")
+	r.HandleFunc("/api/billing/custom-plan-requests/admin/user/{userId}", h.GetCustomPlanRequests).Methods("GET")
+	r.HandleFunc("/api/billing/custom-plan-requests/{requestId}/admin/user/{userId}", h.UpdateCustomPlanRequest).Methods("PUT")
+	r.HandleFunc("/api/billing/custom-plan-requests/{requestId}/approve/admin/user/{userId}", h.ApproveCustomPlanRequest).Methods("POST")
+
+	// Social connections additional routes
+	r.HandleFunc("/api/social-connections/user/{userId}/{provider}", h.GetUserSocialConnection).Methods("GET")
+	r.HandleFunc("/api/social-connections/user/{userId}/{provider}", h.DeleteUserSocialConnection).Methods("DELETE")
+	r.HandleFunc("/api/social-libraries/import/user/{userId}", h.ImportSocialLibraryForUser).Methods("POST")
+
+	// Instagram Agent
+	r.HandleFunc("/api/instagram-agent/generate/user/{userId}", h.GenerateInstagramContent).Methods("POST")
+	r.HandleFunc("/api/instagram-agent/image/user/{userId}", h.GenerateInstagramImage).Methods("POST")
+	r.HandleFunc("/api/instagram-agent/account/user/{userId}", h.GetInstagramAccount).Methods("GET")
+	r.HandleFunc("/api/instagram-agent/insights/user/{userId}", h.GetInstagramInsights).Methods("GET")
+
+	// News
+	r.HandleFunc("/api/news/collect/user/{userId}", h.CollectNews).Methods("POST")
+	r.HandleFunc("/api/news/article/user/{userId}", h.FetchArticle).Methods("POST")
+
+	// Google OAuth
+	r.HandleFunc("/auth/google/callback", h.GoogleOAuthCallback).Methods("GET")
+
 	r.HandleFunc("/api/teams", h.CreateTeam).Methods("POST")
 	r.HandleFunc("/api/teams/{id}", h.GetTeam).Methods("GET")
 	r.HandleFunc("/api/teams/user/{userId}", h.GetUserTeams).Methods("GET")
@@ -605,6 +646,39 @@ func (ctx *bddTestContext) iSendAPOSTRequestToWithAFileUpload(path string, table
 	return err
 }
 
+func (ctx *bddTestContext) aSessionExistsForUserWithToken(userId, token string) error {
+	query := `INSERT INTO public.sessions (token, user_id, created_at, expires_at, updated_at)
+	          VALUES ($1, $2, NOW(), NOW() + INTERVAL '30 days', NOW())`
+	_, err := ctx.db.Exec(query, token, userId)
+	return err
+}
+
+func (ctx *bddTestContext) theUserHasACustomPlanRequest(userId string) error {
+	query := `INSERT INTO public.custom_plan_requests (id, user_id, posts_per_day, platforms, notes, status, created_at)
+	          VALUES ($1, $2, 50, '["facebook","instagram"]', 'Test request', 'pending', NOW())`
+	_, err := ctx.db.Exec(query, fmt.Sprintf("cpr_%s_1", userId), userId)
+	return err
+}
+
+func (ctx *bddTestContext) theResponseShouldBeAJSONObject() error {
+	var data map[string]interface{}
+	if err := json.Unmarshal(ctx.lastBody, &data); err != nil {
+		return fmt.Errorf("failed to parse JSON object: %w. Body: %s", err, string(ctx.lastBody))
+	}
+	return nil
+}
+
+func (ctx *bddTestContext) theResponseShouldContainAFieldWithKey(key string) error {
+	var data map[string]interface{}
+	if err := json.Unmarshal(ctx.lastBody, &data); err != nil {
+		return fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	if _, ok := data[key]; !ok {
+		return fmt.Errorf("field %q not found in response: %s", key, string(ctx.lastBody))
+	}
+	return nil
+}
+
 func InitializeScenario(ctx *godog.ScenarioContext) {
 	testCtx := &bddTestContext{
 		testData:      make(map[string]interface{}),
@@ -680,6 +754,15 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the user "([^"]*)" has social library items$`, testCtx.theUserHasSocialLibraryItems)
 	ctx.Step(`^the response should contain sync results$`, testCtx.theResponseShouldContainSyncResults)
 	ctx.Step(`^I send a POST request to "([^"]*)" with a file upload:$`, testCtx.iSendAPOSTRequestToWithAFileUpload)
+
+	// Sessions
+	ctx.Step(`^a session exists for user "([^"]*)" with token "([^"]*)"$`, testCtx.aSessionExistsForUserWithToken)
+
+	// Custom plan requests
+	ctx.Step(`^the user "([^"]*)" has a custom plan request$`, testCtx.theUserHasACustomPlanRequest)
+
+	// JSON object response
+	ctx.Step(`^the response should be a JSON object$`, testCtx.theResponseShouldBeAJSONObject)
 
 	ctx.Step(`^I connect to WebSocket "([^"]*)" with internal auth$`, func(path string) error {
 		return godog.ErrPending

@@ -58,7 +58,21 @@ try {
 } catch {
   // runtime threw
 }
-if (!globalThis.localStorage) {
+// Detect whether the built-in localStorage is usable (happy-dom may provide a
+// proxy that lacks clear() and prevents property overrides). If not, replace it.
+let localStorageUsable = false;
+try {
+  if (globalThis.localStorage) {
+    globalThis.localStorage.setItem('__ls_probe__', '1');
+    globalThis.localStorage.removeItem('__ls_probe__');
+    if (typeof globalThis.localStorage.clear === 'function') {
+      localStorageUsable = true;
+    }
+  }
+} catch {
+  // threw
+}
+if (!localStorageUsable) {
   Object.defineProperty(globalThis, 'localStorage', {
     configurable: true,
     value: new MemoryStorage(),
