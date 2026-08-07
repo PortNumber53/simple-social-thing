@@ -11,7 +11,7 @@ import (
 )
 
 // Load loads configuration from layered sources in increasing priority:
-//  1. /etc/simple/config.ini        (system defaults)
+//  1. /etc/simple-social-thing/config.ini        (system defaults)
 //  2. ~/.config/simple/config.ini   (user overrides)
 //  3. .env                          (project-local overrides)
 //
@@ -20,10 +20,10 @@ func Load() error {
 	shellEnv := envMap(os.Environ())
 
 	values := map[string]string{}
-	applyINI(values, "/etc/simple/config.ini")
+	applyINI(values, "/etc/simple-social-thing/config.ini")
 
 	if home, err := os.UserHomeDir(); err == nil {
-		applyINI(values, filepath.Join(home, ".config", "simple", "config.ini"))
+		applyINI(values, filepath.Join(home, ".config", "simple-social-thing", "config.ini"))
 	}
 
 	applyDotEnv(values, ".env")
