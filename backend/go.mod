@@ -10,7 +10,7 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
-	github.com/rs/cors v1.10.1
+	github.com/rs/cors v1.11.0
 	github.com/stripe/stripe-go/v79 v79.12.0
 	golang.org/x/image v0.41.0
 	golang.org/x/net v0.18.0
