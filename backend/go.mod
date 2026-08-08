@@ -1,8 +1,6 @@
 module github.com/PortNumber53/simple-social-thing/backend
 
-go 1.24.0
-
-toolchain go1.24.2
+go 1.25.0
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
@@ -15,7 +13,7 @@ require (
 	github.com/rs/cors v1.10.1
 	github.com/stripe/stripe-go/v79 v79.12.0
 	golang.org/x/image v0.34.0
-	golang.org/x/net v0.18.0
+	golang.org/x/net v0.55.0
 	golang.org/x/time v0.3.0
 )
 
