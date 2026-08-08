@@ -13,7 +13,7 @@ require (
 	github.com/rs/cors v1.10.1
 	github.com/stripe/stripe-go/v79 v79.12.0
 	golang.org/x/image v0.41.0
-	golang.org/x/net v0.18.0
+	golang.org/x/net v0.55.0
 	golang.org/x/time v0.3.0
 )
 
