@@ -53,6 +53,7 @@
 	},
 	"overrides": {
 		"sharp": "0.35.0",
-		"shell-quote": "1.9.0"
+		"shell-quote": "1.9.0",
+		"brace-expansion": "2.1.2"
 	}
 }
