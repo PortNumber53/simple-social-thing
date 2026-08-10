@@ -1,7 +1,26 @@
 import type { MediaKind } from './types';
 
+/**
+ * Validate that a URL is safe to assign to a media element `src`.
+ * Only `blob:`, `http:`, `https:`, and protocol-relative URLs are allowed.
+ */
+function isSafeMediaSrc(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith('//')) return true;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'blob:';
+  } catch {
+    return false;
+  }
+}
+
 export async function getMediaDurationSec(objectUrl: string, kind: MediaKind): Promise<number> {
   if (kind === 'image') return 0;
+  if (!isSafeMediaSrc(objectUrl)) {
+    throw new Error('Refusing to load media from unsafe URL scheme');
+  }
   return await new Promise<number>((resolve, reject) => {
     const el = document.createElement(kind);
     el.preload = 'metadata';
