@@ -511,6 +511,77 @@ func newHTTPServer(handler http.Handler, port string) *http.Server {
 	}
 }
 
+// safeFileServer wraps an http.Handler (typically http.FileServer) to prevent
+// reflected/stored XSS from user-uploaded files. It inspects the response
+// Content-Type and, for potentially dangerous types (HTML, SVG, XML, JS),
+// overrides the Content-Type to application/octet-stream and sets
+// Content-Disposition: attachment so the browser downloads the file instead
+// of rendering/executing it. This ensures uploaded content can never be
+// interpreted as active content in the media origin.
+func safeFileServer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Wrap the ResponseWriter so we can inspect/override headers before
+		// they are sent. We only need to intercept Content-Type and add
+		// Content-Disposition, so a simple wrapper suffices.
+		rw := &xssSafeResponseWriter{ResponseWriter: w}
+		next.ServeHTTP(rw, r)
+	})
+}
+
+// xssSafeResponseWriter intercepts WriteHeader to override unsafe content types.
+type xssSafeResponseWriter struct {
+	http.ResponseWriter
+	headerWritten bool
+}
+
+func (w *xssSafeResponseWriter) WriteHeader(code int) {
+	if !w.headerWritten {
+		w.headerWritten = true
+		w.sanitizeContentType()
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *xssSafeResponseWriter) Write(p []byte) (int, error) {
+	if !w.headerWritten {
+		w.headerWritten = true
+		w.sanitizeContentType()
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+// sanitizeContentType checks the Content-Type header and, if it is a
+// potentially dangerous type, replaces it with application/octet-stream
+// and adds Content-Disposition: attachment to force a download.
+func (w *xssSafeResponseWriter) sanitizeContentType() {
+	ct := w.Header().Get("Content-Type")
+	// Extract the base media type (ignore parameters like charset).
+	base := ct
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		base = strings.TrimSpace(ct[:i])
+	}
+	base = strings.ToLower(base)
+	dangerous := map[string]bool{
+		"text/html":              true,
+		"application/xhtml+xml":  true,
+		"image/svg+xml":          true,
+		"application/javascript": true,
+		"text/javascript":        true,
+		"application/ecmascript": true,
+		"text/ecmascript":        true,
+		"application/xml":        true,
+		"text/xml":               true,
+		"application/rss+xml":    true,
+		"application/atom+xml":   true,
+	}
+	if dangerous[base] {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", "attachment")
+		w.Header().Del("X-Content-Type-Options")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+	}
+}
+
 func buildRouter(h *handlers.Handler) *mux.Router {
 	r := mux.NewRouter()
 
@@ -527,7 +598,10 @@ func buildRouter(h *handlers.Handler) *mux.Router {
 
 	// Public media (uploaded assets used for publishing)
 	// NOTE: required for Instagram publishing which needs public HTTPS URLs for images.
-	r.PathPrefix("/media/").Handler(http.StripPrefix("/media/", http.FileServer(http.Dir("media"))))
+	// Wrap the file server to prevent reflected/stored XSS: force a safe
+	// Content-Type and Content-Disposition on responses so that uploaded
+	// HTML/SVG files cannot be executed as scripts in the browser.
+	r.PathPrefix("/media/").Handler(safeFileServer(http.StripPrefix("/media/", http.FileServer(http.Dir("media")))))
 
 	// User endpoints
 	r.HandleFunc("/api/users", h.CreateUser).Methods("POST")
