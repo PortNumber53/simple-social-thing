@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { AlertBanner } from '../components/AlertBanner';
+import { sanitizeImageUrl } from '../lib/sanitizeUrl';
 
 export const Profile: React.FC = () => {
   const { user } = useAuth();
@@ -93,7 +94,7 @@ export const Profile: React.FC = () => {
                 {/* Avatar */}
                 <div className="flex items-center gap-6">
                   <img
-                    src={user?.imageUrl || 'https://via.placeholder.com/150'}
+                    src={sanitizeImageUrl(user?.imageUrl, 'https://via.placeholder.com/150')}
                     alt={user?.name || 'User'}
                     className="w-24 h-24 rounded-full ring-4 ring-primary-400 shadow-lg"
                     referrerPolicy="no-referrer"

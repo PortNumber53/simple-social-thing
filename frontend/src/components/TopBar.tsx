@@ -5,6 +5,7 @@ import { useTheme, type ThemeMode } from '../contexts/ThemeContext';
 import { useSidebar } from '../contexts/SidebarContext';
 import { Breadcrumbs } from './Breadcrumbs';
 import { NotificationsPopover } from './NotificationsPopover';
+import { sanitizeImageUrl } from '../lib/sanitizeUrl';
 
 const THEME_ICONS: Record<ThemeMode, React.ReactNode> = {
   light: (
@@ -89,7 +90,7 @@ export const TopBar: React.FC = () => {
             className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             {user?.imageUrl ? (
-              <img src={user.imageUrl} alt="" className="w-7 h-7 rounded-full object-cover" referrerPolicy="no-referrer" />
+              <img src={sanitizeImageUrl(user.imageUrl)} alt="" className="w-7 h-7 rounded-full object-cover" referrerPolicy="no-referrer" />
             ) : (
               <div className="w-7 h-7 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center text-xs font-bold text-primary-700 dark:text-primary-300">
                 {user?.name?.charAt(0) || '?'}

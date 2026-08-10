@@ -39,6 +39,19 @@ describe('TopBar', () => {
   it('renders top bar with user info', () => {
     renderWithProviders(<TopBar />);
   });
+
+  it('sanitizes malicious imageUrl in avatar', () => {
+    localStorage.setItem(
+      'user',
+      JSON.stringify({ id: 'u1', email: 'e', name: 'User', imageUrl: 'javascript:alert(1)' }),
+    );
+    renderWithProviders(<TopBar />);
+    const img = document.querySelector('img') as HTMLImageElement | null;
+    expect(img).toBeTruthy();
+    if (img) {
+      expect(img.src).not.toContain('javascript:');
+    }
+  });
 });
 
 describe('NotificationsPopover', () => {
