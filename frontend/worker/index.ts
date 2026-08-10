@@ -1,6 +1,7 @@
 import { buildCorsHeaders, buildSidCookie, getCookie, publicUrlForRequest } from './lib/http';
 import { withCors } from './lib/cors';
 import { requireSid, resolveSidToken, createLocalSession } from './lib/sid';
+import { safeErrorMessage } from './lib/safeError';
 
 export { buildCorsHeaders, buildSidCookie, getCookie };
 
@@ -241,7 +242,7 @@ export default {
         healthBody = (await r.text().catch(() => '')).slice(0, 800);
       } catch (e) {
         healthStatus = -1;
-        healthBody = e instanceof Error ? e.message : String(e);
+        healthBody = safeErrorMessage(e, 'worker error');
       }
       return Response.json({
         ok: true,
@@ -275,7 +276,7 @@ export default {
           backendUserBody = await res.json().catch(() => null);
         } catch (e) {
           backendUserStatus = -1;
-          backendUserBody = { error: e instanceof Error ? e.message : String(e) };
+          backendUserBody = { error: safeErrorMessage(e, 'worker error') };
         }
       }
 
@@ -414,7 +415,7 @@ export default {
               threads: thRow ? { connected: true, account: { id: thRow.providerId, name: thRow.name || null } } : (thConn ? { connected: true, account: thConn } : { connected: false }),
             });
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            const message = safeErrorMessage(err, 'worker error');
             logWarn(env, '[IntegrationsStatus] backend fetch failed', { reqId, message });
           }
         }
@@ -1406,7 +1407,7 @@ async function handleSunoGenerate(request: Request, env: Env): Promise<Response>
 				return Response.json({ ok: false, error: 'suno_update_failed', status: upRes.status, details: t }, { status: 502, headers });
 			}
 		} catch (e) {
-			const message = e instanceof Error ? e.message : String(e);
+			const message = safeErrorMessage(e, 'worker error');
 			return Response.json({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }, { status: 502, headers });
 		}
 	}
@@ -1485,7 +1486,7 @@ async function handlePostsPublish(request: Request, env: Env): Promise<Response>
     console.log('[PostsPublish] ok', { reqId, sid, backendOrigin, durMs: Date.now() - started, status: res.status });
     return new Response(text || JSON.stringify({ ok: true }), { status: 200, headers });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = safeErrorMessage(e, 'worker error');
     console.error('[PostsPublish] backend unreachable', { reqId, sid, backendOrigin, message });
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
@@ -1534,7 +1535,7 @@ async function handleInstagramAgent(request: Request, env: Env): Promise<Respons
 	if (cacheControl) responseHeaders.set('Cache-Control', cacheControl);
 	return new Response(res.body, { status: res.status, headers: responseHeaders });
   } catch (err) {
-	const message = err instanceof Error ? err.message : String(err);
+	const message = safeErrorMessage(err, 'worker error');
 	return Response.json({ ok: false, error: 'backend_unreachable', details: { message } }, { status: 502, headers });
   }
 }
@@ -1564,7 +1565,7 @@ async function handleNewsProxy(request: Request, env: Env): Promise<Response> {
 	responseHeaders.set('Content-Type', res.headers.get('Content-Type') || 'application/json');
 	return new Response(res.body, { status: res.status, headers: responseHeaders });
   } catch (err) {
-	const message = err instanceof Error ? err.message : String(err);
+	const message = safeErrorMessage(err, 'worker error');
 	return Response.json({ ok: false, error: 'backend_unreachable', details: { message } }, { status: 502, headers });
   }
 }
@@ -1610,7 +1611,7 @@ async function refreshInstagramAgentToken(backendOrigin: string, sid: string, en
 	}
 	return Response.json({ ok: true, obtainedAt, expiresAt }, { status: 200, headers });
   } catch (err) {
-	const message = err instanceof Error ? err.message : String(err);
+	const message = safeErrorMessage(err, 'worker error');
 	return Response.json({ ok: false, error: 'instagram_token_refresh_failed', details: { message } }, { status: 502, headers });
   }
 }
@@ -1709,7 +1710,7 @@ async function handleGetPublishJob(request: Request, env: Env): Promise<Response
     headers.set("Content-Type", "application/json");
     return new Response(text, { status: res.status, headers });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = safeErrorMessage(e, 'worker error');
     return new Response(JSON.stringify({ ok: false, error: "backend_unreachable", details: { message } }), { status: 502, headers });
   }
 }
@@ -1786,7 +1787,7 @@ async function handlePublishJobWs(request: Request, env: Env): Promise<Response>
           return;
         }
       } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
+        const message = safeErrorMessage(e, 'worker error');
         if (attempt % 5 === 0) send({ ok: false, error: 'poll_failed', details: { message } });
       }
       await sleep(1000);
@@ -1831,7 +1832,7 @@ async function handleRealtimeEventsWs(request: Request, env: Env): Promise<Respo
     const pingText = await ping.text().catch(() => '');
     console.log('[EventsWS] ping status=%s body=%s', ping.status, (pingText || '').slice(0, 200));
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = safeErrorMessage(e, 'worker error');
     console.log('[EventsWS] ping failed message=%s', message);
   }
   const upstream = await fetch(backendUrl, {
@@ -2001,7 +2002,7 @@ async function handleSunoCredits(request: Request, env: Env): Promise<Response> 
 
 		return Response.json({ ok: true, credits: data, availableCredits }, { status: 200, headers });
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+		const message = safeErrorMessage(err, 'worker error');
 		return Response.json({ ok: false, error: 'suno_unreachable', details: { message } }, { status: 502, headers });
 	}
 }
@@ -2056,7 +2057,7 @@ async function handleUserSettingsBundle(request: Request, env: Env): Promise<Res
 
 		return Response.json({ ok: true, data: data ?? {} }, { status: 200, headers });
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+		const message = safeErrorMessage(err, 'worker error');
 		console.error('[UserSettingsBundle] backend unreachable', { backendOrigin, message });
 		return Response.json({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }, { status: 502, headers });
 	}
@@ -2091,7 +2092,7 @@ async function handleLibraryItems(request: Request, env: Env): Promise<Response>
 		headers.set('Content-Type', 'application/json');
 		return new Response(text || '[]', { status: 200, headers });
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+		const message = safeErrorMessage(err, 'worker error');
 		console.error('[LibraryItems] backend unreachable', { backendOrigin, message });
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
@@ -2130,7 +2131,7 @@ async function handleLibrarySync(request: Request, env: Env): Promise<Response> 
 		headers.set('Content-Type', 'application/json');
 		return new Response(text || '{"ok":true}', { status: 200, headers });
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+		const message = safeErrorMessage(err, 'worker error');
 		console.error('[LibrarySync] backend unreachable', { backendOrigin, message });
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
@@ -2177,7 +2178,7 @@ async function handleLibraryDelete(request: Request, env: Env): Promise<Response
 		headers.set('Content-Type', 'application/json');
 		return new Response(text || '{"ok":true}', { status: 200, headers });
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+		const message = safeErrorMessage(err, 'worker error');
 		console.error('[LibraryDelete] backend unreachable', { backendOrigin, message, ids: ids.length, userId: sid, deleteExternal });
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
@@ -2242,7 +2243,7 @@ async function handleLibraryImport(request: Request, env: Env): Promise<Response
 		headers.set('Content-Type', 'application/json');
 		return new Response(text || '{"ok":true}', { status: 200, headers });
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+		const message = safeErrorMessage(err, 'worker error');
 		console.error('[LibraryImport] backend unreachable', { backendOrigin, message });
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
@@ -2271,7 +2272,7 @@ async function handleNotifications(request: Request, env: Env): Promise<Response
     headers.set('Content-Type', 'application/json');
     return new Response(text || '[]', { status: 200, headers });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = safeErrorMessage(err, 'worker error');
     console.error('[Notifications] backend unreachable', { backendOrigin, message });
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
@@ -2303,7 +2304,7 @@ async function handleNotificationsRead(request: Request, env: Env): Promise<Resp
     headers.set('Content-Type', 'application/json');
     return new Response(text || '{"ok":true}', { status: 200, headers });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = safeErrorMessage(err, 'worker error');
     console.error('[NotificationsRead] backend unreachable', { backendOrigin, message });
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
@@ -2357,7 +2358,7 @@ async function handleLocalLibraryItems(request: Request, env: Env): Promise<Resp
     headers.set('Content-Type', 'application/json');
     return new Response(text || '{"ok":true}', { status: 200, headers });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = safeErrorMessage(err, 'worker error');
     console.error('[LocalLibraryItems] backend unreachable', { backendOrigin, message });
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
@@ -2409,7 +2410,7 @@ async function handleLocalLibraryItem(request: Request, env: Env): Promise<Respo
     headers.set('Content-Type', 'application/json');
     return new Response(text || '{"ok":true}', { status: 200, headers });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = safeErrorMessage(err, 'worker error');
     console.error('[LocalLibraryItem] backend unreachable', { backendOrigin, message });
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
@@ -2458,7 +2459,7 @@ async function handleLocalLibraryPublishNow(request: Request, env: Env): Promise
     console.log('[LocalLibraryPublishNow] ok', { reqId, sid, postId: id, backendOrigin, durMs: Date.now() - started, status: res.status });
     return new Response(text || JSON.stringify({ ok: true }), { status: 200, headers });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = safeErrorMessage(e, 'worker error');
     console.error('[LocalLibraryPublishNow] backend unreachable', { reqId, sid, postId: id, backendOrigin, message });
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
@@ -2537,7 +2538,7 @@ async function handleLocalLibraryUploads(request: Request, env: Env): Promise<Re
     headers.set('Content-Type', 'application/json');
     return new Response(text || '{"ok":true,"items":[]}', { status: 200, headers });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = safeErrorMessage(err, 'worker error');
     console.error('[LocalLibraryUploads] backend unreachable', { backendOrigin, message });
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
@@ -2564,7 +2565,7 @@ async function handleLocalLibraryUploadsFolders(request: Request, env: Env): Pro
     headers.set('Content-Type', 'application/json');
     return new Response(text || '{"ok":true,"folders":[]}', { status: 200, headers });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = safeErrorMessage(err, 'worker error');
     console.error('[LocalLibraryUploadsFolders] backend unreachable', { backendOrigin, message });
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
@@ -2593,7 +2594,7 @@ async function handleLocalLibraryUploadsDelete(request: Request, env: Env): Prom
     headers.set('Content-Type', 'application/json');
     return new Response(text || '{"ok":true}', { status: 200, headers });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = safeErrorMessage(err, 'worker error');
     console.error('[LocalLibraryUploadsDelete] backend unreachable', { backendOrigin, message });
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
@@ -2624,7 +2625,7 @@ async function handleLocalLibraryUploadsFile(request: Request, env: Env): Promis
     // Pass through content headers.
     return new Response(res.body, { status: 200, headers: res.headers });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = safeErrorMessage(err, 'worker error');
     console.error('[LocalLibraryUploadsFile] backend unreachable', { backendOrigin, message });
     return new Response(null, { status: 502, headers });
   }
@@ -2650,7 +2651,7 @@ async function handleLocalLibraryVideoEditorExport(request: Request, env: Env): 
     headers.set('Content-Type', 'application/json');
     return new Response(text || '{"ok":false}', { status: res.status, headers });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = safeErrorMessage(err, 'worker error');
     console.error('[LocalLibraryVideoEditorExport] backend unreachable', { backendOrigin, message });
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
@@ -2671,7 +2672,7 @@ async function handleMediaProxy(request: Request, env: Env): Promise<Response> {
       headers: res.headers,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = safeErrorMessage(err, 'worker error');
     console.error('[MediaProxy] backend unreachable', { backendOrigin, message });
     return new Response('media_unreachable', { status: 502 });
   }
@@ -2837,7 +2838,7 @@ async function handleSunoTracksList(request: Request, env: Env): Promise<Respons
 		headers.set('Content-Type', 'application/json');
 		return new Response(text || '[]', { status: 200, headers });
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+		const message = safeErrorMessage(err, 'worker error');
 		return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
 	}
 }
@@ -2866,7 +2867,7 @@ async function handleSunoApiKey(request: Request, env: Env): Promise<Response> {
 			const value = obj ? obj['value'] : null;
 			return new Response(JSON.stringify({ ok: true, value: value ?? null }), { status: 200, headers });
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
+			const message = safeErrorMessage(err, 'worker error');
 			return new Response(
 				JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }),
 				{ status: 502, headers }
@@ -2893,7 +2894,7 @@ async function handleSunoApiKey(request: Request, env: Env): Promise<Response> {
 			}
 			return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
 		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
+			const message = safeErrorMessage(err, 'worker error');
 			return new Response(
 				JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }),
 				{ status: 502, headers }
@@ -3141,7 +3142,7 @@ async function handleInstagramCallback(request: Request, env: Env): Promise<Resp
         rawTokenPayload = { short, longError: { status: longRes.status, body: longErr } };
       }
     } catch (e) {
-      rawTokenPayload = { short, longError: { message: e instanceof Error ? e.message : String(e) } };
+      rawTokenPayload = { short, longError: { message: safeErrorMessage(e, 'worker error') } };
     }
 
     // Step 2: Get user pages and find linked Instagram business account
@@ -3548,7 +3549,7 @@ async function handleTikTokScopes(request: Request, env: Env): Promise<Response>
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: true, scope: scope ?? null, requestedScopes: requestedScopes ?? null, hasVideoList, hasVideoUpload, hasVideoPublish }), { status: 200, headers });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = safeErrorMessage(e, 'worker error');
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
 }
@@ -3837,7 +3838,7 @@ async function handleFacebookPermissions(request: Request, env: Env): Promise<Re
       })),
     }), { status: 200, headers });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = safeErrorMessage(e, 'worker error');
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
@@ -3885,7 +3886,7 @@ async function handleFacebookPages(request: Request, env: Env): Promise<Response
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: true, connected: true, pages: normalized }), { status: 200, headers });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = safeErrorMessage(e, 'worker error');
     headers.set('Content-Type', 'application/json');
     return new Response(JSON.stringify({ ok: false, error: 'backend_unreachable', backendOrigin, details: { message } }), { status: 502, headers });
   }
