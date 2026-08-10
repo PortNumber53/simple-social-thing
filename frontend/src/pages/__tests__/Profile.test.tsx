@@ -61,4 +61,27 @@ describe('Profile page', () => {
       expect(screen.getByText(/Display name updated successfully!/i)).toBeInTheDocument();
     }, { timeout: 2000 });
   });
+
+  it('prevents URL redirection via malicious imageUrl', () => {
+    localStorage.setItem(
+      'user',
+      JSON.stringify({ id: 'u1', email: 'e', name: 'Alice', imageUrl: 'javascript:window.location="//evil.com"' }),
+    );
+    render(
+      <MemoryRouter>
+        <ThemeProvider>
+          <AuthProvider>
+            <Profile />
+          </AuthProvider>
+        </ThemeProvider>
+      </MemoryRouter>,
+    );
+    const img = document.querySelector('img') as HTMLImageElement | null;
+    expect(img).toBeTruthy();
+    if (img) {
+      expect(img.src).not.toContain('javascript:');
+      expect(img.src).not.toContain('evil.com');
+      expect(img.src).toContain('via.placeholder.com');
+    }
+  });
 });

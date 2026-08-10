@@ -39,6 +39,20 @@ describe('TopBar', () => {
   it('renders top bar with user info', () => {
     renderWithProviders(<TopBar />);
   });
+
+  it('prevents URL redirection via malicious imageUrl', () => {
+    localStorage.setItem(
+      'user',
+      JSON.stringify({ id: 'u1', email: 'e', name: 'User', imageUrl: 'javascript:window.location="//evil.com"' }),
+    );
+    renderWithProviders(<TopBar />);
+    const img = document.querySelector('img') as HTMLImageElement | null;
+    expect(img).toBeTruthy();
+    if (img) {
+      expect(img.src).not.toContain('javascript:');
+      expect(img.src).not.toContain('evil.com');
+    }
+  });
 });
 
 describe('NotificationsPopover', () => {
