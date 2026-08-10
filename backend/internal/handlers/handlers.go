@@ -3649,8 +3649,10 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 					rel := strings.TrimSpace(relMedia[videoIdx])
 					if rel != "" {
 						local := strings.TrimPrefix(rel, "/media/")
-						path := filepath.Clean(filepath.Join("media", local))
-						if b, err := os.ReadFile(path); err == nil {
+						path, perr := safeMediaJoin(local)
+						if perr != nil {
+							log.Printf("[PublishJob] blocked path traversal: jobId=%s userId=%s postId=%s rel=%s err=%v", jobID, userID, postID, rel, perr)
+						} else if b, err := os.ReadFile(path); err == nil {
 							videoBytes = b
 							sz = len(videoBytes)
 							ct = http.DetectContentType(b)
@@ -4463,7 +4465,10 @@ func loadUploadedMediaFromRelPaths(relPaths []string) ([]uploadedMedia, error) {
 		}
 		// rel example: /media/uploads/<userId>/<file>
 		local := strings.TrimPrefix(rel, "/media/")
-		path := filepath.Clean(filepath.Join("media", local))
+		path, perr := safeMediaJoin(local)
+		if perr != nil {
+			return nil, perr
+		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
@@ -6287,7 +6292,7 @@ func (h *Handler) SunoMusicCallback(w http.ResponseWriter, r *http.Request) {
 				if err := os.MkdirAll(mediaDir, 0o755); err != nil {
 					log.Printf("[Suno][Callback] mkdir error: %v", err)
 				} else {
-					fileName := fmt.Sprintf("%s.mp3", trackID)
+					fileName := fmt.Sprintf("%s.mp3", sanitizePathComponent(trackID))
 					filePath = filepath.Join(mediaDir, fileName)
 					out, err := os.Create(filePath)
 					if err != nil {
@@ -6392,7 +6397,7 @@ func (h *Handler) UpdateSunoTrack(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		fileName := fmt.Sprintf("%s.mp3", trackID)
+		fileName := fmt.Sprintf("%s.mp3", sanitizePathComponent(trackID))
 		filePath = filepath.Join(mediaDir, fileName)
 
 		out, err := os.Create(filePath)
