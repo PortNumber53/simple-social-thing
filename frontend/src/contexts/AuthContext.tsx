@@ -44,7 +44,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const storage = safeStorage();
   // Hydrate synchronously to avoid header flash
   const [user, setUser] = useState<User | null>(() => {
-    return storage.getJSON<User>('user');
+    // Prefer encrypted storage; fall back to legacy clear-text for one-time migration.
+    const secure = storage.getSecureJSON<User>('user');
+    if (secure) return secure;
+    const legacy = storage.getJSON<User>('user');
+    if (legacy) {
+      // Migrate legacy clear-text data to encrypted storage.
+      storage.setSecureJSON('user', legacy);
+    }
+    return legacy;
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +96,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
         if (userData.success && userData.user) {
           setUser(userData.user);
-          storage.setJSON('user', userData.user);
+          storage.setSecureJSON('user', userData.user);
           setError(null);
 
           // Prime browser cache for user_settings to reduce post-login page load times.
@@ -137,7 +145,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         if (profile) {
           const updatedUser = { ...user, profile };
           setUser(updatedUser);
-          storage.setJSON('user', updatedUser);
+          storage.setSecureJSON('user', updatedUser);
         }
       });
     }
@@ -153,12 +161,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (profile) {
         const updatedUser = { ...userData, profile };
         setUser(updatedUser);
-        storage.setJSON('user', updatedUser);
+        storage.setSecureJSON('user', updatedUser);
       } else {
-        storage.setJSON('user', userData);
+        storage.setSecureJSON('user', userData);
       }
     } else {
-      storage.setJSON('user', userData);
+      storage.setSecureJSON('user', userData);
     }
 
     void fetchAndCacheUserSettings();

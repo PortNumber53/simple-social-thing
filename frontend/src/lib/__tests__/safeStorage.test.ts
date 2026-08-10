@@ -67,4 +67,60 @@ describe('safeStorage', () => {
     const s = safeStorage(makeStorage({ removeItem }));
     expect(() => s.remove('key')).not.toThrow();
   });
+
+  describe('setSecureJSON / getSecureJSON', () => {
+    it('stores data in obfuscated form (not clear text)', () => {
+      const s = safeStorage(makeStorage());
+      const sensitive = { token: 'secret-access-token-12345' };
+      s.setSecureJSON('user', sensitive);
+      // The stored value must NOT contain the plaintext token.
+      const raw = store.get('user');
+      expect(raw).toBeTruthy();
+      expect(raw).not.toContain('secret-access-token-12345');
+      expect(raw).not.toContain('token');
+    });
+
+    it('round-trips data correctly', () => {
+      const s = safeStorage(makeStorage());
+      const data = { id: 'u1', email: 'a@b.com', name: 'Alice', accessToken: 'tok123' };
+      s.setSecureJSON('user', data);
+      expect(s.getSecureJSON('user')).toEqual(data);
+    });
+
+    it('returns null for missing key', () => {
+      const s = safeStorage(makeStorage());
+      expect(s.getSecureJSON('missing')).toBeNull();
+    });
+
+    it('returns null for corrupted data without auto-removing', () => {
+      store.set('corrupt', 'not-valid-base64!!!');
+      const removeItem = vi.fn((k: string) => store.delete(k));
+      const s = safeStorage(makeStorage({ removeItem }));
+      expect(s.getSecureJSON('corrupt')).toBeNull();
+      // getSecureJSON does not auto-remove; caller handles cleanup.
+      expect(removeItem).not.toHaveBeenCalled();
+    });
+
+    it('produces different ciphertext for different storage keys', () => {
+      const s = safeStorage(makeStorage());
+      s.setSecureJSON('keyA', { val: 'same' });
+      s.setSecureJSON('keyB', { val: 'same' });
+      expect(store.get('keyA')).not.toBe(store.get('keyB'));
+    });
+
+    it('handles Unicode characters in data', () => {
+      const s = safeStorage(makeStorage());
+      const data = { name: '日本語テスト🎉', emoji: '👋' };
+      s.setSecureJSON('user', data);
+      expect(s.getSecureJSON('user')).toEqual(data);
+    });
+
+    it('setSecureJSON swallows errors', () => {
+      const setItem = vi.fn(() => {
+        throw new Error('quota exceeded');
+      });
+      const s = safeStorage(makeStorage({ setItem }));
+      expect(() => s.setSecureJSON('key', { a: 1 })).not.toThrow();
+    });
+  });
 });

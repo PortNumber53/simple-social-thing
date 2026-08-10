@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuthProvider, useAuth } from '../AuthContext';
+import { safeStorage } from '../../lib/safeStorage';
 
 function AuthConsumer() {
   const { user, isAuthenticated, login, logout, error } = useAuth();
@@ -92,7 +93,11 @@ describe('AuthContext', () => {
 
     await u.click(screen.getByRole('button', { name: 'login' }));
     expect(screen.getByTestId('is-auth')).toHaveTextContent('true');
-    expect(localStorage.getItem('user')).toContain('"id":"u1"');
+    // User data is now stored encrypted, not as clear text.
+    const raw = localStorage.getItem('user');
+    expect(raw).toBeTruthy();
+    expect(raw).not.toContain('"id":"u1"');
+    expect(safeStorage().getSecureJSON('user')).toMatchObject({ id: 'u1' });
 
     await waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith('/api/user-settings', { credentials: 'include' });
@@ -133,7 +138,11 @@ describe('AuthContext', () => {
     await waitFor(() => {
       expect(screen.getByTestId('is-auth')).toHaveTextContent('true');
     });
-    expect(localStorage.getItem('user')).toContain('"id":"u2"');
+    // User data is stored encrypted, not as clear text.
+    const raw = localStorage.getItem('user');
+    expect(raw).toBeTruthy();
+    expect(raw).not.toContain('"id":"u2"');
+    expect(safeStorage().getSecureJSON('user')).toMatchObject({ id: 'u2' });
     // Redirect performed by setting location.href
     expect(String((window.location as any).href)).toBe('/dashboard');
   });
