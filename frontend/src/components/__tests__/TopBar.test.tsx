@@ -46,11 +46,12 @@ describe('TopBar', () => {
       JSON.stringify({ id: 'u1', email: 'e', name: 'User', imageUrl: 'javascript:alert(1)' }),
     );
     renderWithProviders(<TopBar />);
+    // A malicious imageUrl should not produce an <img> at all — the initials
+    // fallback div is rendered instead.
     const img = document.querySelector('img') as HTMLImageElement | null;
-    expect(img).toBeTruthy();
-    if (img) {
-      expect(img.src).not.toContain('javascript:');
-    }
+    expect(img).toBeNull();
+    // The initials fallback should be visible.
+    expect(document.querySelector('.bg-primary-100, .bg-primary-900')).toBeTruthy();
   });
 });
 

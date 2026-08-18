@@ -1,4 +1,39 @@
 /**
+ * Check whether a user-provided URL is safe to use in DOM attributes such as
+ * `img[src]` or `a[href]`. Only `http:`, `https:`, and protocol-relative URLs
+ * are allowed. Everything else (including `javascript:` and `data:` URIs) is
+ * rejected.
+ *
+ * This boolean predicate is intended to be used as a **guard** in conditional
+ * rendering, e.g.:
+ *
+ * ```tsx
+ * {isSafeUrl(user.imageUrl)
+ *   ? <img src={user.imageUrl} ... />
+ *   : <img src={fallback} ... />}
+ * ```
+ *
+ * CodeQL recognises ternary/`&&` short-circuit guards and will not report
+ * taint flowing past the guard, unlike a pass-through sanitizer wrapper.
+ *
+ * @param url The raw URL value (may be undefined/empty).
+ * @returns `true` when the URL is a safe HTTP(S) or protocol-relative URL.
+ */
+export function isSafeUrl(url: string | undefined | null): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  try {
+    // Protocol-relative URLs (//example.com/...) are allowed.
+    if (trimmed.startsWith('//')) return true;
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Sanitize a user-provided URL so it is safe to use in DOM attributes such as
  * `img[src]` or `a[href]`. Only `http:`, `https:`, and protocol-relative URLs
  * are allowed. Everything else (including `javascript:` and `data:` URIs) is
@@ -9,22 +44,7 @@
  *                 Defaults to an empty string.
  */
 export function sanitizeUrl(url: string | undefined | null, fallback = ''): string {
-  if (!url) return fallback;
-  const trimmed = url.trim();
-  if (!trimmed) return fallback;
-  try {
-    // Protocol-relative URLs (//example.com/...) are allowed.
-    if (trimmed.startsWith('//')) {
-      return trimmed;
-    }
-    const parsed = new URL(trimmed);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      return trimmed;
-    }
-    return fallback;
-  } catch {
-    return fallback;
-  }
+  return isSafeUrl(url) ? (url as string).trim() : fallback;
 }
 
 /**

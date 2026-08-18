@@ -1,5 +1,42 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeUrl, sanitizeImageUrl } from '../sanitizeUrl';
+import { isSafeUrl, sanitizeUrl, sanitizeImageUrl } from '../sanitizeUrl';
+
+describe('isSafeUrl', () => {
+  it('returns true for http and https URLs', () => {
+    expect(isSafeUrl('http://example.com/img.png')).toBe(true);
+    expect(isSafeUrl('https://example.com/img.png')).toBe(true);
+  });
+
+  it('returns true for protocol-relative URLs', () => {
+    expect(isSafeUrl('//example.com/img.png')).toBe(true);
+  });
+
+  it('returns false for javascript: URLs', () => {
+    expect(isSafeUrl('javascript:alert(1)')).toBe(false);
+    expect(isSafeUrl('  javascript:alert(1)  ')).toBe(false);
+  });
+
+  it('returns false for data: URLs', () => {
+    expect(isSafeUrl('data:text/html,<script>alert(1)</script>')).toBe(false);
+  });
+
+  it('returns false for malformed URLs', () => {
+    expect(isSafeUrl('not a url')).toBe(false);
+    expect(isSafeUrl(':::broken')).toBe(false);
+  });
+
+  it('returns false for empty/undefined/null', () => {
+    expect(isSafeUrl(undefined)).toBe(false);
+    expect(isSafeUrl(null)).toBe(false);
+    expect(isSafeUrl('')).toBe(false);
+    expect(isSafeUrl('  ')).toBe(false);
+  });
+
+  it('handles case-insensitive protocol schemes', () => {
+    expect(isSafeUrl('JaVaScRiPt:alert(1)')).toBe(false);
+    expect(isSafeUrl('HTTPS://example.com/img.png')).toBe(true);
+  });
+});
 
 describe('sanitizeUrl', () => {
   it('allows http and https URLs', () => {
