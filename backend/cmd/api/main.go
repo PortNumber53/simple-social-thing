@@ -511,6 +511,23 @@ func newHTTPServer(handler http.Handler, port string) *http.Server {
 	}
 }
 
+// dangerousContentTypes lists media types that a browser may interpret as
+// active content (HTML, SVG, XML, JavaScript). Responses with one of these
+// types are forced to application/octet-stream to neutralise XSS vectors.
+var dangerousContentTypes = map[string]bool{
+	"text/html":              true,
+	"application/xhtml+xml":  true,
+	"image/svg+xml":          true,
+	"application/javascript": true,
+	"text/javascript":        true,
+	"application/ecmascript": true,
+	"text/ecmascript":        true,
+	"application/xml":        true,
+	"text/xml":               true,
+	"application/rss+xml":    true,
+	"application/atom+xml":   true,
+}
+
 // safeFileServer wraps an http.Handler (typically http.FileServer) to prevent
 // reflected/stored XSS from user-uploaded files. It inspects the response
 // Content-Type and, for potentially dangerous types (HTML, SVG, XML, JS),
@@ -529,6 +546,10 @@ func safeFileServer(next http.Handler) http.Handler {
 }
 
 // xssSafeResponseWriter intercepts WriteHeader to override unsafe content types.
+// Note: this wrapper does not implement http.Flusher or http.Hijacker.
+// This is fine for http.FileServer (which does not use either), but if the
+// wrapped handler ever requires streaming flush or WebSocket hijacking, those
+// interfaces would need to be proxied here.
 type xssSafeResponseWriter struct {
 	http.ResponseWriter
 	headerWritten bool
@@ -561,23 +582,9 @@ func (w *xssSafeResponseWriter) sanitizeContentType() {
 		base = strings.TrimSpace(ct[:i])
 	}
 	base = strings.ToLower(base)
-	dangerous := map[string]bool{
-		"text/html":              true,
-		"application/xhtml+xml":  true,
-		"image/svg+xml":          true,
-		"application/javascript": true,
-		"text/javascript":        true,
-		"application/ecmascript": true,
-		"text/ecmascript":        true,
-		"application/xml":        true,
-		"text/xml":               true,
-		"application/rss+xml":    true,
-		"application/atom+xml":   true,
-	}
-	if dangerous[base] {
+	if dangerousContentTypes[base] {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", "attachment")
-		w.Header().Del("X-Content-Type-Options")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 	}
 }
