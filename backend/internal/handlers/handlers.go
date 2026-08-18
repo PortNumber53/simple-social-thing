@@ -2399,20 +2399,7 @@ func mediaURLToLocalPathForUser(userID string, src string) (string, error) {
 		return "", fmt.Errorf("source_not_owned")
 	}
 	local := strings.TrimPrefix(p, "/media/")
-	joined := filepath.Clean(filepath.Join("media", local))
-	absJoined, err := filepath.Abs(joined)
-	if err != nil {
-		return "", err
-	}
-	absMedia, err := filepath.Abs("media")
-	if err != nil {
-		return "", err
-	}
-	absMedia = filepath.Clean(absMedia) + string(filepath.Separator)
-	if !strings.HasPrefix(absJoined, absMedia) {
-		return "", fmt.Errorf("invalid_path")
-	}
-	return absJoined, nil
+	return safeMediaJoin(local)
 }
 
 func escapeFFmpegDrawText(s string) string {
@@ -4107,6 +4094,13 @@ func sanitizeFolderName(name string) string {
 	if name == "" {
 		return ""
 	}
+	// Route through sanitizePathComponent first so that path separators and
+	// parent-directory references are stripped. This is the sanitizer that
+	// CodeQL's go/path-injection query models, so delegating here breaks the
+	// taint flows from user-controlled folder query/form parameters.
+	name = sanitizePathComponent(name)
+	// Apply the stricter character allowlist on top of the traversal-safe
+	// value produced by sanitizePathComponent.
 	name = reSafeFilename.ReplaceAllString(name, "_")
 	name = strings.Trim(name, "._-")
 	if name == "" {
