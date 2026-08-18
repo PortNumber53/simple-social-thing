@@ -1,8 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateURL(t *testing.T) {
@@ -110,5 +115,70 @@ func TestIsAllowedExternalHost(t *testing.T) {
 				t.Errorf("isAllowedExternalHost(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestSSRFSafeTransportBlocksLoopback(t *testing.T) {
+	// Start a local server that we must NOT be able to reach.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := safeSSRFClient(5 * time.Second)
+	// httptest.Server listens on 127.0.0.1, so the SSRF guard must block it.
+	resp, err := client.Get(srv.URL)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatalf("expected SSRF guard to block loopback URL %s, but request succeeded", srv.URL)
+	}
+	if !strings.Contains(err.Error(), "SSRF guard") {
+		t.Fatalf("expected error to mention SSRF guard, got: %v", err)
+	}
+}
+
+func TestSSRFSafeTransportAllowsPublic(t *testing.T) {
+	// Use a public IP literal that is not blocked.  We don't actually need
+	// the connection to succeed — we just need the DialContext to not reject
+	// the address as blocked.  A connection refused or timeout error is fine.
+	tr := ssrfSafeTransport()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := tr.DialContext(ctx, "tcp", "8.8.8.8:80")
+	if err != nil && strings.Contains(err.Error(), "SSRF guard") {
+		t.Fatalf("SSRF guard incorrectly blocked public IP 8.8.8.8: %v", err)
+	}
+}
+
+func TestSSRFSafeTransportBlocksPrivateIP(t *testing.T) {
+	tr := ssrfSafeTransport()
+	_, err := tr.DialContext(context.Background(), "tcp", "10.0.0.1:80")
+	if err == nil {
+		t.Fatal("expected SSRF guard to block private IP 10.0.0.1")
+	}
+	if !strings.Contains(err.Error(), "SSRF guard") {
+		t.Fatalf("expected error to mention SSRF guard, got: %v", err)
+	}
+}
+
+func TestSSRFSafeTransportBlocksIPv6Loopback(t *testing.T) {
+	tr := ssrfSafeTransport()
+	_, err := tr.DialContext(context.Background(), "tcp", "[::1]:80")
+	if err == nil {
+		t.Fatal("expected SSRF guard to block IPv6 loopback ::1")
+	}
+	if !strings.Contains(err.Error(), "SSRF guard") {
+		t.Fatalf("expected error to mention SSRF guard, got: %v", err)
+	}
+}
+
+func TestSSRFSafeClientTimeout(t *testing.T) {
+	c := safeSSRFClient(1 * time.Millisecond)
+	if c.Timeout != 1*time.Millisecond {
+		t.Fatalf("expected timeout 1ms, got %v", c.Timeout)
+	}
+	c0 := safeSSRFClient(0)
+	if c0.Timeout != 0 {
+		t.Fatalf("expected timeout 0, got %v", c0.Timeout)
 	}
 }

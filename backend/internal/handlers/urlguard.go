@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // validateURL checks that a user-provided URL is safe to fetch from the server.
@@ -86,4 +89,59 @@ func isAllowedExternalHost(rawURL string, allowlist []string) error {
 		}
 	}
 	return fmt.Errorf("host %q is not in the allowlist", host)
+}
+
+// ssrfSafeTransport returns an http.RoundTripper whose DialContext re-resolves
+// the hostname and rejects any IP that isBlockedIP would block, then pins the
+// connection to the first validated IP.  This closes the TOCTOU / DNS-rebinding
+// window that exists when validateURL resolves the host at check time but
+// http.Get performs its own independent resolution at connect time.
+//
+// Because the user-provided URL string is consumed by the transport's dialer
+// rather than flowing directly into http.Get, taint analysers (CodeQL
+// go/request-forgery) no longer see an unbroken data-flow path from source to
+// sink.
+func ssrfSafeTransport() *http.Transport {
+	return &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, fmt.Errorf("SSRF guard: bad address %q: %w", addr, err)
+			}
+			// If the host is already an IP literal, validate it directly.
+			if ip := net.ParseIP(host); ip != nil {
+				if isBlockedIP(ip) {
+					return nil, fmt.Errorf("SSRF guard: blocked IP %s", host)
+				}
+				return (&net.Dialer{}).DialContext(ctx, network, addr)
+			}
+			// Resolve the hostname now and check every returned address.
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("SSRF guard: failed to resolve %s: %w", host, err)
+			}
+			for _, ipAddr := range ips {
+				if isBlockedIP(ipAddr.IP) {
+					return nil, fmt.Errorf("SSRF guard: %s resolves to blocked IP %s", host, ipAddr.IP)
+				}
+			}
+			if len(ips) == 0 {
+				return nil, fmt.Errorf("SSRF guard: no addresses for %s", host)
+			}
+			// Pin to the first validated IP to prevent a second resolution
+			// from returning a different (private) address.
+			pinned := net.JoinHostPort(ips[0].IP.String(), port)
+			return (&net.Dialer{}).DialContext(ctx, network, pinned)
+		},
+	}
+}
+
+// safeSSRFClient returns an *http.Client that uses ssrfSafeTransport and the
+// given timeout.  Pass 0 for no timeout.
+func safeSSRFClient(timeout time.Duration) *http.Client {
+	c := &http.Client{Transport: ssrfSafeTransport()}
+	if timeout > 0 {
+		c.Timeout = timeout
+	}
+	return c
 }
