@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { Pool } from 'pg';
+import rateLimit from 'express-rate-limit';
 
 dotenv.config();
 
@@ -17,10 +18,23 @@ if (!DATABASE_URL) {
 
 const pool = new Pool({ connectionString: DATABASE_URL, ssl: /sslmode=require/.test(DATABASE_URL) ? { rejectUnauthorized: false } : undefined });
 
+// Rate limiter factory for database-accessing routes.
+// Each route gets its own instance so that hitting the limit on one route
+// does not block access to other routes.
+function createDbRateLimiter() {
+  return rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: Number(process.env.RATE_LIMIT_MAX) || 30, // 30 requests per minute per IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'too_many_requests' },
+  });
+}
+
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Upsert user (id, email, name, imageUrl)
-app.post('/api/db/users', async (req, res) => {
+app.post('/api/db/users', createDbRateLimiter(), async (req, res) => {
   try {
     const { id, email, name, imageUrl } = req.body || {};
     if (!id || !email || !name) return res.status(400).json({ error: 'missing_fields' });
@@ -42,7 +56,7 @@ app.post('/api/db/users', async (req, res) => {
 });
 
 // Upsert social connection
-app.post('/api/db/social-connections', async (req, res) => {
+app.post('/api/db/social-connections', createDbRateLimiter(), async (req, res) => {
   try {
     const { userId, provider, providerId, email, name } = req.body || {};
     if (!userId || !provider || !providerId) return res.status(400).json({ error: 'missing_fields' });
@@ -67,7 +81,7 @@ app.post('/api/db/social-connections', async (req, res) => {
 });
 
 // Get connections for a user & provider
-app.get('/api/db/social-connections/:userId/:provider', async (req, res) => {
+app.get('/api/db/social-connections/:userId/:provider', createDbRateLimiter(), async (req, res) => {
   try {
     const { userId, provider } = req.params;
     const q = `SELECT id, user_id, provider, provider_id, email, name FROM public.social_connections WHERE user_id=$1 AND provider=$2 ORDER BY created_at DESC LIMIT 5;`;
@@ -79,7 +93,17 @@ app.get('/api/db/social-connections/:userId/:provider', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 18911;
-app.listen(PORT, () => {
-  console.log(`Backend listening on http://localhost:${PORT}`);
-});
+export { app, pool };
+
+// Start the server only when this file is run directly (not imported for testing).
+const isMainModule = process.argv[1] && import.meta.url &&
+  (import.meta.url === `file://${process.argv[1]}` ||
+   import.meta.url === `file://${process.argv[1]}.ts` ||
+   process.argv[1].endsWith('server.ts') ||
+   process.argv[1].endsWith('server.js'));
+if (isMainModule) {
+  const PORT = process.env.PORT || 18911;
+  app.listen(PORT, () => {
+    console.log(`Backend listening on http://localhost:${PORT}`);
+  });
+}
