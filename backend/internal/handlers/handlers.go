@@ -4081,7 +4081,12 @@ func mediaUserHash(userID string) string {
 }
 
 func sanitizeFilename(base string) string {
-	base = filepath.Base(strings.TrimSpace(base))
+	// Route through sanitizePathComponent first so that path separators and
+	// parent-directory references are stripped. This is the sanitizer that
+	// CodeQL's go/path-injection query models, so delegating here breaks the
+	// taint flows from user-controlled filenames/IDs.
+	base = sanitizePathComponent(strings.TrimSpace(base))
+	base = filepath.Base(base)
 	base = strings.Trim(base, ".")
 	if base == "" {
 		base = randHex(12)
