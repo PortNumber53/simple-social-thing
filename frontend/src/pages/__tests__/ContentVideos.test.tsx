@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -40,9 +40,14 @@ describe('ContentVideos', () => {
     }, { timeout: 2000 });
   });
 
-  it('does not render video element for unsafe preview URLs', () => {
-    // Simulate an unsafe preview URL by rendering with a compromised state.
-    // We verify the guard: isSafeMediaSrc blocks javascript: URLs.
+  it('does not render video element for unsafe preview URLs', async () => {
+    // Force URL.createObjectURL to return a javascript: URI so the guard in
+    // ContentVideos.tsx (previewUrl && isSafeMediaSrc(previewUrl)) is actually
+    // exercised with an unsafe value, rather than only checking the empty-state.
+    const createObjectURLSpy = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('javascript:alert(1)');
+    const u = userEvent.setup();
     const { container } = render(
       <MemoryRouter>
         <ThemeProvider>
@@ -52,7 +57,41 @@ describe('ContentVideos', () => {
         </ThemeProvider>
       </MemoryRouter>,
     );
-    // No video element should be present initially.
+
+    const file = new File(['x'], 'video.mp4', { type: 'video/mp4' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement | null;
+    if (!input) throw new Error('missing file input');
+    await u.upload(input, file);
+
+    // The unsafe preview URL must be set in state, yet the <video> element must
+    // not be rendered because isSafeMediaSrc rejects the javascript: scheme.
+    expect(createObjectURLSpy).toHaveBeenCalledWith(file);
     expect(container.querySelector('video')).toBeNull();
+    createObjectURLSpy.mockRestore();
+  });
+
+  it('renders video element for safe (blob:) preview URLs', async () => {
+    const createObjectURLSpy = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:http://localhost/abc');
+    const u = userEvent.setup();
+    const { container } = render(
+      <MemoryRouter>
+        <ThemeProvider>
+          <AuthProvider>
+            <ContentVideos />
+          </AuthProvider>
+        </ThemeProvider>
+      </MemoryRouter>,
+    );
+
+    const file = new File(['x'], 'video.mp4', { type: 'video/mp4' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement | null;
+    if (!input) throw new Error('missing file input');
+    await u.upload(input, file);
+
+    // A safe blob: URL should produce a <video> element.
+    expect(container.querySelector('video')).not.toBeNull();
+    createObjectURLSpy.mockRestore();
   });
 });
