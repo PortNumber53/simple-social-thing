@@ -1,0 +1,20 @@
+extensions:
+  # Model isSafeUrl() as a barrier guard: when isSafeUrl(url) returns true
+  # in a conditional, the url argument is considered safe for the listed sinks.
+  - addsTo:
+      pack: codeql/javascript-all
+      extensible: barrierGuardModel
+    data:
+      - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[isSafeUrl].Argument[0]", "true", "html-injection"]
+      - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[isSafeUrl].Argument[0]", "true", "url-redirection"]
+
+  # Model sanitizeUrl()/sanitizeImageUrl() return values as barriers for
+  # the same sinks (used in pass-through sanitizer pattern).
+  - addsTo:
+      pack: codeql/javascript-all
+      extensible: barrierModel
+    data:
+      - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[sanitizeUrl].ReturnValue", "html-injection"]
+      - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[sanitizeUrl].ReturnValue", "url-redirection"]
+      - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[sanitizeImageUrl].ReturnValue", "html-injection"]
+      - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[sanitizeImageUrl].ReturnValue", "url-redirection"]
