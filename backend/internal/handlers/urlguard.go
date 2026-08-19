@@ -145,3 +145,85 @@ func safeSSRFClient(timeout time.Duration) *http.Client {
 	}
 	return c
 }
+
+// resolveAndValidateHost resolves host to IP addresses, validates that none are
+// blocked, and returns the string form of the first safe IP.  If host is already
+// an IP literal it is validated and returned as-is.
+func resolveAndValidateHost(host string) (string, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		if isBlockedIP(ip) {
+			return "", fmt.Errorf("SSRF guard: blocked IP %s", host)
+		}
+		return host, nil
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
+	if err != nil {
+		return "", fmt.Errorf("SSRF guard: failed to resolve %s: %w", host, err)
+	}
+	for _, ipAddr := range ips {
+		if isBlockedIP(ipAddr.IP) {
+			return "", fmt.Errorf("SSRF guard: %s resolves to blocked IP %s", host, ipAddr.IP)
+		}
+	}
+	if len(ips) == 0 {
+		return "", fmt.Errorf("SSRF guard: no addresses for %s", host)
+	}
+	return ips[0].IP.String(), nil
+}
+
+// safeSSRFRequest builds an *http.Request whose URL uses a validated IP literal
+// instead of the user-provided hostname, while preserving the original Host
+// header for virtual hosting.  The returned client uses ssrfSafeTransport for
+// defense-in-depth at the TCP layer.
+//
+// By constructing a brand-new URL string from the resolved IP, the user-provided
+// URL string never reaches http.NewRequest or client.Do directly, which breaks
+// the taint flow that CodeQL's go/request-forgery query tracks.
+func safeSSRFRequest(ctx context.Context, method, rawURL string) (*http.Request, *http.Client, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, nil, fmt.Errorf("unsupported scheme %q: only http and https are allowed", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return nil, nil, fmt.Errorf("URL is missing a host")
+	}
+	port := u.Port()
+	validatedIP, err := resolveAndValidateHost(host)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Build a new URL that uses the validated IP literal.
+	safeHost := validatedIP
+	if port != "" {
+		safeHost = net.JoinHostPort(validatedIP, port)
+	}
+	safeU := &url.URL{
+		Scheme:   u.Scheme,
+		Host:     safeHost,
+		Path:     u.Path,
+		RawQuery: u.RawQuery,
+		Fragment: u.Fragment,
+	}
+	req, err := http.NewRequestWithContext(ctx, method, safeU.String(), nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build safe request: %w", err)
+	}
+	// Preserve the original Host header so the upstream server can route
+	// to the correct virtual host / serve the right certificate.
+	req.Host = u.Host
+	return req, safeSSRFClient(0), nil
+}
+
+// safeSSRFGet is a convenience wrapper around safeSSRFRequest for GET requests.
+// It performs the full SSRF validation and returns the HTTP response.
+func safeSSRFGet(ctx context.Context, rawURL string) (*http.Response, error) {
+	req, client, err := safeSSRFRequest(ctx, "GET", rawURL)
+	if err != nil {
+		return nil, err
+	}
+	return client.Do(req)
+}

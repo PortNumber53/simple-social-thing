@@ -182,3 +182,39 @@ func TestSSRFSafeClientTimeout(t *testing.T) {
 		t.Fatalf("expected timeout 0, got %v", c0.Timeout)
 	}
 }
+
+func TestSafeSSRFGetBlocksLoopback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// safeSSRFGet should refuse to even create a request for a loopback URL.
+	_, err := safeSSRFGet(context.Background(), srv.URL)
+	if err == nil {
+		t.Fatalf("expected safeSSRFGet to block loopback URL %s", srv.URL)
+	}
+	if !strings.Contains(err.Error(), "SSRF guard") {
+		t.Fatalf("expected error to mention SSRF guard, got: %v", err)
+	}
+}
+
+func TestSafeSSRFRequestRejectsBadScheme(t *testing.T) {
+	_, _, err := safeSSRFRequest(context.Background(), "GET", "file:///etc/passwd")
+	if err == nil {
+		t.Fatal("expected error for file:// scheme")
+	}
+	if !strings.Contains(err.Error(), "unsupported scheme") {
+		t.Fatalf("expected unsupported scheme error, got: %v", err)
+	}
+}
+
+func TestSafeSSRFRequestRejectsPrivateIP(t *testing.T) {
+	_, _, err := safeSSRFRequest(context.Background(), "GET", "http://192.168.1.1/admin")
+	if err == nil {
+		t.Fatal("expected error for private IP URL")
+	}
+	if !strings.Contains(err.Error(), "SSRF guard") {
+		t.Fatalf("expected SSRF guard error, got: %v", err)
+	}
+}
