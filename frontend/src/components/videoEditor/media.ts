@@ -1,5 +1,5 @@
 import type { MediaKind } from './types';
-import { isSafeMediaSrc } from '../../lib/sanitizeUrl';
+import { isSafeMediaSrc, sanitizeMediaSrc } from '../../lib/sanitizeUrl';
 
 export async function getMediaDurationSec(objectUrl: string, kind: MediaKind): Promise<number> {
   if (kind === 'image') return 0;
@@ -9,7 +9,7 @@ export async function getMediaDurationSec(objectUrl: string, kind: MediaKind): P
   return await new Promise<number>((resolve, reject) => {
     const el = document.createElement(kind);
     el.preload = 'metadata';
-    el.src = objectUrl;
+    el.src = sanitizeMediaSrc(objectUrl);
 
     const timer = window.setTimeout(() => {
       cleanup();

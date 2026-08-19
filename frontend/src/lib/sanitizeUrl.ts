@@ -76,3 +76,16 @@ export function isSafeMediaSrc(url: string | undefined | null): boolean {
     return false;
   }
 }
+
+/**
+ * Sanitize a URL for media element `src` assignment. Returns the trimmed URL
+ * when it is safe (http/https/blob/protocol-relative), or an empty string
+ * otherwise. This is the pass-through sanitizer counterpart to
+ * {@link isSafeMediaSrc}, modelled as a CodeQL barrier.
+ *
+ * @param url The raw URL value.
+ * @returns The safe URL string, or empty string when unsafe.
+ */
+export function sanitizeMediaSrc(url: string | undefined | null): string {
+  return isSafeMediaSrc(url) ? (url as string).trim() : '';
+}

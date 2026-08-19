@@ -21,3 +21,4 @@ extensions:
       - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[sanitizeUrl].ReturnValue", "url-redirection"]
       - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[sanitizeImageUrl].ReturnValue", "html-injection"]
       - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[sanitizeImageUrl].ReturnValue", "url-redirection"]
+      - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[sanitizeMediaSrc].ReturnValue", "html-injection"]
