@@ -7,10 +7,9 @@ extensions:
     data:
       - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[isSafeUrl].Argument[0]", "true", "html-injection"]
       - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[isSafeUrl].Argument[0]", "true", "url-redirection"]
-      # isSafeMediaSrc is defined locally in two files (DRY violation tracked
-      # as a follow-up). Model both locations so CodeQL recognises the guard.
-      - ["file:frontend/src/components/videoEditor/media.ts", "Member[isSafeMediaSrc].Argument[0]", "true", "html-injection"]
-      - ["file:frontend/src/pages/ContentVideos.tsx", "Member[isSafeMediaSrc].Argument[0]", "true", "html-injection"]
+      # isSafeMediaSrc is exported from the shared sanitizeUrl module and
+      # imported in media.ts and ContentVideos.tsx.
+      - ["file:frontend/src/lib/sanitizeUrl.ts", "Member[isSafeMediaSrc].Argument[0]", "true", "html-injection"]
 
   # Model sanitizeUrl()/sanitizeImageUrl() return values as barriers for
   # the same sinks (used in pass-through sanitizer pattern).

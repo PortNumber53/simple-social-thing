@@ -1,20 +1,5 @@
 import React, { useState } from 'react';
-
-/**
- * Validate that a URL is safe to use in a media element `src`.
- * Only `blob:`, `http:`, `https:`, and protocol-relative URLs are allowed.
- */
-function isSafeMediaSrc(url: string): boolean {
-	const trimmed = url.trim();
-	if (!trimmed) return false;
-	if (trimmed.startsWith('//')) return true;
-	try {
-		const parsed = new URL(trimmed);
-		return parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'blob:';
-	} catch {
-		return false;
-	}
-}
+import { isSafeMediaSrc } from '../lib/sanitizeUrl';
 
 export const ContentVideos: React.FC = () => {
 	const [caption, setCaption] = useState<string>('');
