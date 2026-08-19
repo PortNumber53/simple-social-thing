@@ -4120,7 +4120,6 @@ func (h *Handler) importMediaForDraft(ctx context.Context, userID, postID string
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
-	client := &http.Client{Timeout: 20 * time.Second}
 	userHash := mediaUserHash(userID)
 	baseDir := filepath.Join("media", userHash, "imports")
 	_ = os.MkdirAll(baseDir, 0o755)
@@ -4137,13 +4136,18 @@ func (h *Handler) importMediaForDraft(ctx context.Context, userID, postID string
 		if raw == "" {
 			continue
 		}
+		if err := validateURL(raw); err != nil {
+			log.Printf("[ImportMedia][%s] blocked_url idx=%d url=%s err=%v", postID, i, sanitizeURLForLog(raw), err)
+			continue
+		}
 		log.Printf("[ImportMedia][%s] fetch idx=%d url=%s", postID, i, raw)
-		req, err := http.NewRequestWithContext(ctx, "GET", raw, nil)
+		req, ssrfClient, err := safeSSRFRequest(ctx, "GET", raw)
 		if err != nil {
 			log.Printf("[ImportMedia][%s] bad_url url=%s err=%v", postID, raw, err)
 			continue
 		}
-		resp, err := client.Do(req)
+		ssrfClient.Timeout = 20 * time.Second
+		resp, err := ssrfClient.Do(req)
 		if err != nil {
 			log.Printf("[ImportMedia][%s] fetch_failed url=%s err=%v", postID, raw, err)
 			continue
@@ -6141,8 +6145,13 @@ func (h *Handler) StoreSunoTrack(w http.ResponseWriter, r *http.Request) {
 		req.SunoTrackID = req.TrackID
 	}
 
-	log.Printf("[Suno][Store] downloading audio userId=%s sunoTrackId=%s url=%s", req.UserID, req.SunoTrackID, req.AudioURL)
-	resp, err := http.Get(req.AudioURL)
+	log.Printf("[Suno][Store] downloading audio userId=%s sunoTrackId=%s url=%s", req.UserID, req.SunoTrackID, sanitizeURLForLog(req.AudioURL))
+	if err := validateURL(req.AudioURL); err != nil {
+		log.Printf("[Suno][Store] blocked URL: %v", err)
+		http.Error(w, "audioUrl is not a valid external URL", http.StatusBadRequest)
+		return
+	}
+	resp, err := safeSSRFGet(r.Context(), req.AudioURL)
 	if err != nil {
 		log.Printf("[Suno][Store] download error: %v", err)
 		http.Error(w, fmt.Sprintf("failed to download audio: %v", err), http.StatusBadGateway)
@@ -6275,37 +6284,40 @@ func (h *Handler) SunoMusicCallback(w http.ResponseWriter, r *http.Request) {
 	// If completed and we have an audio URL, download and store like UpdateSunoTrack does.
 	var filePath string
 	if status == "completed" && audioURL != "" {
-		log.Printf("[Suno][Callback] downloading audio taskId=%s id=%s url=%s", taskID, trackID, audioURL)
-		resp, err := http.Get(audioURL)
-		if err != nil {
-			log.Printf("[Suno][Callback] download error id=%s err=%v", trackID, err)
+		if err := validateURL(audioURL); err != nil {
+			log.Printf("[Suno][Callback] blocked URL taskId=%s id=%s err=%v", taskID, trackID, err)
 		} else {
-			defer resp.Body.Close()
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				mediaDir := "media/suno"
-				if err := os.MkdirAll(mediaDir, 0o755); err != nil {
-					log.Printf("[Suno][Callback] mkdir error: %v", err)
-				} else {
-					fileName := fmt.Sprintf("%s.mp3", sanitizePathComponent(trackID))
-					filePath = filepath.Join(mediaDir, fileName)
-					out, err := os.Create(filePath)
-					if err != nil {
-						log.Printf("[Suno][Callback] create file error: %v", err)
+			log.Printf("[Suno][Callback] downloading audio taskId=%s id=%s url=%s", taskID, trackID, sanitizeURLForLog(audioURL))
+			resp, err := safeSSRFGet(r.Context(), audioURL)
+			if err != nil {
+				log.Printf("[Suno][Callback] download error id=%s err=%v", trackID, err)
+			} else {
+				defer resp.Body.Close()
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					mediaDir := "media/suno"
+					if err := os.MkdirAll(mediaDir, 0o755); err != nil {
+						log.Printf("[Suno][Callback] mkdir error: %v", err)
 					} else {
-						if _, err := io.Copy(out, resp.Body); err != nil {
-							log.Printf("[Suno][Callback] save file error: %v", err)
-							_ = out.Close()
+						fileName := fmt.Sprintf("%s.mp3", sanitizePathComponent(trackID))
+						filePath = filepath.Join(mediaDir, fileName)
+						out, err := os.Create(filePath)
+						if err != nil {
+							log.Printf("[Suno][Callback] create file error: %v", err)
 						} else {
-							_ = out.Close()
+							if _, err := io.Copy(out, resp.Body); err != nil {
+								log.Printf("[Suno][Callback] save file error: %v", err)
+								_ = out.Close()
+							} else {
+								_ = out.Close()
+							}
 						}
 					}
+				} else {
+					log.Printf("[Suno][Callback] download non-2xx: %d", resp.StatusCode)
 				}
-			} else {
-				log.Printf("[Suno][Callback] download non-2xx: %d", resp.StatusCode)
 			}
 		}
 	}
-
 	_, err = h.db.Exec(`
 		UPDATE public.suno_tracks
 		SET suno_track_id = COALESCE(NULLIF($1, ''), suno_track_id),
@@ -6370,8 +6382,13 @@ func (h *Handler) UpdateSunoTrack(w http.ResponseWriter, r *http.Request) {
 	// Download audio if URL provided and status is completed
 	var filePath string
 	if req.AudioURL != "" && req.Status == "completed" {
-		log.Printf("[Suno][UpdateTrack] downloading audio id=%s url=%s", trackID, req.AudioURL)
-		resp, err := http.Get(req.AudioURL)
+		if err := validateURL(req.AudioURL); err != nil {
+			log.Printf("[Suno][UpdateTrack] blocked URL id=%s err=%v", trackID, err)
+			http.Error(w, "audioUrl is not a valid external URL", http.StatusBadRequest)
+			return
+		}
+		log.Printf("[Suno][UpdateTrack] downloading audio id=%s url=%s", trackID, sanitizeURLForLog(req.AudioURL))
+		resp, err := safeSSRFGet(r.Context(), req.AudioURL)
 		if err != nil {
 			log.Printf("[Suno][UpdateTrack] download error: %v", err)
 			http.Error(w, fmt.Sprintf("failed to download audio: %v", err), http.StatusBadGateway)
