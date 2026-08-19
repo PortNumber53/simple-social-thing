@@ -38,4 +38,19 @@ describe('GoogleLoginButton', () => {
     expect(screen.getByText('User')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument();
   });
+
+  it('sanitizes malicious imageUrl to fallback when logged in', () => {
+    localStorage.setItem(
+      'user',
+      JSON.stringify({ id: 'u1', email: 'e', name: 'User', imageUrl: 'javascript:alert(1)' }),
+    );
+    render(
+      <AuthProvider>
+        <GoogleLoginButton />
+      </AuthProvider>,
+    );
+    const img = screen.getByRole('img') as HTMLImageElement;
+    expect(img.src).not.toContain('javascript:');
+    expect(img.src).toContain('via.placeholder.com');
+  });
 });
