@@ -54,3 +54,25 @@ export function sanitizeUrl(url: string | undefined | null, fallback = ''): stri
 export function sanitizeImageUrl(url: string | undefined | null, fallback = ''): string {
   return sanitizeUrl(url, fallback);
 }
+
+/**
+ * Check whether a URL is safe to assign to a media element `src`.
+ * Only `blob:`, `http:`, `https:`, and protocol-relative URLs are allowed.
+ * This is like {@link isSafeUrl} but also permits `blob:` URLs (used by
+ * `URL.createObjectURL()`).
+ *
+ * @param url The raw URL value.
+ * @returns `true` when the URL is safe for media element `src` assignment.
+ */
+export function isSafeMediaSrc(url: string | undefined | null): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith('//')) return true;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'blob:';
+  } catch {
+    return false;
+  }
+}
