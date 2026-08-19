@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { AlertBanner } from '../components/AlertBanner';
+import { isSafeUrl } from '../lib/sanitizeUrl';
 
 export const Profile: React.FC = () => {
   const { user } = useAuth();
@@ -92,16 +93,25 @@ export const Profile: React.FC = () => {
               <div className="space-y-6">
                 {/* Avatar */}
                 <div className="flex items-center gap-6">
-                  <img
-                    src={user?.imageUrl || 'https://via.placeholder.com/150'}
-                    alt={user?.name || 'User'}
-                    className="w-24 h-24 rounded-full ring-4 ring-primary-400 shadow-lg"
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      const target = e.target as HTMLImageElement;
-                      target.src = 'https://via.placeholder.com/150';
-                    }}
-                  />
+                  {isSafeUrl(user?.imageUrl) ? (
+                    <img
+                      src={user?.imageUrl}
+                      alt={user?.name || 'User'}
+                      className="w-24 h-24 rounded-full ring-4 ring-primary-400 shadow-lg"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.src = 'https://via.placeholder.com/150';
+                      }}
+                    />
+                  ) : (
+                    <img
+                      src="https://via.placeholder.com/150"
+                      alt={user?.name || 'User'}
+                      className="w-24 h-24 rounded-full ring-4 ring-primary-400 shadow-lg"
+                      referrerPolicy="no-referrer"
+                    />
+                  )}
                   <div>
                     <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
                       Profile Picture

@@ -2399,20 +2399,7 @@ func mediaURLToLocalPathForUser(userID string, src string) (string, error) {
 		return "", fmt.Errorf("source_not_owned")
 	}
 	local := strings.TrimPrefix(p, "/media/")
-	joined := filepath.Clean(filepath.Join("media", local))
-	absJoined, err := filepath.Abs(joined)
-	if err != nil {
-		return "", err
-	}
-	absMedia, err := filepath.Abs("media")
-	if err != nil {
-		return "", err
-	}
-	absMedia = filepath.Clean(absMedia) + string(filepath.Separator)
-	if !strings.HasPrefix(absJoined, absMedia) {
-		return "", fmt.Errorf("invalid_path")
-	}
-	return absJoined, nil
+	return safeMediaJoin(local)
 }
 
 func escapeFFmpegDrawText(s string) string {
@@ -3649,8 +3636,10 @@ func (h *Handler) runPublishJob(jobID, userID, caption string, req publishPostRe
 					rel := strings.TrimSpace(relMedia[videoIdx])
 					if rel != "" {
 						local := strings.TrimPrefix(rel, "/media/")
-						path := filepath.Clean(filepath.Join("media", local))
-						if b, err := os.ReadFile(path); err == nil {
+						path, perr := safeMediaJoin(local)
+						if perr != nil {
+							log.Printf("[PublishJob] blocked path traversal: jobId=%s userId=%s postId=%s rel=%s err=%v", jobID, userID, postID, rel, perr)
+						} else if b, err := os.ReadFile(path); err == nil {
 							videoBytes = b
 							sz = len(videoBytes)
 							ct = http.DetectContentType(b)
@@ -4105,6 +4094,13 @@ func sanitizeFolderName(name string) string {
 	if name == "" {
 		return ""
 	}
+	// Route through sanitizePathComponent first so that path separators and
+	// parent-directory references are stripped. This is the sanitizer that
+	// CodeQL's go/path-injection query models, so delegating here breaks the
+	// taint flows from user-controlled folder query/form parameters.
+	name = sanitizePathComponent(name)
+	// Apply the stricter character allowlist on top of the traversal-safe
+	// value produced by sanitizePathComponent.
 	name = reSafeFilename.ReplaceAllString(name, "_")
 	name = strings.Trim(name, "._-")
 	if name == "" {
@@ -4467,7 +4463,10 @@ func loadUploadedMediaFromRelPaths(relPaths []string) ([]uploadedMedia, error) {
 		}
 		// rel example: /media/uploads/<userId>/<file>
 		local := strings.TrimPrefix(rel, "/media/")
-		path := filepath.Clean(filepath.Join("media", local))
+		path, perr := safeMediaJoin(local)
+		if perr != nil {
+			return nil, perr
+		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
@@ -6299,7 +6298,7 @@ func (h *Handler) SunoMusicCallback(w http.ResponseWriter, r *http.Request) {
 					if err := os.MkdirAll(mediaDir, 0o755); err != nil {
 						log.Printf("[Suno][Callback] mkdir error: %v", err)
 					} else {
-						fileName := fmt.Sprintf("%s.mp3", trackID)
+						fileName := fmt.Sprintf("%s.mp3", sanitizePathComponent(trackID))
 						filePath = filepath.Join(mediaDir, fileName)
 						out, err := os.Create(filePath)
 						if err != nil {
@@ -6319,7 +6318,6 @@ func (h *Handler) SunoMusicCallback(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-
 	_, err = h.db.Exec(`
 		UPDATE public.suno_tracks
 		SET suno_track_id = COALESCE(NULLIF($1, ''), suno_track_id),
@@ -6410,7 +6408,7 @@ func (h *Handler) UpdateSunoTrack(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		fileName := fmt.Sprintf("%s.mp3", trackID)
+		fileName := fmt.Sprintf("%s.mp3", sanitizePathComponent(trackID))
 		filePath = filepath.Join(mediaDir, fileName)
 
 		out, err := os.Create(filePath)

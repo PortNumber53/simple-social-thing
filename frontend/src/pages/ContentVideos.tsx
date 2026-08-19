@@ -1,4 +1,21 @@
 import React, { useState } from 'react';
+
+/**
+ * Validate that a URL is safe to use in a media element `src`.
+ * Only `blob:`, `http:`, `https:`, and protocol-relative URLs are allowed.
+ */
+function isSafeMediaSrc(url: string): boolean {
+	const trimmed = url.trim();
+	if (!trimmed) return false;
+	if (trimmed.startsWith('//')) return true;
+	try {
+		const parsed = new URL(trimmed);
+		return parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'blob:';
+	} catch {
+		return false;
+	}
+}
+
 export const ContentVideos: React.FC = () => {
 	const [caption, setCaption] = useState<string>('');
 	const [video, setVideo] = useState<File | null>(null);
@@ -38,7 +55,7 @@ export const ContentVideos: React.FC = () => {
 					<div className="space-y-2">
 						<label className="text-sm font-medium text-slate-700 dark:text-slate-200">Video</label>
 						<input type="file" accept="video/*" onChange={(e) => onFile(e.target.files)} />
-						{previewUrl && (
+						{previewUrl && isSafeMediaSrc(previewUrl) && (
 							<video src={previewUrl} controls className="mt-2 w-full max-h-64 rounded-lg" />
 						)}
 					</div>
